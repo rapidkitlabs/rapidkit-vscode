@@ -69,6 +69,18 @@
         {
             "path": "releases/fixtures/wave2-kpi-marker.json",
             "contains": "workspai.perf.first_chunk_latency"
+        },
+        {
+            "path": "src/ui/panels/aiTestGenerator.ts",
+            "contains": "buildEdgeCaseChecklist"
+        },
+        {
+            "path": "src/ui/panels/aiTestGenerator.ts",
+            "contains": "getFrameworkTestConventions"
+        },
+        {
+            "path": "src/test/aiTestGenerator.test.ts",
+            "contains": "detectTestFramework"
         }
     ]
 }
