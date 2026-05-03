@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildIncidentMemoryEnrichmentSuggestion,
   buildIncidentMemoryPromptHint,
   buildIncidentMemoryReuseSnapshot,
   mergeIncidentReplayLearningIntoMemory,
@@ -108,5 +109,30 @@ describe('incidentStudioMemory', () => {
 
     expect(mergedAgain.decisions).toHaveLength(1);
     expect(mergedAgain.conventions).toHaveLength(1);
+  });
+
+  it('builds context-aware memory enrichment suggestion for successful incidents', () => {
+    const suggestion = buildIncidentMemoryEnrichmentSuggestion({
+      verifySuccess: true,
+      actionType: 'inline-command',
+      likelyFailureMode: 'migration checksum mismatch',
+      verifyChecklist: ['pnpm test --filter orders-api'],
+    });
+
+    expect(suggestion).not.toBeNull();
+    expect(suggestion?.title).toBe('Verification passed - capture reusable memory');
+    expect(suggestion?.summary).toContain('Primary verify step: pnpm test --filter orders-api');
+    expect(suggestion?.summary).toContain('Failure mode: migration checksum mismatch');
+    expect(suggestion?.questions[1]).toContain('migration checksum mismatch');
+  });
+
+  it('does not build memory enrichment suggestion when verification fails', () => {
+    expect(
+      buildIncidentMemoryEnrichmentSuggestion({
+        verifySuccess: false,
+        actionType: 'inline-command',
+        verifyChecklist: ['pnpm test'],
+      })
+    ).toBeNull();
   });
 });

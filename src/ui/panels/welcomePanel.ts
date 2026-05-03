@@ -55,6 +55,7 @@ import {
 import { ProjectSelectionSequence } from './projectSelectionSequence';
 import { buildIncidentResumeSnapshot, type IncidentResumeSnapshot } from './incidentStudioResume';
 import {
+  buildIncidentMemoryEnrichmentSuggestion,
   buildIncidentMemoryPromptHint,
   buildIncidentMemoryReuseSnapshot,
   mergeIncidentReplayLearningIntoMemory,
@@ -5285,16 +5286,23 @@ No markdown, no explanation outside the JSON.`;
 
       const uiPrefs = this._getUiPreferences();
       if (effectiveVerifySuccess && uiPrefs.incidentAutoLearningPrompt) {
+        const memorySuggestion = buildIncidentMemoryEnrichmentSuggestion({
+          verifySuccess: effectiveVerifySuccess,
+          actionType,
+          likelyFailureMode: wave2Contracts.impactAssessment.likelyFailureMode,
+          verifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
+        });
+
+        if (!memorySuggestion) {
+          return;
+        }
+
         this._panel.webview.postMessage({
           command: 'aiChatSuggestedQuestions',
           data: {
             conversationId,
             messageId: `learn-${Date.now()}`,
-            questions: [
-              'Capture this verified fix as reusable workspace memory.',
-              'Summarize why this fix worked and save it as a team convention.',
-              'Generate a memory entry with command + verification evidence.',
-            ],
+            questions: memorySuggestion.questions,
           },
           meta: { requestId, version: 'v1' },
         });
@@ -5307,8 +5315,8 @@ No markdown, no explanation outside the JSON.`;
             board: {
               id: `learn-board-${Date.now()}`,
               type: 'learning',
-              title: 'Verification passed - capture reusable memory',
-              summary: 'Persist this fix pattern so the next similar incident resolves faster.',
+              title: memorySuggestion.title,
+              summary: memorySuggestion.summary,
               data: {
                 route: 'workspace-memory-wizard',
                 confidence: 90,
@@ -5316,7 +5324,7 @@ No markdown, no explanation outside the JSON.`;
               actions: [
                 {
                   id: `learn-action-${Date.now()}`,
-                  label: 'Capture workspace memory now',
+                  label: memorySuggestion.primaryActionLabel,
                   actionType: 'workspace-memory-wizard',
                   riskLevel: 'low',
                 },

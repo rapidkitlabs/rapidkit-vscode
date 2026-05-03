@@ -27,6 +27,20 @@ export type IncidentMemoryDocument = {
   lastUpdated: string;
 };
 
+export type IncidentMemoryEnrichmentSuggestionInput = {
+  verifySuccess: boolean;
+  actionType: string;
+  likelyFailureMode?: string;
+  verifyChecklist?: string[];
+};
+
+export type IncidentMemoryEnrichmentSuggestion = {
+  title: string;
+  summary: string;
+  questions: string[];
+  primaryActionLabel: string;
+};
+
 const REUSE_HEADING = 'Worked previously in this workspace:';
 
 function compactLine(value: string): string {
@@ -179,5 +193,40 @@ export function mergeIncidentReplayLearningIntoMemory(
     conventions: nextConventions,
     decisions: nextDecisions,
     lastUpdated: memory.lastUpdated,
+  };
+}
+
+export function buildIncidentMemoryEnrichmentSuggestion(
+  input: IncidentMemoryEnrichmentSuggestionInput
+): IncidentMemoryEnrichmentSuggestion | null {
+  if (!input.verifySuccess) {
+    return null;
+  }
+
+  const verifyStep = shortenLine(input.verifyChecklist?.[0] || '', 110);
+  const failureMode = shortenLine(input.likelyFailureMode || '', 90);
+  const actionType = compactLine(input.actionType || 'incident-action');
+
+  const summaryParts = [
+    'Persist this verified fix pattern so the next similar incident resolves faster.',
+    verifyStep ? `Primary verify step: ${verifyStep}` : '',
+    failureMode ? `Failure mode: ${failureMode}` : '',
+  ].filter(Boolean);
+
+  const questions = [
+    'Capture this verified fix as reusable workspace memory.',
+    failureMode
+      ? `Summarize why this fix worked for ${failureMode} and save it as a convention.`
+      : `Summarize why this ${actionType} fix worked and save it as a convention.`,
+    verifyStep
+      ? `Generate a memory entry with verification evidence: ${verifyStep}`
+      : 'Generate a memory entry with command + verification evidence.',
+  ];
+
+  return {
+    title: 'Verification passed - capture reusable memory',
+    summary: summaryParts.join(' '),
+    questions,
+    primaryActionLabel: 'Capture workspace memory now',
   };
 }
