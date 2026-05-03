@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildIncidentMemoryPromptHint,
   buildIncidentMemoryReuseSnapshot,
+  mergeIncidentReplayLearningIntoMemory,
   prependIncidentMemoryReuseBlock,
   shouldAttachIncidentMemoryReuse,
 } from '../ui/panels/incidentStudioMemory';
@@ -51,5 +52,61 @@ describe('incidentStudioMemory', () => {
     const hint = buildIncidentMemoryPromptHint(snapshot);
     expect(hint).toContain('FIRST_RESPONSE_MEMORY_RULE:');
     expect(hint).toContain('Worked previously in this workspace:');
+  });
+
+  it('merges verified replay learning into workspace memory as reusable decisions and conventions', () => {
+    const merged = mergeIncidentReplayLearningIntoMemory(
+      {
+        context: 'Orders backend',
+        conventions: ['Always run lint before tests'],
+        decisions: ['Use additive DB migrations'],
+        lastUpdated: '2026-05-01T00:00:00.000Z',
+      },
+      {
+        packId: 'repro-42',
+        actionType: 'incident-repro-pack',
+        riskLevel: 'high',
+        likelyFailureMode: 'migration checksum mismatch',
+        verifyChecklist: ['pnpm test --filter orders-api', 'rapidkit doctor workspace'],
+        blockedReasons: ['unknown migration order'],
+        relatedFiles: ['src/orders/migrations/001.sql', 'src/orders/service.ts'],
+      }
+    );
+
+    expect(merged.decisions[0]).toContain('Incident replay repro-42 (high)');
+    expect(merged.decisions[0]).toContain('migration checksum mismatch');
+    expect(merged.decisions[0]).toContain('Verify with: pnpm test --filter orders-api');
+    expect(merged.conventions[0]).toBe('Replay verify-first rule: pnpm test --filter orders-api');
+  });
+
+  it('dedupes replay learning entries when the same verified pack is merged again', () => {
+    const base = mergeIncidentReplayLearningIntoMemory(
+      {
+        context: 'Orders backend',
+        conventions: [],
+        decisions: [],
+        lastUpdated: '',
+      },
+      {
+        packId: 'repro-42',
+        actionType: 'incident-repro-pack',
+        riskLevel: 'medium',
+        verifyChecklist: ['rapidkit doctor workspace'],
+        blockedReasons: [],
+        relatedFiles: ['src/orders/service.ts'],
+      }
+    );
+
+    const mergedAgain = mergeIncidentReplayLearningIntoMemory(base, {
+      packId: 'repro-42',
+      actionType: 'incident-repro-pack',
+      riskLevel: 'medium',
+      verifyChecklist: ['rapidkit doctor workspace'],
+      blockedReasons: [],
+      relatedFiles: ['src/orders/service.ts'],
+    });
+
+    expect(mergedAgain.decisions).toHaveLength(1);
+    expect(mergedAgain.conventions).toHaveLength(1);
   });
 });

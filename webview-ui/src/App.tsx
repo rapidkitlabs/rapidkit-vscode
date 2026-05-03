@@ -156,6 +156,31 @@ export function App() {
                 overallPass: boolean;
             };
         } | null;
+        studioReproPackKpiStatus?: {
+            workspacePath: string;
+            timeWindow: 'all' | 'last24h' | 'last7d';
+            windowStartAt: string | null;
+            windowEndAt: string;
+            thresholds: {
+                reproPackShareRateMin: number;
+                replayToResolutionRateMin: number;
+            };
+            metrics: {
+                reproPackCaptured: number;
+                reproPackExported: number;
+                reproPackImported: number;
+                incidentReplayReady: number;
+                incidentReplayMemoryEnriched: number;
+                reproPackShareRate: number | null;
+                replayToResolutionRate: number | null;
+            };
+            gates: {
+                telemetryEvidencePass: boolean;
+                reproPackShareRatePass: boolean;
+                replayToResolutionRatePass: boolean;
+                overallPass: boolean;
+            };
+        } | null;
         doctorSummary?: {
             workspaceName?: string;
             generatedAt?: string;
@@ -1073,6 +1098,26 @@ export function App() {
         });
     };
 
+    const revealArchitectureTarget = (target: {
+        path: string;
+        label: string;
+        kind: 'file' | 'test' | 'node';
+        symbolName?: string;
+        startLine?: number;
+    }) => {
+        const workspacePath =
+            selectedWorkspaceForAnalysis ||
+            workspaceStatus.workspacePath ||
+            chatBrainSystemGraphSnapshot?.workspacePath;
+
+        vscode.postMessage('openIncidentNavigatorTarget', {
+            ...target,
+            workspacePath,
+            workspaceName: activeWorkspaceName,
+            projectPath: chatBrainSystemGraphSnapshot?.projectPath,
+        });
+    };
+
     const bootstrapIncidentStudioForWorkspace = (
         workspacePath: string,
         workspaceName?: string,
@@ -1282,6 +1327,32 @@ export function App() {
             projectPath: selectedProjectForAnalysis?.path,
             warningId,
             predictionKey,
+        });
+    };
+
+    const handleExportIncidentReproPack = (
+        reproPack: NonNullable<NormalizedIncidentActionResultPayload['incidentReproPack']>
+    ) => {
+        const workspacePath =
+            selectedWorkspaceForAnalysis || workspaceStatus.workspacePath || reproPack.workspacePath;
+        vscode.postMessage('exportIncidentReproPack', {
+            incidentReproPack: reproPack,
+            workspacePath,
+        });
+    };
+
+    const handleImportIncidentReproPack = () => {
+        vscode.postMessage('importIncidentReproPack');
+    };
+
+    const handleExportSandboxSimulationEvidence = (
+        sandboxSimulation: NonNullable<NormalizedIncidentActionResultPayload['sandboxSimulation']>
+    ) => {
+        const workspacePath =
+            selectedWorkspaceForAnalysis || workspaceStatus.workspacePath || sandboxSimulation.workspacePath;
+        vscode.postMessage('exportSandboxSimulationEvidence', {
+            sandboxSimulation,
+            workspacePath,
         });
     };
 
@@ -1570,7 +1641,11 @@ export function App() {
                             workspaceName: activeWorkspaceName,
                         })}
                         onRunInlineCommand={runIncidentInlineCommand}
+                        onRevealArchitectureTarget={revealArchitectureTarget}
                         onPredictiveWarningAccepted={handlePredictiveWarningAccepted}
+                        onExportIncidentReproPack={handleExportIncidentReproPack}
+                        onExportSandboxSimulationEvidence={handleExportSandboxSimulationEvidence}
+                        onImportIncidentReproPack={handleImportIncidentReproPack}
                         executingCommand={chatBrainExecutingCommand}
                         primaryCtaMode={incidentPrimaryCtaMode}
                         userMode={incidentUserMode}

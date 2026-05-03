@@ -31,6 +31,7 @@ import {
   buildContextContractFromEvidence,
   validateContextContract,
   type AIContextContractV1,
+  type ContextContractValidationResult,
   type DoctorEvidenceSnapshot,
 } from './aiContextContract';
 export { extractContractTelemetry } from './aiContextContract';
@@ -54,6 +55,8 @@ export interface AIConversationHistoryEntry {
 
 export interface PreparedAIConversation {
   scanned?: ScannedProjectContext;
+  contract: AIContextContractV1;
+  validation: ContextContractValidationResult;
   messages: AIMessage[];
 }
 
@@ -871,6 +874,8 @@ export async function prepareAIConversation(
 
   return {
     scanned,
+    contract,
+    validation,
     messages: [
       {
         role: 'user',

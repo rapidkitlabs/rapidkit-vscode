@@ -357,4 +357,24 @@ describe('contract drift guard', () => {
       "this._panel.webview.postMessage({ command: 'aiStreamDone' });"
     );
   });
+
+  it('keeps AI modal clarification gate ahead of model streaming', () => {
+    const welcomePanelSource = read('src/ui/panels/welcomePanel.ts');
+
+    expect(welcomePanelSource).toContain('prepared.validation.clarificationNeeded');
+    expect(welcomePanelSource).toContain("trackAIModalOutcome('clarification-needed'");
+    expect(welcomePanelSource).toContain("'workspai.aimodal.clarification_gate'");
+    expect(welcomePanelSource).toContain("command: 'aiChunkUpdate'");
+    expect(welcomePanelSource).toContain("command: 'aiStreamDone'");
+
+    const clarificationIdx = welcomePanelSource.indexOf('prepared.validation.clarificationNeeded');
+    const streamIdx = welcomePanelSource.indexOf('await streamAIResponse(');
+    const breakIdx = welcomePanelSource.indexOf('break;', clarificationIdx);
+
+    expect(clarificationIdx).toBeGreaterThan(-1);
+    expect(streamIdx).toBeGreaterThan(-1);
+    expect(breakIdx).toBeGreaterThan(clarificationIdx);
+    expect(clarificationIdx).toBeLessThan(streamIdx);
+    expect(breakIdx).toBeLessThan(streamIdx);
+  });
 });

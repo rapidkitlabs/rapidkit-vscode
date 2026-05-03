@@ -73,6 +73,7 @@ describe('incidentStudioPromptPolicy', () => {
     expect(isIncidentActionAllowlisted('doctor-fix')).toBe(true);
     expect(isIncidentActionAllowlisted('inline-command')).toBe(true);
     expect(isIncidentActionAllowlisted('  recipe-pack  ')).toBe(true);
+    expect(isIncidentActionAllowlisted('incident-repro-pack')).toBe(true);
 
     expect(isIncidentActionAllowlisted('shell-exec-root')).toBe(false);
     expect(isIncidentActionAllowlisted('custom-mutate-action')).toBe(false);
@@ -87,6 +88,7 @@ describe('incidentStudioPromptPolicy', () => {
       'workspace-memory-wizard',
       'doctor-fix',
       'recipe-pack',
+      'incident-repro-pack',
       'inline-command',
       'custom-mutate-action',
     ];

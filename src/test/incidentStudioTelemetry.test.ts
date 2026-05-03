@@ -93,6 +93,31 @@ describe('incidentStudioTelemetry', () => {
           overallPass: false,
         },
       },
+      studioReproPackKpiStatus: {
+        workspacePath: '/tmp/demo',
+        timeWindow: 'last7d',
+        windowStartAt: '2026-04-18T04:00:00.000Z',
+        windowEndAt: '2026-04-25T04:00:00.000Z',
+        thresholds: {
+          reproPackShareRateMin: 20,
+          replayToResolutionRateMin: 60,
+        },
+        metrics: {
+          reproPackCaptured: 5,
+          reproPackExported: 2,
+          reproPackImported: 2,
+          incidentReplayReady: 4,
+          incidentReplayMemoryEnriched: 1,
+          reproPackShareRate: 40,
+          replayToResolutionRate: 50,
+        },
+        gates: {
+          telemetryEvidencePass: true,
+          reproPackShareRatePass: true,
+          replayToResolutionRatePass: false,
+          overallPass: false,
+        },
+      },
       doctorSummary: {
         workspaceName: 'stale-workspace',
         generatedAt: '2026-04-25T03:55:00.000Z',
@@ -112,6 +137,7 @@ describe('incidentStudioTelemetry', () => {
       ctaVariantBreakdown: cachedData.ctaVariantBreakdown,
       studioHardGateStatus: cachedData.studioHardGateStatus,
       studioRollbackKpiStatus: cachedData.studioRollbackKpiStatus,
+      studioReproPackKpiStatus: cachedData.studioReproPackKpiStatus,
       doctorSummary: {
         ...freshDoctorSummary,
         ctaVariantBreakdown: cachedData.ctaVariantBreakdown,
@@ -236,6 +262,31 @@ describe('incidentStudioTelemetry', () => {
             falseConfidenceRatePass: false,
             overallPass: false,
           },
+        },
+        {
+          workspacePath: '/tmp/demo',
+          timeWindow: 'last7d',
+          windowStartAt: '2026-04-18T04:00:00.000Z',
+          windowEndAt: '2026-04-25T04:10:00.000Z',
+          thresholds: {
+            reproPackShareRateMin: 20,
+            replayToResolutionRateMin: 60,
+          },
+          metrics: {
+            reproPackCaptured: 5,
+            reproPackExported: 3,
+            reproPackImported: 2,
+            incidentReplayReady: 4,
+            incidentReplayMemoryEnriched: 2,
+            reproPackShareRate: 60,
+            replayToResolutionRate: 100,
+          },
+          gates: {
+            telemetryEvidencePass: true,
+            reproPackShareRatePass: true,
+            replayToResolutionRatePass: true,
+            overallPass: true,
+          },
         }
       )
     ).toEqual({
@@ -322,6 +373,31 @@ describe('incidentStudioTelemetry', () => {
           overallPass: false,
         },
       },
+      studioReproPackKpiStatus: {
+        workspacePath: '/tmp/demo',
+        timeWindow: 'last7d',
+        windowStartAt: '2026-04-18T04:00:00.000Z',
+        windowEndAt: '2026-04-25T04:10:00.000Z',
+        thresholds: {
+          reproPackShareRateMin: 20,
+          replayToResolutionRateMin: 60,
+        },
+        metrics: {
+          reproPackCaptured: 5,
+          reproPackExported: 3,
+          reproPackImported: 2,
+          incidentReplayReady: 4,
+          incidentReplayMemoryEnriched: 2,
+          reproPackShareRate: 60,
+          replayToResolutionRate: 100,
+        },
+        gates: {
+          telemetryEvidencePass: true,
+          reproPackShareRatePass: true,
+          replayToResolutionRatePass: true,
+          overallPass: true,
+        },
+      },
       doctorSummary: {
         workspaceName: 'demo',
         ctaVariantBreakdown: {
@@ -346,6 +422,37 @@ describe('incidentStudioTelemetry', () => {
         },
       },
     });
+  });
+
+  it('preserves clarification-gate command usage entries in commandSummary payload', () => {
+    const payload = buildIncidentStudioTelemetryPayload(
+      {
+        totalEvents: 4,
+        lastCommand: 'workspai.aimodal.clarification_gate',
+        lastCommandAt: '2026-04-25T04:10:00.000Z',
+        commandUsage: [
+          { command: 'workspai.aimodal.clarification_gate', count: 3 },
+          { command: 'workspai.chat.clarification_gate', count: 1 },
+        ],
+        surfaceBreakdown: {
+          actionEvents: 0,
+          askEvents: 4,
+          actionVsAskShare: 0,
+        },
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    );
+
+    expect(payload.commandSummary?.lastCommand).toBe('workspai.aimodal.clarification_gate');
+    expect(payload.commandSummary?.commandUsage).toEqual([
+      { command: 'workspai.aimodal.clarification_gate', count: 3 },
+      { command: 'workspai.chat.clarification_gate', count: 1 },
+    ]);
   });
 
   it('preserves null verify completion rate so incomplete verify paths are not shown as completed', () => {

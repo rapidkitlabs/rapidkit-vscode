@@ -8,7 +8,9 @@ export type SystemGraphNodeType =
   | 'service'
   | 'model'
   | 'datastore'
-  | 'test';
+  | 'test'
+  | 'infra-service'
+  | 'db-schema';
 
 export interface SystemGraphNode {
   id: string;
@@ -16,6 +18,8 @@ export interface SystemGraphNode {
   label: string;
   filePath: string;
   confidence: number;
+  symbolName?: string;
+  startLine?: number;
 }
 
 export interface SystemGraphEdge {
@@ -34,6 +38,8 @@ export interface ProjectSystemGraphSnapshot {
   refreshMode: 'full' | 'incremental' | 'cache-hit';
   changedFileCount: number;
   generatedAt: number;
+  /** Present and true when the snapshot was built with localProcessingMode — symbol details are stripped. */
+  localProcessingMode?: boolean;
 }
 
 export interface ProjectSystemGraphIndexerInput {
@@ -44,6 +50,8 @@ export interface ProjectSystemGraphIndexerInput {
   maxFiles?: number;
   useIncrementalCache?: boolean;
   forceFullScan?: boolean;
+  /** When true, strips symbolName and startLine from nodes to avoid leaking symbol details outside the local machine. */
+  localProcessingMode?: boolean;
 }
 
 interface SourceFileEntry {
@@ -94,6 +102,7 @@ export interface DeterministicImpactScoringResult {
   likelyFailureMode?: string;
   rationale: string[];
   blockedReasons: string[];
+  architectureWarnings: string[];
 }
 
 export interface ProjectSystemGraphWatcherUpdate {
@@ -122,6 +131,7 @@ export interface ProjectSystemGraphWatcherHandle {
 const GRAPH_CACHE = new Map<string, GraphCacheEntry>();
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.py', '.go', '.java']);
+const INFRA_EXTENSIONS = new Set(['.yaml', '.yml', '.prisma', '.sql']);
 const IGNORE_DIRS = new Set([
   '.git',
   'node_modules',
@@ -256,7 +266,7 @@ async function collectSourceFiles(scanRoot: string, maxFiles: number): Promise<S
       }
 
       const ext = path.extname(entry.name).toLowerCase();
-      if (!SOURCE_EXTENSIONS.has(ext)) {
+      if (!SOURCE_EXTENSIONS.has(ext) && !INFRA_EXTENSIONS.has(ext)) {
         continue;
       }
 
@@ -291,20 +301,142 @@ function collectWatchDirectories(scanRoot: string, files: SourceFileEntry[]): st
 }
 
 function classifySourceFileToNodes(entry: SourceFileEntry, source: string): SystemGraphNode[] {
+  const ext = path.extname(entry.relPath).toLowerCase();
+  if (INFRA_EXTENSIONS.has(ext)) {
+    return classifyInfraFileToNodes(entry, source);
+  }
   const classified = classifyNodeType(entry.relPath, source.slice(0, 12000));
   if (!classified) {
     return [];
   }
 
+  const anchor = extractRepresentativeSymbolAnchor(entry.relPath, source, classified.type);
+
   return [
     {
       id: makeNodeId(classified.type, entry.relPath),
       type: classified.type,
-      label: path.basename(entry.relPath),
+      label: anchor.label,
       filePath: entry.relPath,
       confidence: clampConfidence(classified.confidence),
+      ...(anchor.symbolName ? { symbolName: anchor.symbolName } : {}),
+      ...(typeof anchor.startLine === 'number' ? { startLine: anchor.startLine } : {}),
     },
   ];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function toFallbackSymbolName(relPath: string): string {
+  const base = path.basename(relPath, path.extname(relPath));
+  return base.replace(/[._-]+/g, ' ').trim() || base;
+}
+
+function findLineMatch(
+  lines: string[],
+  matchers: Array<(line: string) => { label: string; symbolName?: string } | null>
+): { label: string; symbolName?: string; startLine: number } | null {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    for (const matcher of matchers) {
+      const result = matcher(line);
+      if (result) {
+        return {
+          ...result,
+          startLine: index + 1,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function extractRepresentativeSymbolAnchor(
+  relPath: string,
+  source: string,
+  nodeType: SystemGraphNodeType
+): { label: string; symbolName?: string; startLine?: number } {
+  const lines = source.split(/\r?\n/);
+  const fallbackSymbol = toFallbackSymbolName(relPath);
+  const fallbackLabel = path.basename(relPath);
+
+  const routeMatchers = [
+    (line: string) => {
+      const match = line.match(/\brouter\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/i);
+      if (!match) {
+        return null;
+      }
+      const method = match[1].toUpperCase();
+      const routePath = match[2];
+      return { label: `${method} ${routePath}`, symbolName: routePath };
+    },
+    (line: string) => {
+      const match = line.match(
+        /@(?:Request)?(Get|Post|Put|Patch|Delete)Mapping\(\s*["']?([^"')\s]+)?/i
+      );
+      if (!match) {
+        return null;
+      }
+      const method = match[1].toUpperCase();
+      const routePath = (match[2] || '').trim();
+      return {
+        label: routePath ? `${method} ${routePath}` : `${method} route`,
+        symbolName: routePath || `${method}Mapping`,
+      };
+    },
+  ];
+
+  const symbolMatchers = [
+    (line: string) => {
+      const match = line.match(/\b(?:export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\binterface\s+([A-Za-z_][A-Za-z0-9_]*)/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\brecord\s+([A-Za-z_][A-Za-z0-9_]*)/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\b(?:export\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\(/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+    (line: string) => {
+      const match = line.match(/\b(?:describe|test|it)\s*\(\s*["'`]([^"'`]+)["'`]/);
+      return match ? { label: match[1], symbolName: match[1] } : null;
+    },
+  ];
+
+  const matchers = nodeType === 'route' ? [...routeMatchers, ...symbolMatchers] : symbolMatchers;
+  const match = findLineMatch(lines, matchers);
+  if (match) {
+    return match;
+  }
+
+  const fallbackSymbolRegex = new RegExp(`\\b${escapeRegExp(fallbackSymbol)}\\b`, 'i');
+  const fallbackLineIndex = lines.findIndex((line) => fallbackSymbolRegex.test(line));
+
+  return {
+    label: fallbackSymbol || fallbackLabel,
+    symbolName: fallbackSymbol || undefined,
+    ...(fallbackLineIndex >= 0 ? { startLine: fallbackLineIndex + 1 } : {}),
+  };
 }
 
 function classifyNodeType(
@@ -375,6 +507,163 @@ function classifyNodeType(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Cross-layer infra/schema parsers (docker-compose, prisma, SQL migrations)
+// ---------------------------------------------------------------------------
+
+function parseDockerComposeNodes(relPath: string, source: string): SystemGraphNode[] {
+  const nodes: SystemGraphNode[] = [];
+  // Match service names under the `services:` block (YAML key pattern)
+  const servicesBlockMatch = source.match(/^services\s*:/m);
+  if (!servicesBlockMatch) {
+    return nodes;
+  }
+
+  const serviceNameRegex = /^ {2}([a-zA-Z0-9_-]+)\s*:/gm;
+  let match: RegExpExecArray | null;
+  while ((match = serviceNameRegex.exec(source)) !== null) {
+    const serviceName = match[1];
+    // Skip YAML reserved sub-keys that appear indented under a service block
+    const reservedKeys = new Set([
+      'image',
+      'build',
+      'ports',
+      'volumes',
+      'environment',
+      'depends_on',
+      'networks',
+      'command',
+      'entrypoint',
+      'restart',
+      'labels',
+      'env_file',
+      'healthcheck',
+      'deploy',
+      'configs',
+      'secrets',
+      'logging',
+      'extra_hosts',
+    ]);
+    if (reservedKeys.has(serviceName)) {
+      continue;
+    }
+    const lineIndex = source.slice(0, match.index).split('\n').length;
+    nodes.push({
+      id: makeNodeId('infra-service', `${relPath}#${serviceName}`),
+      type: 'infra-service',
+      label: serviceName,
+      filePath: relPath,
+      confidence: 82,
+      symbolName: serviceName,
+      startLine: lineIndex,
+    });
+  }
+  return nodes;
+}
+
+function parsePrismaSchemaNodes(relPath: string, source: string): SystemGraphNode[] {
+  const nodes: SystemGraphNode[] = [];
+  // Match `model ModelName {` declarations
+  const modelRegex = /^model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm;
+  let match: RegExpExecArray | null;
+  while ((match = modelRegex.exec(source)) !== null) {
+    const modelName = match[1];
+    const lineIndex = source.slice(0, match.index).split('\n').length;
+    nodes.push({
+      id: makeNodeId('db-schema', `${relPath}#${modelName}`),
+      type: 'db-schema',
+      label: modelName,
+      filePath: relPath,
+      confidence: 88,
+      symbolName: modelName,
+      startLine: lineIndex,
+    });
+  }
+  // Match `enum EnumName {` declarations
+  const enumRegex = /^enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm;
+  while ((match = enumRegex.exec(source)) !== null) {
+    const enumName = match[1];
+    const lineIndex = source.slice(0, match.index).split('\n').length;
+    nodes.push({
+      id: makeNodeId('db-schema', `${relPath}#${enumName}`),
+      type: 'db-schema',
+      label: enumName,
+      filePath: relPath,
+      confidence: 78,
+      symbolName: enumName,
+      startLine: lineIndex,
+    });
+  }
+  return nodes;
+}
+
+function parseSqlMigrationNodes(relPath: string, source: string): SystemGraphNode[] {
+  const nodes: SystemGraphNode[] = [];
+  // Match CREATE TABLE statements
+  const createTableRegex =
+    /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?([A-Za-z_][A-Za-z0-9_]*)["'`]?\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = createTableRegex.exec(source)) !== null) {
+    const tableName = match[1];
+    const lineIndex = source.slice(0, match.index).split('\n').length;
+    nodes.push({
+      id: makeNodeId('db-schema', `${relPath}#${tableName}`),
+      type: 'db-schema',
+      label: tableName,
+      filePath: relPath,
+      confidence: 85,
+      symbolName: tableName,
+      startLine: lineIndex,
+    });
+  }
+  // Match ALTER TABLE ... ADD COLUMN as weaker signal (schema drift)
+  const alterTableRegex = /\bALTER\s+TABLE\s+["'`]?([A-Za-z_][A-Za-z0-9_]*)["'`]?\s+ADD/gi;
+  const seen = new Set(nodes.map((node) => node.symbolName));
+  while ((match = alterTableRegex.exec(source)) !== null) {
+    const tableName = match[1];
+    if (!seen.has(tableName)) {
+      seen.add(tableName);
+      const lineIndex = source.slice(0, match.index).split('\n').length;
+      nodes.push({
+        id: makeNodeId('db-schema', `${relPath}#${tableName}`),
+        type: 'db-schema',
+        label: tableName,
+        filePath: relPath,
+        confidence: 72,
+        symbolName: tableName,
+        startLine: lineIndex,
+      });
+    }
+  }
+  return nodes;
+}
+
+function classifyInfraFileToNodes(entry: SourceFileEntry, source: string): SystemGraphNode[] {
+  const ext = path.extname(entry.relPath).toLowerCase();
+  const baseName = path.basename(entry.relPath).toLowerCase();
+
+  if (ext === '.prisma') {
+    return parsePrismaSchemaNodes(entry.relPath, source);
+  }
+
+  if (ext === '.sql') {
+    return parseSqlMigrationNodes(entry.relPath, source);
+  }
+
+  if (ext === '.yaml' || ext === '.yml') {
+    // Only parse docker-compose files; skip other YAML configs (e.g., CI, k8s)
+    if (
+      baseName.startsWith('docker-compose') ||
+      baseName === 'compose.yaml' ||
+      baseName === 'compose.yml'
+    ) {
+      return parseDockerComposeNodes(entry.relPath, source);
+    }
+  }
+
+  return [];
+}
+
 function tokensFromPath(relPath: string): string[] {
   const withoutExt = relPath.replace(/\.[^.]+$/, '').toLowerCase();
   const tokens = withoutExt
@@ -401,6 +690,8 @@ function buildEdges(nodes: SystemGraphNode[]): SystemGraphEdge[] {
   const modelNodes = nodes.filter((node) => node.type === 'model');
   const datastoreNodes = nodes.filter((node) => node.type === 'datastore');
   const testNodes = nodes.filter((node) => node.type === 'test');
+  const infraServiceNodes = nodes.filter((node) => node.type === 'infra-service');
+  const dbSchemaNodes = nodes.filter((node) => node.type === 'db-schema');
 
   const tokenMap = new Map<string, string[]>();
   for (const node of nodes) {
@@ -464,6 +755,12 @@ function buildEdges(nodes: SystemGraphNode[]): SystemGraphEdge[] {
     'covered-by'
   );
 
+  // Cross-layer edges: code services → infra services, models → db-schema
+  connectByTokenOverlap(serviceNodes, infraServiceNodes, 'reads');
+  connectByTokenOverlap(datastoreNodes, infraServiceNodes, 'reads');
+  connectByTokenOverlap(modelNodes, dbSchemaNodes, 'depends-on');
+  connectByTokenOverlap(datastoreNodes, dbSchemaNodes, 'reads');
+
   return edges;
 }
 
@@ -504,6 +801,52 @@ function modulesFromNodes(nodes: SystemGraphNode[]): string[] {
     }
   }
   return Array.from(modules).slice(0, 8);
+}
+
+function inferServiceBoundary(node: SystemGraphNode): string {
+  const relPath = node.filePath.split(path.sep).join('/').toLowerCase();
+  const segments = relPath.split('/').filter((segment) => segment.length > 0);
+
+  const boundaryAnchors = new Set([
+    'routes',
+    'route',
+    'router',
+    'controllers',
+    'controller',
+    'services',
+    'service',
+    'models',
+    'model',
+    'entities',
+    'entity',
+    'schemas',
+    'schema',
+    'repositories',
+    'repository',
+    'dao',
+    'database',
+    'db',
+    'tests',
+    'test',
+  ]);
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (!boundaryAnchors.has(segment)) {
+      continue;
+    }
+    if (index > 0) {
+      const candidate = normalizeModuleToken(segments[index - 1]);
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+
+  const tokens = tokensFromPath(node.filePath)
+    .map((token) => normalizeModuleToken(token))
+    .filter((token) => token.length > 0);
+  return tokens[0] || 'unknown-boundary';
 }
 
 function impactedNodeIdsFromSeeds(
@@ -639,6 +982,7 @@ export function scoreSystemGraphImpactDeterministic(
   const scopeKnown = !impact.unknownScope && impact.impactedNodes.length > 0;
   const blockedReasons: string[] = [];
   const rationale: string[] = [];
+  const architectureWarnings: string[] = [];
 
   let riskScore = 0;
 
@@ -661,6 +1005,54 @@ export function scoreSystemGraphImpactDeterministic(
   if (impact.impactedModules.length >= 3) {
     riskScore += 12;
     rationale.push('Impact spans multiple modules.');
+  }
+
+  const boundarySet = new Set(
+    impact.impactedNodes
+      .filter(
+        (node) =>
+          node.type === 'route' ||
+          node.type === 'controller' ||
+          node.type === 'service' ||
+          node.type === 'datastore'
+      )
+      .map((node) => inferServiceBoundary(node))
+      .filter((boundary) => boundary.length > 0)
+  );
+  if (boundarySet.size >= 2) {
+    riskScore += 14;
+    rationale.push(`Service-boundary impact detected across ${boundarySet.size} bounded contexts.`);
+    architectureWarnings.push(
+      `Cross-boundary mutation risk: ${Array.from(boundarySet).slice(0, 3).join(', ')}`
+    );
+  }
+
+  const impactedNodeById = new Map(impact.impactedNodes.map((node) => [node.id, node]));
+  const impactedEdges = impact.impactedEdges;
+  const hasCallEdge = impactedEdges.some((edge) => edge.relation === 'calls');
+  const hasDependencyEdge = impactedEdges.some(
+    (edge) => edge.relation === 'depends-on' || edge.relation === 'reads'
+  );
+  const hasRuntimeToDataPath = impactedEdges.some((edge) => {
+    const source = impactedNodeById.get(edge.sourceId);
+    const target = impactedNodeById.get(edge.targetId);
+    if (!source || !target) {
+      return false;
+    }
+    const sourceIsRuntime =
+      source.type === 'route' || source.type === 'controller' || source.type === 'service';
+    const targetIsCore = target.type === 'service' || target.type === 'datastore';
+    return sourceIsRuntime && targetIsCore;
+  });
+  if (hasCallEdge && hasDependencyEdge && hasRuntimeToDataPath && impactedEdges.length >= 3) {
+    riskScore += 16;
+    rationale.push('Data-flow dependency chain indicates pre-apply architecture breakage risk.');
+    architectureWarnings.push(
+      'Architecture breakage warning: runtime -> service -> datastore dependency chain is in scope.'
+    );
+    if (input.requiresImpactReview) {
+      blockedReasons.push('Architecture breakage warning requires explicit impact confirmation.');
+    }
   }
 
   if (impact.candidateTests.length === 0) {
@@ -726,6 +1118,8 @@ export function scoreSystemGraphImpactDeterministic(
   let likelyFailureMode: string | undefined;
   if (!scopeKnown) {
     likelyFailureMode = 'Affected scope is uncertain, so mutation may impact unknown services.';
+  } else if (architectureWarnings.length > 0) {
+    likelyFailureMode = architectureWarnings[0];
   } else if (doctorErrors > 0) {
     likelyFailureMode = `${doctorErrors} unresolved doctor error(s) suggest runtime breakage risk.`;
   } else if (impact.candidateTests.length === 0) {
@@ -742,6 +1136,111 @@ export function scoreSystemGraphImpactDeterministic(
     likelyFailureMode,
     rationale,
     blockedReasons: uniqueStrings(blockedReasons),
+    architectureWarnings: uniqueStrings(architectureWarnings),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Query API: assembleSystemGraphContextPacket
+// Single-call API that indexes the graph, runs impact query, scores it, and
+// returns a structured context packet ready for AI context assembly and
+// predictive-diagnostics payload construction.
+// ---------------------------------------------------------------------------
+
+export interface SystemGraphContextPacketInput extends ProjectSystemGraphIndexerInput {
+  seedFilePaths?: string[];
+  seedModules?: string[];
+  impactMaxNodes?: number;
+  impactMaxDepth?: number;
+  doctorErrors?: number;
+  doctorWarnings?: number;
+  requiresImpactReview?: boolean;
+  requiresVerifyPath?: boolean;
+  riskClass?: DeterministicImpactScoringInput['riskClass'];
+}
+
+export interface SystemGraphContextPacket {
+  snapshot: ProjectSystemGraphSnapshot;
+  impact: SystemGraphImpactQueryResult;
+  scoring: DeterministicImpactScoringResult;
+  /** Compact text summary ready for injection into an AI prompt context slot. */
+  aiContextSummary: string;
+}
+
+function buildAiContextSummary(
+  snapshot: ProjectSystemGraphSnapshot,
+  impact: SystemGraphImpactQueryResult,
+  scoring: DeterministicImpactScoringResult
+): string {
+  const lines: string[] = [];
+
+  lines.push(
+    `System graph: ${snapshot.nodes.length} nodes across ${snapshot.topModules.slice(0, 5).join(', ') || 'unknown modules'} (topology: ${snapshot.supportedTopology}).`
+  );
+
+  if (impact.unknownScope) {
+    lines.push(
+      'Impact scope: unknown — affected modules could not be resolved from available seeds.'
+    );
+  } else {
+    lines.push(
+      `Impact scope: ${impact.impactedNodes.length} node(s), ${impact.impactedModules.slice(0, 5).join(', ') || 'unknown modules'}, confidence ${impact.confidence}%.`
+    );
+    if (impact.candidateTests.length > 0) {
+      lines.push(
+        `Candidate tests: ${impact.candidateTests.slice(0, 4).join(', ')}${impact.candidateTests.length > 4 ? ` (+${impact.candidateTests.length - 4} more)` : ''}.`
+      );
+    } else {
+      lines.push('Candidate tests: none found for affected scope.');
+    }
+  }
+
+  lines.push(
+    `Risk: ${scoring.riskLevel} (scoring confidence ${scoring.confidence}%)${scoring.scopeKnown ? '' : ', scope unknown'}.`
+  );
+
+  if (scoring.likelyFailureMode) {
+    lines.push(`Likely failure mode: ${scoring.likelyFailureMode}`);
+  }
+
+  if (scoring.architectureWarnings.length > 0) {
+    lines.push(`Architecture warnings: ${scoring.architectureWarnings.slice(0, 2).join('; ')}.`);
+  }
+
+  if (scoring.blockedReasons.length > 0) {
+    lines.push(`Blocked: ${scoring.blockedReasons.slice(0, 2).join('; ')}.`);
+  }
+
+  return lines.join(' ');
+}
+
+export async function assembleSystemGraphContextPacket(
+  input: SystemGraphContextPacketInput
+): Promise<SystemGraphContextPacket> {
+  const snapshot = await indexProjectSystemGraph(input);
+
+  const impact = queryProjectSystemGraphImpact(snapshot, {
+    seedFilePaths: input.seedFilePaths,
+    seedModules: input.seedModules,
+    maxNodes: input.impactMaxNodes,
+    maxDepth: input.impactMaxDepth,
+  });
+
+  const scoring = scoreSystemGraphImpactDeterministic({
+    impactQuery: impact,
+    graphSnapshot: snapshot,
+    doctorErrors: input.doctorErrors ?? 0,
+    doctorWarnings: input.doctorWarnings ?? 0,
+    requiresImpactReview: input.requiresImpactReview ?? false,
+    requiresVerifyPath: input.requiresVerifyPath ?? false,
+    riskClass: input.riskClass ?? 'non-mutating-executable',
+  });
+
+  return {
+    snapshot,
+    impact,
+    scoring,
+    aiContextSummary: buildAiContextSummary(snapshot, impact, scoring),
   };
 }
 
@@ -992,15 +1491,21 @@ export async function indexProjectSystemGraph(
     nodesByFile,
   });
 
+  const localProcessingMode = input.localProcessingMode === true;
+  const outputNodes: SystemGraphNode[] = localProcessingMode
+    ? dedupedNodes.map(({ symbolName: _sym, startLine: _line, ...rest }) => rest)
+    : dedupedNodes;
+
   return {
     scanRoot,
     supportedTopology: normalizeTopology(input),
-    nodes: dedupedNodes,
+    nodes: outputNodes,
     edges,
     scannedFileCount: files.length,
     topModules: topModulesFromNodes(dedupedNodes),
     refreshMode,
     changedFileCount: changedEntries.length + removedRelPaths.length,
     generatedAt: Date.now(),
+    ...(localProcessingMode ? { localProcessingMode: true } : {}),
   };
 }

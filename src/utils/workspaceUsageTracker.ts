@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import { Logger } from './logger';
 import {
   readWorkspaceMarker,
@@ -11,6 +12,7 @@ import {
   writeWorkspaceMarker,
 } from './workspaceMarker';
 import { getExtensionVersion } from './constants';
+import { WorkspaceManager } from '../core/workspaceManager';
 
 export interface CommandTelemetrySummary {
   workspacePath: string;
@@ -112,12 +114,27 @@ export interface StudioPredictionKpiThresholds {
   preventedIncidentRateMin: number;
 }
 
+export type StudioPredictionKpiAggregationKey =
+  | 'prevented_incident_rate'
+  | 'predictive_precision'
+  | 'false_alarm_rate';
+
+export interface StudioPredictionKpiAggregationMetric {
+  key: StudioPredictionKpiAggregationKey;
+  numerator: number;
+  denominator: number;
+  value: number | null;
+  unit: 'percent';
+  eventCommands: string[];
+}
+
 export interface StudioPredictionKpiStatus {
   workspacePath: string;
   timeWindow: CommandTelemetryTimeWindow;
   windowStartAt: string | null;
   windowEndAt: string;
   thresholds: StudioPredictionKpiThresholds;
+  aggregation: Record<StudioPredictionKpiAggregationKey, StudioPredictionKpiAggregationMetric>;
   metrics: {
     predictionShown: number;
     predictionAccepted: number;
@@ -135,6 +152,109 @@ export interface StudioPredictionKpiStatus {
     predictivePrecisionPass: boolean;
     falseAlarmRatePass: boolean;
     preventedIncidentRatePass: boolean;
+    overallPass: boolean;
+  };
+}
+
+export interface StudioPredictionPortfolioKpiStatus {
+  scope: 'explicit-workspaces' | 'registered-workspaces';
+  workspacePaths: string[];
+  evaluatedWorkspaceCount: number;
+  telemetryWorkspaceCount: number;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: StudioPredictionKpiThresholds;
+  aggregation: Record<StudioPredictionKpiAggregationKey, StudioPredictionKpiAggregationMetric>;
+  metrics: StudioPredictionKpiStatus['metrics'] & {
+    workspacePassCount: number;
+    workspaceFailCount: number;
+  };
+  gates: StudioPredictionKpiStatus['gates'];
+  workspaceStatuses: StudioPredictionKpiStatus[];
+  privacy: {
+    actorModel: 'workspace-marker-only';
+    actorIdPresent: false;
+  };
+}
+
+export interface RepeatRateActorStatus {
+  actorKey: string;
+  eventCount: number;
+  activeHourCount: number;
+  repeated: boolean;
+  lastEventAt: string | null;
+}
+
+export interface RepeatRateActorModelStatus {
+  scope: 'explicit-workspaces' | 'registered-workspaces';
+  workspaceCount: number;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  activeActorCount: number;
+  repeatActorCount: number;
+  repeatRate: number | null;
+  actors: RepeatRateActorStatus[];
+  privacy: {
+    actorModel: 'pseudonymous-workspace-marker';
+    rawUserIdPresent: false;
+    rawWorkspacePathInActorKey: false;
+  };
+}
+
+export interface ArchitectureReasoningKpiThresholds {
+  architectureBreakagePreventedRateMin: number;
+  architectureFalseAlarmRateMax: number;
+}
+
+export interface ArchitectureReasoningKpiStatus {
+  workspacePath: string;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: ArchitectureReasoningKpiThresholds;
+  metrics: {
+    architectureWarningShown: number;
+    architectureWarningAccepted: number;
+    architectureBreakagePrevented: number;
+    architectureWarningFalsified: number;
+    architectureUnknownScopeBlocked: number;
+    architectureBreakagePreventedRate: number | null;
+    architectureFalseAlarmRate: number | null;
+    architectureAcceptanceRate: number | null;
+  };
+  gates: {
+    telemetryEvidencePass: boolean;
+    architectureBreakagePreventedRatePass: boolean;
+    architectureFalseAlarmRatePass: boolean;
+    overallPass: boolean;
+  };
+}
+
+export interface SandboxKpiThresholds {
+  sandboxSimulationPassRateMin: number;
+  unsafeApplyEscapeRateMax: number;
+}
+
+export interface SandboxKpiStatus {
+  workspacePath: string;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: SandboxKpiThresholds;
+  metrics: {
+    sandboxSimulationStarted: number;
+    sandboxSimulationPassed: number;
+    sandboxSimulationFailed: number;
+    unsafeApplyEscaped: number;
+    sandboxSimulationPassRate: number | null;
+    unsafeApplyEscapeRate: number | null;
+  };
+  gates: {
+    telemetryEvidencePass: boolean;
+    sandboxSimulationPassRatePass: boolean;
+    unsafeApplyEscapeRatePass: boolean;
     overallPass: boolean;
   };
 }
@@ -161,6 +281,60 @@ export interface StudioRollbackKpiStatus {
     telemetryEvidencePass: boolean;
     verifyAutoRollbackSuccessRatePass: boolean;
     falseConfidenceRatePass: boolean;
+    overallPass: boolean;
+  };
+}
+
+export interface StudioReproPackKpiThresholds {
+  reproPackShareRateMin: number;
+  replayToResolutionRateMin: number;
+}
+
+export interface StudioReproPackKpiStatus {
+  workspacePath: string;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: StudioReproPackKpiThresholds;
+  metrics: {
+    reproPackCaptured: number;
+    reproPackExported: number;
+    reproPackImported: number;
+    incidentReplayReady: number;
+    incidentReplayMemoryEnriched: number;
+    reproPackShareRate: number | null;
+    replayToResolutionRate: number | null;
+  };
+  gates: {
+    telemetryEvidencePass: boolean;
+    reproPackShareRatePass: boolean;
+    replayToResolutionRatePass: boolean;
+    overallPass: boolean;
+  };
+}
+
+export interface ClarificationGateKpiThresholds {
+  clarificationRateVsAskMax: number;
+}
+
+export interface ClarificationGateKpiStatus {
+  workspacePath: string;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: ClarificationGateKpiThresholds;
+  metrics: {
+    chatAskCount: number;
+    aimodalAskCount: number;
+    totalAskCount: number;
+    chatClarificationGateCount: number;
+    aimodalClarificationGateCount: number;
+    clarificationGateCount: number;
+    clarificationRateVsAsk: number | null;
+  };
+  gates: {
+    telemetryEvidencePass: boolean;
+    clarificationRateVsAskPass: boolean;
     overallPass: boolean;
   };
 }
@@ -217,11 +391,11 @@ const TELEMETRY_SURFACE_ALLOWLIST: TelemetrySurfaceAllowlistRule[] = [
   },
   {
     surface: 'chat',
-    pattern: /^workspai\.chat\.(ask|debug)$/,
+    pattern: /^workspai\.chat\.(ask|debug|clarification_gate)$/,
   },
   {
     surface: 'aimodal',
-    pattern: /^workspai\.aimodal\.(ask|debug)$/,
+    pattern: /^workspai\.aimodal\.(ask|debug|clarification_gate)$/,
   },
   {
     surface: 'onboarding',
@@ -231,7 +405,17 @@ const TELEMETRY_SURFACE_ALLOWLIST: TelemetrySurfaceAllowlistRule[] = [
   {
     surface: 'action',
     pattern:
-      /^workspai\.studio\.(loop_started|next_action_clicked|action_executed|verify_passed|verify_failed|loop_completed|abandoned|prediction_shown|prediction_accepted|prediction_verified|prediction_falsified|rollback_attempted|rollback_succeeded|rollback_failed)$/,
+      /^workspai\.studio\.(loop_started|next_action_clicked|action_executed|verify_passed|verify_failed|loop_completed|abandoned|prediction_shown|prediction_accepted|prediction_verified|prediction_falsified|rollback_attempted|rollback_succeeded|rollback_failed|incident_repro_pack_captured|incident_repro_pack_exported|incident_repro_pack_imported|incident_replay_ready|incident_replay_memory_enriched)$/,
+  },
+  {
+    surface: 'action',
+    pattern:
+      /^workspai\.studio\.(architecture_warning_shown|architecture_warning_accepted|architecture_breakage_prevented|architecture_warning_falsified|architecture_unknown_scope_blocked)$/,
+  },
+  {
+    surface: 'action',
+    pattern:
+      /^workspai\.studio\.(sandbox_simulation_started|sandbox_simulation_passed|sandbox_simulation_failed|unsafe_apply_escaped)$/,
   },
 ];
 
@@ -337,6 +521,14 @@ export class WorkspaceUsageTracker {
     const date = new Date(timeMs);
     date.setUTCMinutes(0, 0, 0);
     return date.toISOString();
+  }
+
+  private toActorKey(workspacePath: string): string {
+    return crypto
+      .createHash('sha256')
+      .update(`workspai-workspace-actor:${workspacePath}`)
+      .digest('hex')
+      .slice(0, 16);
   }
 
   private parseHourlyUsage(value: unknown): TelemetryHourlyUsageBucket[] {
@@ -697,6 +889,191 @@ export class WorkspaceUsageTracker {
     }
 
     return usageMap;
+  }
+
+  private countEventsFromUsageMap(usageMap: Map<string, number>): number {
+    let total = 0;
+    for (const count of usageMap.values()) {
+      total += count;
+    }
+    return total;
+  }
+
+  private getActiveHoursFromRecentEvents(
+    recentEvents: TelemetryCommandEvent[],
+    windowStartMs: number | null
+  ): Set<string> {
+    const activeHours = new Set<string>();
+    for (const event of recentEvents) {
+      const eventMs = Date.parse(event.at);
+      if (Number.isNaN(eventMs) || (windowStartMs !== null && eventMs < windowStartMs)) {
+        continue;
+      }
+      activeHours.add(this.toHourBucketIso(eventMs));
+    }
+    return activeHours;
+  }
+
+  private getActiveHoursFromHourlyUsage(
+    hourlyUsage: TelemetryHourlyUsageBucket[],
+    windowStartMs: number,
+    windowEndMs: number
+  ): Set<string> {
+    const activeHours = new Set<string>();
+    for (const bucket of hourlyUsage) {
+      const hourMs = Date.parse(bucket.hour);
+      if (Number.isNaN(hourMs) || hourMs < windowStartMs || hourMs > windowEndMs) {
+        continue;
+      }
+      if (Object.values(bucket.usage).some((count) => count > 0)) {
+        activeHours.add(bucket.hour);
+      }
+    }
+    return activeHours;
+  }
+
+  private parseCommandUsage(value: unknown): Map<string, number> {
+    const usageMap = new Map<string, number>();
+    if (!value || typeof value !== 'object') {
+      return usageMap;
+    }
+
+    for (const [command, count] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof count === 'number' && Number.isFinite(count) && count > 0) {
+        usageMap.set(command, count);
+      }
+    }
+
+    return usageMap;
+  }
+
+  private buildStudioUsageMap(input: {
+    commandUsage: unknown;
+    hourlyUsage: TelemetryHourlyUsageBucket[];
+    recentEvents: TelemetryCommandEvent[];
+    timeWindow: CommandTelemetryTimeWindow;
+    windowStartMs: number | null;
+    windowEndMs: number;
+    preferredCommands?: string[];
+  }): Map<string, number> {
+    if (input.timeWindow === 'all') {
+      const commandUsageMap = this.parseCommandUsage(input.commandUsage);
+      const preferredCommands = input.preferredCommands ?? [];
+      const hasPreferredUsage = preferredCommands.some((command) => commandUsageMap.has(command));
+      if (hasPreferredUsage) {
+        return commandUsageMap;
+      }
+    }
+
+    if (input.windowStartMs !== null && input.hourlyUsage.length > 0) {
+      return this.buildUsageFromHourlyBuckets(
+        input.hourlyUsage,
+        input.windowStartMs,
+        input.windowEndMs
+      );
+    }
+
+    const usageMap = new Map<string, number>();
+    for (const event of input.recentEvents) {
+      if (input.windowStartMs !== null && Date.parse(event.at) < input.windowStartMs) {
+        continue;
+      }
+      usageMap.set(event.command, (usageMap.get(event.command) ?? 0) + 1);
+    }
+
+    return usageMap;
+  }
+
+  private percent(numerator: number, denominator: number): number | null {
+    return denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(2)) : null;
+  }
+
+  private buildPredictionKpiAggregation(input: {
+    predictionShown: number;
+    predictionVerified: number;
+    predictionFalsified: number;
+  }): Record<StudioPredictionKpiAggregationKey, StudioPredictionKpiAggregationMetric> {
+    const predictionOutcomes = input.predictionVerified + input.predictionFalsified;
+
+    return {
+      prevented_incident_rate: {
+        key: 'prevented_incident_rate',
+        numerator: input.predictionVerified,
+        denominator: input.predictionShown,
+        value: this.percent(input.predictionVerified, input.predictionShown),
+        unit: 'percent',
+        eventCommands: ['workspai.studio.prediction_verified', 'workspai.studio.prediction_shown'],
+      },
+      predictive_precision: {
+        key: 'predictive_precision',
+        numerator: input.predictionVerified,
+        denominator: predictionOutcomes,
+        value: this.percent(input.predictionVerified, predictionOutcomes),
+        unit: 'percent',
+        eventCommands: [
+          'workspai.studio.prediction_verified',
+          'workspai.studio.prediction_falsified',
+        ],
+      },
+      false_alarm_rate: {
+        key: 'false_alarm_rate',
+        numerator: input.predictionFalsified,
+        denominator: predictionOutcomes,
+        value: this.percent(input.predictionFalsified, predictionOutcomes),
+        unit: 'percent',
+        eventCommands: [
+          'workspai.studio.prediction_falsified',
+          'workspai.studio.prediction_verified',
+        ],
+      },
+    };
+  }
+
+  private resolvePredictionKpiThresholds(
+    thresholds: Partial<StudioPredictionKpiThresholds> = {}
+  ): StudioPredictionKpiThresholds {
+    return {
+      predictivePrecisionMin:
+        typeof thresholds.predictivePrecisionMin === 'number'
+          ? thresholds.predictivePrecisionMin
+          : 65,
+      falseAlarmRateMax:
+        typeof thresholds.falseAlarmRateMax === 'number' ? thresholds.falseAlarmRateMax : 35,
+      preventedIncidentRateMin:
+        typeof thresholds.preventedIncidentRateMin === 'number'
+          ? thresholds.preventedIncidentRateMin
+          : 20,
+    };
+  }
+
+  private resolveArchitectureReasoningKpiThresholds(
+    thresholds: Partial<ArchitectureReasoningKpiThresholds> = {}
+  ): ArchitectureReasoningKpiThresholds {
+    return {
+      architectureBreakagePreventedRateMin:
+        typeof thresholds.architectureBreakagePreventedRateMin === 'number'
+          ? thresholds.architectureBreakagePreventedRateMin
+          : 20,
+      architectureFalseAlarmRateMax:
+        typeof thresholds.architectureFalseAlarmRateMax === 'number'
+          ? thresholds.architectureFalseAlarmRateMax
+          : 35,
+    };
+  }
+
+  private resolveSandboxKpiThresholds(
+    thresholds: Partial<SandboxKpiThresholds> = {}
+  ): SandboxKpiThresholds {
+    return {
+      sandboxSimulationPassRateMin:
+        typeof thresholds.sandboxSimulationPassRateMin === 'number'
+          ? thresholds.sandboxSimulationPassRateMin
+          : 70,
+      unsafeApplyEscapeRateMax:
+        typeof thresholds.unsafeApplyEscapeRateMax === 'number'
+          ? thresholds.unsafeApplyEscapeRateMax
+          : 5,
+    };
   }
 
   private async enqueueCommandTelemetryWrite(
@@ -1284,45 +1661,40 @@ export class WorkspaceUsageTracker {
           : {};
 
       const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
       const nowMs = Date.now();
       const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
-      const filteredRecentEvents =
-        windowStartMs === null
-          ? recentEvents
-          : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+      const predictionUsageMap = this.buildStudioUsageMap({
+        commandUsage: telemetry.commandUsage,
+        hourlyUsage,
+        recentEvents,
+        timeWindow,
+        windowStartMs,
+        windowEndMs: nowMs,
+        preferredCommands: [
+          'workspai.studio.prediction_shown',
+          'workspai.studio.prediction_accepted',
+          'workspai.studio.prediction_verified',
+          'workspai.studio.prediction_falsified',
+        ],
+      });
 
-      let predictionShown = 0;
-      let predictionAccepted = 0;
-      let predictionVerified = 0;
-      let predictionFalsified = 0;
-
-      for (const entry of filteredRecentEvents) {
-        if (entry.command === 'workspai.studio.prediction_shown') {
-          predictionShown += 1;
-        } else if (entry.command === 'workspai.studio.prediction_accepted') {
-          predictionAccepted += 1;
-        } else if (entry.command === 'workspai.studio.prediction_verified') {
-          predictionVerified += 1;
-        } else if (entry.command === 'workspai.studio.prediction_falsified') {
-          predictionFalsified += 1;
-        }
-      }
+      const predictionShown = predictionUsageMap.get('workspai.studio.prediction_shown') ?? 0;
+      const predictionAccepted = predictionUsageMap.get('workspai.studio.prediction_accepted') ?? 0;
+      const predictionVerified = predictionUsageMap.get('workspai.studio.prediction_verified') ?? 0;
+      const predictionFalsified =
+        predictionUsageMap.get('workspai.studio.prediction_falsified') ?? 0;
 
       const predictionIgnored = Math.max(0, predictionShown - predictionAccepted);
       const predictionOutcomes = predictionVerified + predictionFalsified;
-
-      const predictivePrecision =
-        predictionOutcomes > 0
-          ? Number(((predictionVerified / predictionOutcomes) * 100).toFixed(2))
-          : null;
-      const falseAlarmRate =
-        predictionOutcomes > 0
-          ? Number(((predictionFalsified / predictionOutcomes) * 100).toFixed(2))
-          : null;
-      const preventedIncidentRate =
-        predictionShown > 0
-          ? Number(((predictionVerified / predictionShown) * 100).toFixed(2))
-          : null;
+      const aggregation = this.buildPredictionKpiAggregation({
+        predictionShown,
+        predictionVerified,
+        predictionFalsified,
+      });
+      const predictivePrecision = aggregation.predictive_precision.value;
+      const falseAlarmRate = aggregation.false_alarm_rate.value;
+      const preventedIncidentRate = aggregation.prevented_incident_rate.value;
       const acceptanceRate =
         predictionShown > 0
           ? Number(((predictionAccepted / predictionShown) * 100).toFixed(2))
@@ -1332,18 +1704,7 @@ export class WorkspaceUsageTracker {
           ? Number(((predictionOutcomes / predictionAccepted) * 100).toFixed(2))
           : null;
 
-      const resolvedThresholds: StudioPredictionKpiThresholds = {
-        predictivePrecisionMin:
-          typeof thresholds.predictivePrecisionMin === 'number'
-            ? thresholds.predictivePrecisionMin
-            : 65,
-        falseAlarmRateMax:
-          typeof thresholds.falseAlarmRateMax === 'number' ? thresholds.falseAlarmRateMax : 35,
-        preventedIncidentRateMin:
-          typeof thresholds.preventedIncidentRateMin === 'number'
-            ? thresholds.preventedIncidentRateMin
-            : 20,
-      };
+      const resolvedThresholds = this.resolvePredictionKpiThresholds(thresholds);
 
       const telemetryEvidencePass = predictionShown > 0;
       const predictivePrecisionPass =
@@ -1361,6 +1722,7 @@ export class WorkspaceUsageTracker {
         windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
         windowEndAt: new Date(nowMs).toISOString(),
         thresholds: resolvedThresholds,
+        aggregation,
         metrics: {
           predictionShown,
           predictionAccepted,
@@ -1387,6 +1749,457 @@ export class WorkspaceUsageTracker {
       };
     } catch (error) {
       this.logger.debug(`Failed to read studio prediction KPI status: ${error}`);
+      return null;
+    }
+  }
+
+  async getStudioPredictionPortfolioKpiStatus(
+    workspacePaths?: string[],
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    thresholds: Partial<StudioPredictionKpiThresholds> = {}
+  ): Promise<StudioPredictionPortfolioKpiStatus | null> {
+    const explicitWorkspacePaths = (workspacePaths ?? [])
+      .filter((workspacePath): workspacePath is string => typeof workspacePath === 'string')
+      .map((workspacePath) => workspacePath.trim())
+      .filter((workspacePath) => workspacePath.length > 0);
+
+    const scope: StudioPredictionPortfolioKpiStatus['scope'] =
+      explicitWorkspacePaths.length > 0 ? 'explicit-workspaces' : 'registered-workspaces';
+    const resolvedWorkspacePaths =
+      explicitWorkspacePaths.length > 0
+        ? explicitWorkspacePaths
+        : (await WorkspaceManager.getInstance().loadWorkspaces()).map(
+            (workspace) => workspace.path
+          );
+
+    const workspacePathSet = new Set<string>();
+    const uniqueWorkspacePaths = resolvedWorkspacePaths.filter((workspacePath) => {
+      if (workspacePathSet.has(workspacePath)) {
+        return false;
+      }
+      workspacePathSet.add(workspacePath);
+      return true;
+    });
+
+    if (uniqueWorkspacePaths.length === 0) {
+      return null;
+    }
+
+    const workspaceStatuses = (
+      await Promise.all(
+        uniqueWorkspacePaths.map((workspacePath) =>
+          this.getStudioPredictionKpiStatus(workspacePath, timeWindow, thresholds)
+        )
+      )
+    ).filter((status): status is StudioPredictionKpiStatus => status !== null);
+
+    const nowMs = Date.now();
+    const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+    const resolvedThresholds = this.resolvePredictionKpiThresholds(thresholds);
+
+    const totals = workspaceStatuses.reduce(
+      (acc, status) => {
+        acc.predictionShown += status.metrics.predictionShown;
+        acc.predictionAccepted += status.metrics.predictionAccepted;
+        acc.predictionVerified += status.metrics.predictionVerified;
+        acc.predictionFalsified += status.metrics.predictionFalsified;
+        acc.workspacePassCount += status.gates.overallPass ? 1 : 0;
+        return acc;
+      },
+      {
+        predictionShown: 0,
+        predictionAccepted: 0,
+        predictionVerified: 0,
+        predictionFalsified: 0,
+        workspacePassCount: 0,
+      }
+    );
+
+    const predictionIgnored = Math.max(0, totals.predictionShown - totals.predictionAccepted);
+    const predictionOutcomes = totals.predictionVerified + totals.predictionFalsified;
+    const aggregation = this.buildPredictionKpiAggregation({
+      predictionShown: totals.predictionShown,
+      predictionVerified: totals.predictionVerified,
+      predictionFalsified: totals.predictionFalsified,
+    });
+    const predictivePrecision = aggregation.predictive_precision.value;
+    const falseAlarmRate = aggregation.false_alarm_rate.value;
+    const preventedIncidentRate = aggregation.prevented_incident_rate.value;
+    const acceptanceRate = this.percent(totals.predictionAccepted, totals.predictionShown);
+    const verificationCoverage = this.percent(predictionOutcomes, totals.predictionAccepted);
+
+    const telemetryEvidencePass = totals.predictionShown > 0;
+    const predictivePrecisionPass =
+      predictivePrecision !== null &&
+      predictivePrecision >= resolvedThresholds.predictivePrecisionMin;
+    const falseAlarmRatePass =
+      falseAlarmRate !== null && falseAlarmRate <= resolvedThresholds.falseAlarmRateMax;
+    const preventedIncidentRatePass =
+      preventedIncidentRate !== null &&
+      preventedIncidentRate >= resolvedThresholds.preventedIncidentRateMin;
+
+    return {
+      scope,
+      workspacePaths: uniqueWorkspacePaths,
+      evaluatedWorkspaceCount: uniqueWorkspacePaths.length,
+      telemetryWorkspaceCount: workspaceStatuses.filter(
+        (status) => status.gates.telemetryEvidencePass
+      ).length,
+      timeWindow,
+      windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+      windowEndAt: new Date(nowMs).toISOString(),
+      thresholds: resolvedThresholds,
+      aggregation,
+      metrics: {
+        predictionShown: totals.predictionShown,
+        predictionAccepted: totals.predictionAccepted,
+        predictionVerified: totals.predictionVerified,
+        predictionFalsified: totals.predictionFalsified,
+        predictionIgnored,
+        predictivePrecision,
+        falseAlarmRate,
+        preventedIncidentRate,
+        acceptanceRate,
+        verificationCoverage,
+        workspacePassCount: totals.workspacePassCount,
+        workspaceFailCount: workspaceStatuses.length - totals.workspacePassCount,
+      },
+      gates: {
+        telemetryEvidencePass,
+        predictivePrecisionPass,
+        falseAlarmRatePass,
+        preventedIncidentRatePass,
+        overallPass:
+          telemetryEvidencePass &&
+          predictivePrecisionPass &&
+          falseAlarmRatePass &&
+          preventedIncidentRatePass,
+      },
+      workspaceStatuses,
+      privacy: {
+        actorModel: 'workspace-marker-only',
+        actorIdPresent: false,
+      },
+    };
+  }
+
+  async getRepeatRateActorModelStatus(
+    workspacePaths?: string[],
+    timeWindow: CommandTelemetryTimeWindow = 'last7d'
+  ): Promise<RepeatRateActorModelStatus | null> {
+    const explicitWorkspacePaths = (workspacePaths ?? [])
+      .filter((workspacePath): workspacePath is string => typeof workspacePath === 'string')
+      .map((workspacePath) => workspacePath.trim())
+      .filter((workspacePath) => workspacePath.length > 0);
+
+    const scope: RepeatRateActorModelStatus['scope'] =
+      explicitWorkspacePaths.length > 0 ? 'explicit-workspaces' : 'registered-workspaces';
+    const resolvedWorkspacePaths =
+      explicitWorkspacePaths.length > 0
+        ? explicitWorkspacePaths
+        : (await WorkspaceManager.getInstance().loadWorkspaces()).map(
+            (workspace) => workspace.path
+          );
+
+    const seenWorkspacePaths = new Set<string>();
+    const uniqueWorkspacePaths = resolvedWorkspacePaths.filter((workspacePath) => {
+      if (seenWorkspacePaths.has(workspacePath)) {
+        return false;
+      }
+      seenWorkspacePaths.add(workspacePath);
+      return true;
+    });
+
+    if (uniqueWorkspacePaths.length === 0) {
+      return null;
+    }
+
+    const nowMs = Date.now();
+    const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+    const actors: RepeatRateActorStatus[] = [];
+
+    for (const workspacePath of uniqueWorkspacePaths) {
+      const marker = await readWorkspaceMarker(workspacePath);
+      if (!marker) {
+        continue;
+      }
+
+      const telemetryRaw = marker.metadata?.custom?.workspaiTelemetry;
+      const telemetry =
+        telemetryRaw && typeof telemetryRaw === 'object'
+          ? (telemetryRaw as Record<string, unknown>)
+          : {};
+      const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
+      const usageMap =
+        timeWindow === 'all'
+          ? this.parseCommandUsage(telemetry.commandUsage)
+          : windowStartMs !== null && hourlyUsage.length > 0
+            ? this.buildUsageFromHourlyBuckets(hourlyUsage, windowStartMs, nowMs)
+            : this.buildStudioUsageMap({
+                commandUsage: telemetry.commandUsage,
+                hourlyUsage,
+                recentEvents,
+                timeWindow,
+                windowStartMs,
+                windowEndMs: nowMs,
+                preferredCommands: [
+                  'workspai.studio.prediction_shown',
+                  'workspai.studio.prediction_accepted',
+                  'workspai.studio.prediction_verified',
+                  'workspai.studio.prediction_falsified',
+                ],
+              });
+      const eventCount = this.countEventsFromUsageMap(usageMap);
+      if (eventCount <= 0) {
+        continue;
+      }
+
+      const activeHours =
+        windowStartMs !== null && hourlyUsage.length > 0
+          ? this.getActiveHoursFromHourlyUsage(hourlyUsage, windowStartMs, nowMs)
+          : this.getActiveHoursFromRecentEvents(recentEvents, windowStartMs);
+      const activeHourCount = activeHours.size;
+      const filteredRecentEvents =
+        timeWindow === 'all'
+          ? recentEvents
+          : recentEvents.filter((event) => Date.parse(event.at) >= (windowStartMs ?? 0));
+      const lastRecentEvent = filteredRecentEvents[filteredRecentEvents.length - 1];
+
+      actors.push({
+        actorKey: this.toActorKey(workspacePath),
+        eventCount,
+        activeHourCount,
+        repeated: timeWindow === 'all' ? eventCount >= 2 : activeHourCount >= 2,
+        lastEventAt: lastRecentEvent?.at ?? null,
+      });
+    }
+
+    const repeatActorCount = actors.filter((actor) => actor.repeated).length;
+    const activeActorCount = actors.length;
+
+    return {
+      scope,
+      workspaceCount: uniqueWorkspacePaths.length,
+      timeWindow,
+      windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+      windowEndAt: new Date(nowMs).toISOString(),
+      activeActorCount,
+      repeatActorCount,
+      repeatRate: this.percent(repeatActorCount, activeActorCount),
+      actors,
+      privacy: {
+        actorModel: 'pseudonymous-workspace-marker',
+        rawUserIdPresent: false,
+        rawWorkspacePathInActorKey: false,
+      },
+    };
+  }
+
+  async getArchitectureReasoningKpiStatus(
+    preferredWorkspacePath?: string,
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    thresholds: Partial<ArchitectureReasoningKpiThresholds> = {}
+  ): Promise<ArchitectureReasoningKpiStatus | null> {
+    const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
+    if (!workspacePath) {
+      return null;
+    }
+
+    try {
+      const marker = await readWorkspaceMarker(workspacePath);
+      if (!marker) {
+        return null;
+      }
+
+      const telemetryRaw = marker.metadata?.custom?.workspaiTelemetry;
+      const telemetry =
+        telemetryRaw && typeof telemetryRaw === 'object'
+          ? (telemetryRaw as Record<string, unknown>)
+          : {};
+      const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
+      const nowMs = Date.now();
+      const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+      const usageMap =
+        timeWindow === 'all'
+          ? this.parseCommandUsage(telemetry.commandUsage)
+          : windowStartMs !== null && hourlyUsage.length > 0
+            ? this.buildUsageFromHourlyBuckets(hourlyUsage, windowStartMs, nowMs)
+            : this.buildStudioUsageMap({
+                commandUsage: telemetry.commandUsage,
+                hourlyUsage,
+                recentEvents,
+                timeWindow,
+                windowStartMs,
+                windowEndMs: nowMs,
+                preferredCommands: [
+                  'workspai.studio.prediction_shown',
+                  'workspai.studio.prediction_accepted',
+                  'workspai.studio.prediction_verified',
+                  'workspai.studio.prediction_falsified',
+                ],
+              });
+
+      const architectureWarningShown =
+        usageMap.get('workspai.studio.architecture_warning_shown') ?? 0;
+      const architectureWarningAccepted =
+        usageMap.get('workspai.studio.architecture_warning_accepted') ?? 0;
+      const architectureBreakagePrevented =
+        usageMap.get('workspai.studio.architecture_breakage_prevented') ?? 0;
+      const architectureWarningFalsified =
+        usageMap.get('workspai.studio.architecture_warning_falsified') ?? 0;
+      const architectureUnknownScopeBlocked =
+        usageMap.get('workspai.studio.architecture_unknown_scope_blocked') ?? 0;
+      const architectureOutcomes = architectureBreakagePrevented + architectureWarningFalsified;
+      const architectureBreakagePreventedRate = this.percent(
+        architectureBreakagePrevented,
+        architectureWarningShown
+      );
+      const architectureFalseAlarmRate = this.percent(
+        architectureWarningFalsified,
+        architectureOutcomes
+      );
+      const architectureAcceptanceRate = this.percent(
+        architectureWarningAccepted,
+        architectureWarningShown
+      );
+      const resolvedThresholds = this.resolveArchitectureReasoningKpiThresholds(thresholds);
+      const telemetryEvidencePass = architectureWarningShown > 0;
+      const architectureBreakagePreventedRatePass =
+        architectureBreakagePreventedRate !== null &&
+        architectureBreakagePreventedRate >=
+          resolvedThresholds.architectureBreakagePreventedRateMin;
+      const architectureFalseAlarmRatePass =
+        architectureFalseAlarmRate !== null &&
+        architectureFalseAlarmRate <= resolvedThresholds.architectureFalseAlarmRateMax;
+
+      return {
+        workspacePath,
+        timeWindow,
+        windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+        windowEndAt: new Date(nowMs).toISOString(),
+        thresholds: resolvedThresholds,
+        metrics: {
+          architectureWarningShown,
+          architectureWarningAccepted,
+          architectureBreakagePrevented,
+          architectureWarningFalsified,
+          architectureUnknownScopeBlocked,
+          architectureBreakagePreventedRate,
+          architectureFalseAlarmRate,
+          architectureAcceptanceRate,
+        },
+        gates: {
+          telemetryEvidencePass,
+          architectureBreakagePreventedRatePass,
+          architectureFalseAlarmRatePass,
+          overallPass:
+            telemetryEvidencePass &&
+            architectureBreakagePreventedRatePass &&
+            architectureFalseAlarmRatePass,
+        },
+      };
+    } catch (error) {
+      this.logger.debug(`Failed to read architecture reasoning KPI status: ${error}`);
+      return null;
+    }
+  }
+
+  async getSandboxKpiStatus(
+    preferredWorkspacePath?: string,
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    thresholds: Partial<SandboxKpiThresholds> = {}
+  ): Promise<SandboxKpiStatus | null> {
+    const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
+    if (!workspacePath) {
+      return null;
+    }
+
+    try {
+      const marker = await readWorkspaceMarker(workspacePath);
+      if (!marker) {
+        return null;
+      }
+
+      const telemetryRaw = marker.metadata?.custom?.workspaiTelemetry;
+      const telemetry =
+        telemetryRaw && typeof telemetryRaw === 'object'
+          ? (telemetryRaw as Record<string, unknown>)
+          : {};
+      const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
+      const nowMs = Date.now();
+      const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+      const usageMap =
+        timeWindow === 'all'
+          ? this.parseCommandUsage(telemetry.commandUsage)
+          : windowStartMs !== null && hourlyUsage.length > 0
+            ? this.buildUsageFromHourlyBuckets(hourlyUsage, windowStartMs, nowMs)
+            : this.buildStudioUsageMap({
+                commandUsage: telemetry.commandUsage,
+                hourlyUsage,
+                recentEvents,
+                timeWindow,
+                windowStartMs,
+                windowEndMs: nowMs,
+                preferredCommands: [
+                  'workspai.studio.prediction_shown',
+                  'workspai.studio.prediction_accepted',
+                  'workspai.studio.prediction_verified',
+                  'workspai.studio.prediction_falsified',
+                ],
+              });
+
+      const sandboxSimulationStarted =
+        usageMap.get('workspai.studio.sandbox_simulation_started') ?? 0;
+      const sandboxSimulationPassed =
+        usageMap.get('workspai.studio.sandbox_simulation_passed') ?? 0;
+      const sandboxSimulationFailed =
+        usageMap.get('workspai.studio.sandbox_simulation_failed') ?? 0;
+      const unsafeApplyEscaped = usageMap.get('workspai.studio.unsafe_apply_escaped') ?? 0;
+      const sandboxSimulationOutcomes = sandboxSimulationPassed + sandboxSimulationFailed;
+      const sandboxSimulationPassRate = this.percent(
+        sandboxSimulationPassed,
+        sandboxSimulationOutcomes
+      );
+      const unsafeApplyEscapeRate = this.percent(
+        unsafeApplyEscaped,
+        Math.max(sandboxSimulationStarted, sandboxSimulationOutcomes)
+      );
+      const resolvedThresholds = this.resolveSandboxKpiThresholds(thresholds);
+      const telemetryEvidencePass = sandboxSimulationStarted > 0 || sandboxSimulationOutcomes > 0;
+      const sandboxSimulationPassRatePass =
+        sandboxSimulationPassRate !== null &&
+        sandboxSimulationPassRate >= resolvedThresholds.sandboxSimulationPassRateMin;
+      const unsafeApplyEscapeRatePass =
+        unsafeApplyEscapeRate !== null &&
+        unsafeApplyEscapeRate <= resolvedThresholds.unsafeApplyEscapeRateMax;
+
+      return {
+        workspacePath,
+        timeWindow,
+        windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+        windowEndAt: new Date(nowMs).toISOString(),
+        thresholds: resolvedThresholds,
+        metrics: {
+          sandboxSimulationStarted,
+          sandboxSimulationPassed,
+          sandboxSimulationFailed,
+          unsafeApplyEscaped,
+          sandboxSimulationPassRate,
+          unsafeApplyEscapeRate,
+        },
+        gates: {
+          telemetryEvidencePass,
+          sandboxSimulationPassRatePass,
+          unsafeApplyEscapeRatePass,
+          overallPass:
+            telemetryEvidencePass && sandboxSimulationPassRatePass && unsafeApplyEscapeRatePass,
+        },
+      };
+    } catch (error) {
+      this.logger.debug(`Failed to read sandbox KPI status: ${error}`);
       return null;
     }
   }
@@ -1486,6 +2299,202 @@ export class WorkspaceUsageTracker {
       };
     } catch (error) {
       this.logger.debug(`Failed to read studio rollback KPI status: ${error}`);
+      return null;
+    }
+  }
+
+  async getStudioReproPackKpiStatus(
+    preferredWorkspacePath?: string,
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    thresholds: Partial<StudioReproPackKpiThresholds> = {}
+  ): Promise<StudioReproPackKpiStatus | null> {
+    const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
+    if (!workspacePath) {
+      return null;
+    }
+
+    try {
+      const marker = await readWorkspaceMarker(workspacePath);
+      if (!marker) {
+        return null;
+      }
+
+      const telemetryRaw = marker.metadata?.custom?.workspaiTelemetry;
+      const telemetry =
+        telemetryRaw && typeof telemetryRaw === 'object'
+          ? (telemetryRaw as Record<string, unknown>)
+          : {};
+
+      const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
+      const nowMs = Date.now();
+      const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+      const usageMap = this.buildStudioUsageMap({
+        commandUsage: telemetry.commandUsage,
+        hourlyUsage,
+        recentEvents,
+        timeWindow,
+        windowStartMs,
+        windowEndMs: nowMs,
+        preferredCommands: [
+          'workspai.studio.incident_repro_pack_captured',
+          'workspai.studio.incident_repro_pack_exported',
+          'workspai.studio.incident_repro_pack_imported',
+          'workspai.studio.incident_replay_ready',
+          'workspai.studio.incident_replay_memory_enriched',
+        ],
+      });
+
+      const reproPackCaptured = usageMap.get('workspai.studio.incident_repro_pack_captured') ?? 0;
+      const reproPackExported = usageMap.get('workspai.studio.incident_repro_pack_exported') ?? 0;
+      const reproPackImported = usageMap.get('workspai.studio.incident_repro_pack_imported') ?? 0;
+      const incidentReplayReady = usageMap.get('workspai.studio.incident_replay_ready') ?? 0;
+      const incidentReplayMemoryEnriched =
+        usageMap.get('workspai.studio.incident_replay_memory_enriched') ?? 0;
+
+      const reproPackShareRate = this.percent(reproPackExported, reproPackCaptured);
+      const replayToResolutionRate = this.percent(incidentReplayMemoryEnriched, reproPackImported);
+
+      const resolvedThresholds: StudioReproPackKpiThresholds = {
+        reproPackShareRateMin:
+          typeof thresholds.reproPackShareRateMin === 'number'
+            ? thresholds.reproPackShareRateMin
+            : 20,
+        replayToResolutionRateMin:
+          typeof thresholds.replayToResolutionRateMin === 'number'
+            ? thresholds.replayToResolutionRateMin
+            : 60,
+      };
+
+      const telemetryEvidencePass = reproPackCaptured > 0 || reproPackImported > 0;
+      const reproPackShareRatePass =
+        reproPackShareRate !== null &&
+        reproPackShareRate >= resolvedThresholds.reproPackShareRateMin;
+      const replayToResolutionRatePass =
+        replayToResolutionRate !== null &&
+        replayToResolutionRate >= resolvedThresholds.replayToResolutionRateMin;
+
+      return {
+        workspacePath,
+        timeWindow,
+        windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+        windowEndAt: new Date(nowMs).toISOString(),
+        thresholds: resolvedThresholds,
+        metrics: {
+          reproPackCaptured,
+          reproPackExported,
+          reproPackImported,
+          incidentReplayReady,
+          incidentReplayMemoryEnriched,
+          reproPackShareRate,
+          replayToResolutionRate,
+        },
+        gates: {
+          telemetryEvidencePass,
+          reproPackShareRatePass,
+          replayToResolutionRatePass,
+          overallPass:
+            telemetryEvidencePass && reproPackShareRatePass && replayToResolutionRatePass,
+        },
+      };
+    } catch (error) {
+      this.logger.debug(`Failed to read studio repro pack KPI status: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Returns clarification-gate KPI: absolute counts and rate vs ask events.
+   * Useful for dashboards that need to track how often users are blocked by the
+   * clarification gate relative to how often they successfully invoke ask.
+   */
+  async getClarificationGateKpiStatus(
+    preferredWorkspacePath?: string,
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    thresholds: Partial<ClarificationGateKpiThresholds> = {}
+  ): Promise<ClarificationGateKpiStatus | null> {
+    const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
+    if (!workspacePath) {
+      return null;
+    }
+
+    try {
+      const marker = await readWorkspaceMarker(workspacePath);
+      if (!marker) {
+        return null;
+      }
+
+      const telemetryRaw = marker.metadata?.custom?.workspaiTelemetry;
+      const telemetry =
+        telemetryRaw && typeof telemetryRaw === 'object'
+          ? (telemetryRaw as Record<string, unknown>)
+          : {};
+
+      const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
+      const nowMs = Date.now();
+      const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+
+      const usageMap = this.buildStudioUsageMap({
+        commandUsage: telemetry.commandUsage,
+        hourlyUsage,
+        recentEvents,
+        timeWindow,
+        windowStartMs,
+        windowEndMs: nowMs,
+        preferredCommands: [
+          'workspai.chat.ask',
+          'workspai.aimodal.ask',
+          'workspai.chat.clarification_gate',
+          'workspai.aimodal.clarification_gate',
+        ],
+      });
+
+      const chatAskCount = usageMap.get('workspai.chat.ask') ?? 0;
+      const aimodalAskCount = usageMap.get('workspai.aimodal.ask') ?? 0;
+      const chatClarificationGateCount = usageMap.get('workspai.chat.clarification_gate') ?? 0;
+      const aimodalClarificationGateCount =
+        usageMap.get('workspai.aimodal.clarification_gate') ?? 0;
+
+      const totalAskCount = chatAskCount + aimodalAskCount;
+      const clarificationGateCount = chatClarificationGateCount + aimodalClarificationGateCount;
+      const clarificationRateVsAsk = this.percent(clarificationGateCount, totalAskCount);
+
+      const resolvedThresholds: ClarificationGateKpiThresholds = {
+        clarificationRateVsAskMax:
+          typeof thresholds.clarificationRateVsAskMax === 'number'
+            ? thresholds.clarificationRateVsAskMax
+            : 40,
+      };
+
+      const telemetryEvidencePass = totalAskCount > 0 || clarificationGateCount > 0;
+      const clarificationRateVsAskPass =
+        clarificationRateVsAsk === null ||
+        clarificationRateVsAsk <= resolvedThresholds.clarificationRateVsAskMax;
+
+      return {
+        workspacePath,
+        timeWindow,
+        windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+        windowEndAt: new Date(nowMs).toISOString(),
+        thresholds: resolvedThresholds,
+        metrics: {
+          chatAskCount,
+          aimodalAskCount,
+          totalAskCount,
+          chatClarificationGateCount,
+          aimodalClarificationGateCount,
+          clarificationGateCount,
+          clarificationRateVsAsk,
+        },
+        gates: {
+          telemetryEvidencePass,
+          clarificationRateVsAskPass,
+          overallPass: telemetryEvidencePass && clarificationRateVsAskPass,
+        },
+      };
+    } catch (error) {
+      this.logger.debug(`Failed to read clarification gate KPI status: ${error}`);
       return null;
     }
   }

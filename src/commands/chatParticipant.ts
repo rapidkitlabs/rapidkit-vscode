@@ -139,7 +139,7 @@ async function handleWorkspaiRequest(
     typeof (vscode.window as { createOutputChannel?: unknown }).createOutputChannel === 'function';
 
   const trackChatOutcome = async (
-    result: 'success' | 'empty' | 'prepare-error' | 'cancelled' | 'error',
+    result: 'success' | 'empty' | 'prepare-error' | 'clarification-needed' | 'cancelled' | 'error',
     extraProps?: Record<string, unknown>
   ) => {
     if (!canTrackTelemetry) {
@@ -188,6 +188,42 @@ async function handleWorkspaiRequest(
   if (token.isCancellationRequested) {
     await trackChatOutcome('cancelled', { stage: 'before-stream' });
     return {};
+  }
+
+  if (prepared.validation.clarificationNeeded) {
+    if (canTrackTelemetry) {
+      try {
+        await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+          'workspai.chat.clarification_gate',
+          ctx.path,
+          {
+            source: 'chat-participant',
+            mode,
+            missingFields: prepared.validation.missing,
+          }
+        );
+      } catch {
+        // Telemetry should never interrupt chat UX.
+      }
+    }
+
+    await trackChatOutcome('clarification-needed', {
+      missingFields: prepared.validation.missing,
+    });
+    stream.markdown(
+      `**Workspai:** ${
+        prepared.validation.clarificationReason ??
+        'I need workspace evidence first to give a safe answer.'
+      }\n\n` +
+        'Please select the workspace/project and run `npx rapidkit doctor workspace`, then retry your request.'
+    );
+    return {
+      metadata: {
+        command: mode,
+        clarificationNeeded: true,
+        ctx: { type: ctx.type, name: ctx.name, path: ctx.path },
+      },
+    };
   }
 
   // Stream the AI response

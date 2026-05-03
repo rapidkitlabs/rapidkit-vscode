@@ -23,6 +23,12 @@ const INCIDENT_ACTION_ALLOWLIST = new Set<string>([
   'doctor-fix',
   'recipe-pack',
   'inline-command',
+  // KF5: capture a reproducible incident pack + replay payload
+  'incident-repro-pack',
+  // A02: multi-file module generation + apply workflow
+  'apply-module-gen',
+  // A03: debug patch generation + policy-gated apply workflow
+  'apply-debug-patch',
 ]);
 
 export function isIncidentActionAllowlisted(actionType: string): boolean {
@@ -52,15 +58,35 @@ export function classifyIncidentActionPolicy(actionType: string): IncidentAction
     case 'workspace-memory-wizard':
     case 'doctor-fix':
     case 'recipe-pack':
+    case 'incident-repro-pack':
       return {
         actionType: normalized,
         riskClass: 'non-mutating-executable',
-        riskLevel: normalized === 'doctor-fix' ? 'medium' : 'low',
+        riskLevel:
+          normalized === 'doctor-fix' || normalized === 'incident-repro-pack' ? 'medium' : 'low',
         requiresImpactReview: false,
         requiresVerifyPath: normalized === 'doctor-fix',
         allowCompletionClaimWithoutVerify: normalized !== 'doctor-fix',
       };
     case 'inline-command':
+      return {
+        actionType: normalized,
+        riskClass: 'guarded-mutating',
+        riskLevel: 'high',
+        requiresImpactReview: true,
+        requiresVerifyPath: true,
+        allowCompletionClaimWithoutVerify: false,
+      };
+    case 'apply-module-gen':
+      return {
+        actionType: normalized,
+        riskClass: 'guarded-mutating',
+        riskLevel: 'medium',
+        requiresImpactReview: true,
+        requiresVerifyPath: true,
+        allowCompletionClaimWithoutVerify: false,
+      };
+    case 'apply-debug-patch':
       return {
         actionType: normalized,
         riskClass: 'guarded-mutating',

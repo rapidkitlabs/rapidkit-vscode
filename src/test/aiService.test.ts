@@ -228,6 +228,19 @@ describe('aiService', () => {
     expect(prepared.messages.at(-1)?.content).toContain(`project_root: ${projectRoot}`);
   });
 
+  it('returns clarification-needed validation when evidence is missing', async () => {
+    const prepared = await prepareAIConversation('ask', 'How do I fix this?', {
+      type: 'workspace',
+      name: 'unknown-workspace',
+    });
+
+    expect(prepared.validation.clarificationNeeded).toBe(true);
+    expect(prepared.validation.clarificationReason).toContain(
+      'run `npx rapidkit doctor workspace`'
+    );
+    expect(prepared.contract.evidence_confidence).toBe('none');
+  });
+
   it('redacts sensitive literals from history and question before prompt assembly', async () => {
     const prepared = await prepareAIConversation(
       'ask',

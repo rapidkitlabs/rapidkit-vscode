@@ -6,12 +6,14 @@ const {
   prepareAIConversationMock,
   resolvePreferredAIModalContextMock,
   streamAIResponseMock,
+  trackCommandEventMock,
 } = vi.hoisted(() => ({
   createChatParticipantMock: vi.fn(),
   collectDebugPrefillQuestionMock: vi.fn(),
   prepareAIConversationMock: vi.fn(),
   resolvePreferredAIModalContextMock: vi.fn(),
   streamAIResponseMock: vi.fn(),
+  trackCommandEventMock: vi.fn(),
 }));
 
 vi.mock('vscode', () => {
@@ -49,6 +51,12 @@ vi.mock('vscode', () => {
     },
     window: {
       activeTextEditor: undefined,
+      createOutputChannel: () => ({
+        appendLine: () => undefined,
+        show: () => undefined,
+        clear: () => undefined,
+        dispose: () => undefined,
+      }),
     },
     workspace: {
       workspaceFolders: [{ name: 'demo-workspace', uri: { fsPath: '/tmp/demo-workspace' } }],
@@ -71,6 +79,14 @@ vi.mock('../core/aiContextResolver', () => ({
 
 vi.mock('../commands/aiDebugger', () => ({
   collectDebugPrefillQuestion: collectDebugPrefillQuestionMock,
+}));
+
+vi.mock('../utils/workspaceUsageTracker', () => ({
+  WorkspaceUsageTracker: {
+    getInstance: () => ({
+      trackCommandEvent: trackCommandEventMock,
+    }),
+  },
 }));
 
 import { registerWorkspaiChatParticipant } from '../commands/chatParticipant';
@@ -97,6 +113,32 @@ describe('chatParticipant', () => {
     prepareAIConversationMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'test' }],
       scanned: { projectRoot: '/tmp/demo-workspace' },
+      contract: {
+        contract_version: 1,
+        persona: 'midlevel',
+        evidence_confidence: 'strong',
+        workspace: {
+          path: '/tmp/demo-workspace',
+          name: 'demo-workspace',
+          doctorLastRunAt: '2026-04-22T12:00:00.000Z',
+          healthPercent: 100,
+          projectCount: 1,
+          knownProjects: [],
+        },
+        project: undefined,
+        commandScope: 'workspace',
+        safetyFlags: {
+          projectAlreadyExists: false,
+          moduleSupportDisabled: false,
+          doctorEvidenceStale: false,
+          safeActionsOnly: false,
+        },
+      },
+      validation: {
+        valid: true,
+        missing: [],
+        clarificationNeeded: false,
+      },
     });
 
     streamAIResponseMock.mockImplementation(
@@ -209,5 +251,72 @@ describe('chatParticipant', () => {
       debugFollowups.some((f: { label: string }) => f.label === 'Show full corrected file')
     ).toBe(true);
     expect(askFollowups.some((f: { label: string }) => f.label === 'Suggest a module')).toBe(true);
+  });
+
+  it('short-circuits on no-evidence clarification and never starts model streaming', async () => {
+    prepareAIConversationMock.mockResolvedValueOnce({
+      messages: [{ role: 'user', content: 'test' }],
+      scanned: undefined,
+      contract: {
+        contract_version: 1,
+        persona: 'amateur',
+        evidence_confidence: 'none',
+        workspace: {
+          path: undefined,
+          name: undefined,
+          doctorLastRunAt: undefined,
+          healthPercent: undefined,
+          projectCount: undefined,
+          knownProjects: [],
+        },
+        project: undefined,
+        commandScope: 'unknown',
+        safetyFlags: {
+          projectAlreadyExists: false,
+          moduleSupportDisabled: false,
+          doctorEvidenceStale: true,
+          safeActionsOnly: true,
+        },
+      },
+      validation: {
+        valid: false,
+        missing: ['workspace.path'],
+        clarificationNeeded: true,
+        clarificationReason:
+          'No workspace or project evidence is available. Please select a workspace and run `npx rapidkit doctor workspace` to generate evidence.',
+      },
+    });
+
+    const context = { subscriptions: [] as { dispose: () => void }[] };
+    registerWorkspaiChatParticipant(context as any);
+
+    const participant = context.subscriptions[0] as unknown as {
+      handler: Function;
+    };
+
+    const stream = {
+      markdown: vi.fn(),
+      progress: vi.fn(),
+      button: vi.fn(),
+    };
+
+    await participant.handler(
+      { prompt: 'Diagnose this workspace', command: 'ask' },
+      { history: [] },
+      stream,
+      { isCancellationRequested: false }
+    );
+
+    expect(streamAIResponseMock).not.toHaveBeenCalled();
+    expect(stream.markdown).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Please select the workspace/project and run `npx rapidkit doctor workspace`'
+      )
+    );
+    expect(trackCommandEventMock).toHaveBeenCalledWith(
+      'workspai.chat.clarification_gate',
+      '/tmp/demo-workspace',
+      expect.objectContaining({ source: 'chat-participant', mode: 'ask' })
+    );
   });
 });

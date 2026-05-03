@@ -94,6 +94,7 @@ describe('incidentArchitectureLens', () => {
       expect.objectContaining({
         label: 'orders service',
         type: 'Service',
+        filePath: 'src/orders/service.ts',
       })
     );
     expect(lens?.blockedReasons).toHaveLength(2);

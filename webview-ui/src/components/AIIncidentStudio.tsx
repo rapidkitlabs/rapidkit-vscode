@@ -8,6 +8,7 @@ import {
     ChevronDown,
     ChevronRight,
     Clock3,
+    Package,
     RotateCw,
     ShieldCheck,
     Sparkles,
@@ -20,12 +21,18 @@ import {
     getBoardActionGuardHint,
 } from '../lib/incidentStudioVerifyPolicy';
 import { buildIncidentArchitectureLens } from '../lib/incidentArchitectureLens';
+import {
+    buildIncidentArchitectureNavigator,
+    type IncidentArchitectureNavigatorItem,
+} from '../lib/incidentImpactNavigator';
 import type {
     NormalizedIncidentActionResultPayload,
     NormalizedIncidentImpactAssessmentPayload,
     NormalizedIncidentPredictiveWarningPayload,
     NormalizedIncidentReleaseGateEvidencePayload,
     NormalizedIncidentSystemGraphSnapshotPayload,
+    MultiFilePatchResult,
+    FilePatch,
 } from '../lib/incidentStudioPayload';
 
 interface IncidentCommandUsage {
@@ -121,6 +128,31 @@ interface IncidentTelemetrySnapshot {
             overallPass: boolean;
         };
     } | null;
+    studioReproPackKpiStatus?: {
+        workspacePath: string;
+        timeWindow: 'all' | 'last24h' | 'last7d';
+        windowStartAt: string | null;
+        windowEndAt: string;
+        thresholds: {
+            reproPackShareRateMin: number;
+            replayToResolutionRateMin: number;
+        };
+        metrics: {
+            reproPackCaptured: number;
+            reproPackExported: number;
+            reproPackImported: number;
+            incidentReplayReady: number;
+            incidentReplayMemoryEnriched: number;
+            reproPackShareRate: number | null;
+            replayToResolutionRate: number | null;
+        };
+        gates: {
+            telemetryEvidencePass: boolean;
+            reproPackShareRatePass: boolean;
+            replayToResolutionRatePass: boolean;
+            overallPass: boolean;
+        };
+    } | null;
     doctorSummary?: {
         workspaceName?: string;
         generatedAt?: string;
@@ -206,7 +238,22 @@ interface AIIncidentStudioProps {
     onRunMemoryWizard: () => void;
     onRunDoctorChecks: () => void;
     onRunInlineCommand?: (command: string) => void;
+    onRevealArchitectureTarget?: (target: {
+        path: string;
+        label: string;
+        kind: 'file' | 'test' | 'node';
+        symbolName?: string;
+        startLine?: number;
+    }) => void;
     onPredictiveWarningAccepted?: (warningId: string, predictionKey: string) => void;
+    onApplyPatch?: (patchId: string, acceptedPaths: string[], branchSafeApply: boolean) => void;
+    onExportIncidentReproPack?: (
+        reproPack: NonNullable<NormalizedIncidentActionResultPayload['incidentReproPack']>
+    ) => void;
+    onExportSandboxSimulationEvidence?: (
+        sandboxSimulation: NonNullable<NormalizedIncidentActionResultPayload['sandboxSimulation']>
+    ) => void;
+    onImportIncidentReproPack?: () => void;
     executingCommand?: string | null;
     primaryCtaMode?: PrimaryCtaMode;
     hasProjectSelected?: boolean;
@@ -379,6 +426,37 @@ function commandScopeLabel(scope: CommandExecutionScope): string {
     return 'Run in project root';
 }
 
+function buildReplayQueryFromIncidentReproPack(
+    reproPack: NonNullable<NormalizedIncidentActionResultPayload['incidentReproPack']>
+): string {
+    const replay = reproPack.replayPayload;
+    const verifyList = replay.verifyChecklist.length > 0
+        ? replay.verifyChecklist.map((item, index) => `${index + 1}. ${item}`).join('\n')
+        : '1. Run deterministic verification checks for this flow.';
+    const blockedReasons = replay.blockedReasons.length > 0
+        ? replay.blockedReasons.map((item, index) => `${index + 1}. ${item}`).join('\n')
+        : '1. No blocked reasons were captured in this pack.';
+    const relatedFiles = replay.relatedFiles.length > 0
+        ? replay.relatedFiles.join(', ')
+        : 'none captured';
+
+    return [
+        'Replay this imported incident repro pack inside Incident Studio.',
+        `Pack ID: ${reproPack.packId}`,
+        `Action type: ${replay.actionType}`,
+        `Risk level: ${replay.riskLevel}`,
+        replay.likelyFailureMode ? `Likely failure mode: ${replay.likelyFailureMode}` : null,
+        `Related files: ${relatedFiles}`,
+        'Blocked reasons:',
+        blockedReasons,
+        'Verification checklist:',
+        verifyList,
+        'Return one safe next step and an explicit verify command.',
+    ]
+        .filter((line): line is string => Boolean(line && line.trim().length > 0))
+        .join('\n');
+}
+
 function doctorProjectSeverity(project: { issues: number; depsInstalled?: boolean }): 'healthy' | 'warning' | 'critical' {
     if (project.issues <= 0 && project.depsInstalled !== false) {
         return 'healthy';
@@ -549,7 +627,12 @@ export function AIIncidentStudio({
     onRunMemoryWizard: _onRunMemoryWizard,
     onRunDoctorChecks,
     onRunInlineCommand,
+    onRevealArchitectureTarget,
     onPredictiveWarningAccepted,
+    onApplyPatch,
+    onExportIncidentReproPack,
+    onExportSandboxSimulationEvidence,
+    onImportIncidentReproPack,
     executingCommand,
     primaryCtaMode = 'single',
     hasProjectSelected = false,
@@ -597,6 +680,7 @@ export function AIIncidentStudio({
     const ctaVariantBreakdown = telemetry?.ctaVariantBreakdown ?? null;
     const studioHardGateStatus = telemetry?.studioHardGateStatus ?? null;
     const studioRollbackKpiStatus = telemetry?.studioRollbackKpiStatus ?? null;
+    const studioReproPackKpiStatus = telemetry?.studioReproPackKpiStatus ?? null;
     const doctorSummary = telemetry?.doctorSummary ?? null;
     const hasDoctorSnapshot = Boolean(doctorSummary);
     const snapshotHealthPercent = hasDoctorSnapshot ? doctorSummary!.health.percent : confidence;
@@ -881,6 +965,10 @@ export function AIIncidentStudio({
             chatBrainReleaseGateEvidence,
         ]
     );
+    const architectureNavigator = useMemo(
+        () => buildIncidentArchitectureNavigator(architectureLens),
+        [architectureLens]
+    );
     const intentChips = useMemo(() => {
         const chips: IncidentIntentChip[] = [];
         const seen = new Set<string>();
@@ -1017,6 +1105,24 @@ export function AIIncidentStudio({
             setLastUserQuery(action);
             onChatBrainQuery?.(action);
         }
+    };
+
+    const handleArchitectureNavigatorSelect = (item: IncidentArchitectureNavigatorItem) => {
+        if (item.action === 'query') {
+            setLastUserQuery(item.query);
+            onChatBrainQuery?.(item.query);
+            return;
+        }
+
+        onRevealArchitectureTarget?.({
+            path: item.targetPath,
+            label: item.label,
+            kind: item.kind,
+            ...(item.action === 'open' && item.symbolName ? { symbolName: item.symbolName } : {}),
+            ...(item.action === 'open' && typeof item.startLine === 'number'
+                ? { startLine: item.startLine }
+                : {}),
+        });
     };
 
     const runStudioAction = (
@@ -1360,6 +1466,32 @@ export function AIIncidentStudio({
                                             )}
                                         </div>
                                     </div>
+                                    {architectureNavigator.length > 0 ? (
+                                        <div className="incident-architecture-lens-navigator">
+                                            <span>Impact navigator</span>
+                                            <div className="incident-architecture-lens-nav-groups">
+                                                {architectureNavigator.map((section) => (
+                                                    <div key={section.id} className="incident-architecture-lens-nav-group">
+                                                        <small className="incident-architecture-lens-nav-title">{section.title}</small>
+                                                        <div className="incident-architecture-lens-nav-items">
+                                                            {section.items.map((item) => (
+                                                                <button
+                                                                    key={item.id}
+                                                                    type="button"
+                                                                    className={`incident-architecture-lens-nav-item is-${item.kind}`}
+                                                                    onClick={() => handleArchitectureNavigatorSelect(item)}
+                                                                    title={item.detail}
+                                                                >
+                                                                    <strong>{item.label}</strong>
+                                                                    <small>{item.detail}</small>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : null}
                                     {architectureLens.focusNodes.length > 0 ? (
                                         <div className="incident-architecture-lens-focus">
                                             <span>Top graph signals</span>
@@ -1756,6 +1888,75 @@ export function AIIncidentStudio({
                             </details>
                         ) : null}
 
+                        {studioReproPackKpiStatus ? (
+                            <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                <summary>
+                                    <span>Repro Pack KPI gate</span>
+                                    <small>{studioReproPackKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
+                                </summary>
+                                <div className="incident-metric-card">
+                                    <span>Repro pack share rate</span>
+                                    <strong>
+                                        {studioReproPackKpiStatus.metrics.reproPackShareRate === null
+                                            ? 'N/A'
+                                            : `${studioReproPackKpiStatus.metrics.reproPackShareRate}%`}{' '}
+                                        / min {studioReproPackKpiStatus.thresholds.reproPackShareRateMin}%
+                                    </strong>
+                                    <div className="incident-meter">
+                                        <span
+                                            style={{
+                                                width: `${Math.min(
+                                                    studioReproPackKpiStatus.metrics.reproPackShareRate ?? 0,
+                                                    100
+                                                )}%`,
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="incident-metric-card">
+                                    <span>Replay-to-resolution rate</span>
+                                    <strong>
+                                        {studioReproPackKpiStatus.metrics.replayToResolutionRate === null
+                                            ? 'N/A'
+                                            : `${studioReproPackKpiStatus.metrics.replayToResolutionRate}%`}{' '}
+                                        / min {studioReproPackKpiStatus.thresholds.replayToResolutionRateMin}%
+                                    </strong>
+                                    <div className="incident-meter">
+                                        <span
+                                            style={{
+                                                width: `${Math.min(
+                                                    studioReproPackKpiStatus.metrics.replayToResolutionRate ?? 0,
+                                                    100
+                                                )}%`,
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="incident-stats-row">
+                                    <div>
+                                        <Package size={12} />
+                                        <span>
+                                            captured: {studioReproPackKpiStatus.metrics.reproPackCaptured} / exported:{' '}
+                                            {studioReproPackKpiStatus.metrics.reproPackExported}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <RotateCw size={12} />
+                                        <span>
+                                            imported: {studioReproPackKpiStatus.metrics.reproPackImported} / enriched:{' '}
+                                            {studioReproPackKpiStatus.metrics.incidentReplayMemoryEnriched}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <Activity size={12} />
+                                        <span>
+                                            evidence: {studioReproPackKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </details>
+                        ) : null}
+
                         {hasDoctorSnapshot ? (
                             <details className="incident-collapse incident-collapse--snapshot incident-health-section">
                                 <summary>
@@ -2106,6 +2307,119 @@ export function AIIncidentStudio({
                                             ) : null}
                                         </div>
                                     ) : null}
+                                    {chatBrainActionResult.sandboxSimulation ? (
+                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.sandboxSimulation.status}`}>
+                                            <strong>Sandbox simulation evidence</strong>
+                                            <p>
+                                                Status: {chatBrainActionResult.sandboxSimulation.status}
+                                                {chatBrainActionResult.sandboxSimulation.safeToApply
+                                                    ? ' · safe to apply'
+                                                    : ' · keep apply blocked'}
+                                            </p>
+                                            <p>
+                                                Risk class: {chatBrainActionResult.sandboxSimulation.riskClass}
+                                                {' · '}
+                                                Commands: {chatBrainActionResult.sandboxSimulation.commandResults.length}
+                                            </p>
+                                            {chatBrainActionResult.sandboxSimulation.reason ? (
+                                                <p>{chatBrainActionResult.sandboxSimulation.reason}</p>
+                                            ) : null}
+                                            {chatBrainActionResult.sandboxSimulation.recommendedRollbackPath ? (
+                                                <p>{chatBrainActionResult.sandboxSimulation.recommendedRollbackPath}</p>
+                                            ) : null}
+                                            {chatBrainActionResult.sandboxSimulation.commandResults.length > 0 ? (
+                                                <p>
+                                                    Command outcomes:{' '}
+                                                    {chatBrainActionResult.sandboxSimulation.commandResults
+                                                        .slice(0, 3)
+                                                        .map((result) => `${result.command} (${result.exitCode === 0 ? 'pass' : 'fail'})`)
+                                                        .join(', ')}
+                                                </p>
+                                            ) : null}
+                                            <div className="incident-command-actions">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn"
+                                                    onClick={() => {
+                                                        const sandboxSimulation = chatBrainActionResult.sandboxSimulation;
+                                                        if (sandboxSimulation) {
+                                                            onExportSandboxSimulationEvidence?.(sandboxSimulation);
+                                                        }
+                                                    }}
+                                                >
+                                                    Export simulation evidence
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                    {chatBrainActionResult.incidentReproPack ? (
+                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.incidentReproPack.status === 'captured' ? 'passed' : chatBrainActionResult.incidentReproPack.status}`}>
+                                            <strong>Incident repro pack</strong>
+                                            <p>
+                                                Status: {chatBrainActionResult.incidentReproPack.status}
+                                                {' · Pack ID: '}
+                                                {chatBrainActionResult.incidentReproPack.packId}
+                                            </p>
+                                            <p>
+                                                Redaction: {chatBrainActionResult.incidentReproPack.redaction.applied ? 'applied' : 'not applied'}
+                                                {' · fields: '}
+                                                {chatBrainActionResult.incidentReproPack.redaction.redactedFields.length > 0
+                                                    ? chatBrainActionResult.incidentReproPack.redaction.redactedFields.slice(0, 5).join(', ')
+                                                    : 'none'}
+                                            </p>
+                                            <p>
+                                                Replay payload: {chatBrainActionResult.incidentReproPack.replayPayload.verifyChecklist.length} verify checks
+                                                {' · '}
+                                                {chatBrainActionResult.incidentReproPack.replayPayload.blockedReasons.length} blocked reasons
+                                            </p>
+                                            {chatBrainActionResult.incidentReproPack.exportHint ? (
+                                                <p>{chatBrainActionResult.incidentReproPack.exportHint}</p>
+                                            ) : null}
+                                            <div className="incident-command-actions">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn"
+                                                    onClick={() => {
+                                                        const reproPack = chatBrainActionResult.incidentReproPack;
+                                                        if (reproPack) {
+                                                            onExportIncidentReproPack?.(reproPack);
+                                                        }
+                                                    }}
+                                                >
+                                                    Export redacted bundle
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn"
+                                                    onClick={() => onImportIncidentReproPack?.()}
+                                                >
+                                                    Import bundle and replay
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn primary"
+                                                    onClick={() => {
+                                                        const reproPack = chatBrainActionResult.incidentReproPack;
+                                                        if (reproPack) {
+                                                            const replayQuery = buildReplayQueryFromIncidentReproPack(
+                                                                reproPack
+                                                            );
+                                                            setLastUserQuery(replayQuery);
+                                                            onChatBrainQuery?.(replayQuery);
+                                                        }
+                                                    }}
+                                                >
+                                                    Replay in Incident Studio
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                    {chatBrainActionResult.multiFilePatch ? (
+                                        <MultiFilePatchCard
+                                            patchResult={chatBrainActionResult.multiFilePatch}
+                                            onApplyPatch={onApplyPatch}
+                                        />
+                                    ) : null}
                                 </div>
                             ) : null}
 
@@ -2309,5 +2623,123 @@ export function AIIncidentStudio({
                 </aside>
             </div>
         </section>
+    );
+}
+
+// ─── Multi-file patch review card (A02 / A03) ─────────────────────────────────
+
+function MultiFilePatchCard({
+    patchResult,
+    onApplyPatch,
+}: {
+    patchResult: MultiFilePatchResult;
+    onApplyPatch?: (patchId: string, acceptedPaths: string[], branchSafeApply: boolean) => void;
+}) {
+    const [accepted, setAccepted] = useState<Set<string>>(
+        () => new Set(patchResult.patches.map((p) => p.relativePath))
+    );
+    const [applied, setApplied] = useState(
+        patchResult.patches.some((p) => p.status === 'applied')
+    );
+    const [branchSafe, setBranchSafe] = useState(true);
+
+    const allPending = patchResult.patches.every(
+        (p) => p.status === 'pending' || p.status === 'rejected'
+    );
+
+    function togglePath(relPath: string) {
+        setAccepted((prev) => {
+            const next = new Set(prev);
+            if (next.has(relPath)) {
+                next.delete(relPath);
+            } else {
+                next.add(relPath);
+            }
+            return next;
+        });
+    }
+
+    function handleApply() {
+        if (!onApplyPatch) {
+            return;
+        }
+        onApplyPatch(patchResult.patchId, Array.from(accepted), branchSafe);
+        setApplied(true);
+    }
+
+    const statusLabel =
+        patchResult.appliedCount > 0
+            ? `${patchResult.appliedCount} applied · ${patchResult.rejectedCount} rejected · ${patchResult.failedCount} failed`
+            : `${patchResult.patches.length} file${patchResult.patches.length !== 1 ? 's' : ''} · review and apply`;
+
+    return (
+        <div className="incident-multi-patch-card">
+            <div className="incident-multi-patch-header">
+                <CheckCircle2 size={13} />
+                <strong>Multi-file patch</strong>
+                <span className="incident-multi-patch-status">{statusLabel}</span>
+            </div>
+
+            {patchResult.branchCreated ? (
+                <p className="incident-multi-patch-branch">
+                    Branch: <code>{patchResult.branchCreated}</code>
+                </p>
+            ) : null}
+
+            <ul className="incident-multi-patch-list">
+                {patchResult.patches.map((patch: FilePatch) => {
+                    const isAccepted = accepted.has(patch.relativePath);
+                    const statusClass =
+                        patch.status === 'applied'
+                            ? 'patch-applied'
+                            : patch.status === 'failed'
+                                ? 'patch-failed'
+                                : isAccepted
+                                    ? 'patch-accepted'
+                                    : 'patch-rejected';
+                    return (
+                        <li key={patch.relativePath} className={`incident-patch-file ${statusClass}`}>
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={isAccepted}
+                                    disabled={!allPending || applied}
+                                    onChange={() => togglePath(patch.relativePath)}
+                                />
+                                <code>{patch.relativePath}</code>
+                                {patch.isNewFile ? (
+                                    <span className="patch-tag new">new</span>
+                                ) : null}
+                                <span className="patch-tag">{patch.language ?? 'text'}</span>
+                            </label>
+                            {patch.failReason ? (
+                                <p className="patch-fail-reason">{patch.failReason}</p>
+                            ) : null}
+                        </li>
+                    );
+                })}
+            </ul>
+
+            {allPending && !applied && onApplyPatch ? (
+                <div className="incident-multi-patch-controls">
+                    <label className="patch-branch-toggle">
+                        <input
+                            type="checkbox"
+                            checked={branchSafe}
+                            onChange={(e) => setBranchSafe(e.target.checked)}
+                        />
+                        Create branch before apply
+                    </label>
+                    <button
+                        type="button"
+                        className="incident-apply-patch-btn"
+                        disabled={accepted.size === 0}
+                        onClick={handleApply}
+                    >
+                        Apply {accepted.size} of {patchResult.patches.length} file{patchResult.patches.length !== 1 ? 's' : ''}
+                    </button>
+                </div>
+            ) : null}
+        </div>
     );
 }

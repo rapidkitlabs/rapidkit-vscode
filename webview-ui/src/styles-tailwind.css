@@ -3366,6 +3366,7 @@
 
   .incident-architecture-lens-section,
   .incident-architecture-lens-focus,
+  .incident-architecture-lens-navigator,
   .incident-architecture-lens-blockers,
   .incident-architecture-lens-actions {
     display: flex;
@@ -3375,6 +3376,7 @@
 
   .incident-architecture-lens-section span,
   .incident-architecture-lens-focus span,
+  .incident-architecture-lens-navigator span,
   .incident-architecture-lens-blockers span {
     font-size: 9px;
     font-weight: 800;
@@ -3385,11 +3387,82 @@
 
   .incident-architecture-lens-section small,
   .incident-architecture-lens-focus small,
+  .incident-architecture-lens-navigator small,
   .incident-architecture-lens-blockers small,
   .incident-architecture-lens-actions small {
     font-size: 10px;
     line-height: 1.45;
     color: var(--vscode-editor-foreground);
+  }
+
+  .incident-architecture-lens-nav-groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .incident-architecture-lens-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .incident-architecture-lens-nav-title {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--vscode-descriptionForeground);
+  }
+
+  .incident-architecture-lens-nav-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .incident-architecture-lens-nav-item {
+    min-width: 0;
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 74%, transparent);
+    border-radius: 10px;
+    padding: 7px 8px;
+    background: color-mix(in srgb, var(--vscode-editor-background) 97%, transparent);
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+  }
+
+  .incident-architecture-lens-nav-item:hover {
+    border-color: color-mix(in srgb, var(--vscode-focusBorder) 76%, transparent);
+    background: color-mix(in srgb, var(--vscode-focusBorder) 8%, var(--vscode-editor-background));
+    transform: translateY(-1px);
+  }
+
+  .incident-architecture-lens-nav-item strong {
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--vscode-editor-foreground);
+  }
+
+  .incident-architecture-lens-nav-item small {
+    color: var(--vscode-descriptionForeground);
+  }
+
+  .incident-architecture-lens-nav-item.is-test {
+    border-color: color-mix(in srgb, #00cec9 30%, var(--vscode-panel-border));
+  }
+
+  .incident-architecture-lens-nav-item.is-node {
+    border-color: color-mix(in srgb, #74b9ff 32%, var(--vscode-panel-border));
+  }
+
+  .incident-architecture-lens-nav-item.is-module {
+    border-color: color-mix(in srgb, #fdcb6e 34%, var(--vscode-panel-border));
   }
 
   .incident-architecture-lens-node-list {
@@ -3419,6 +3492,10 @@
 
   @media (max-width: 980px) {
     .incident-architecture-lens-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .incident-architecture-lens-nav-groups {
       grid-template-columns: 1fr;
     }
 

@@ -86,6 +86,31 @@ export type IncidentStudioTelemetryPayload = {
       overallPass: boolean;
     };
   } | null;
+  studioReproPackKpiStatus?: {
+    workspacePath: string;
+    timeWindow: 'all' | 'last24h' | 'last7d';
+    windowStartAt: string | null;
+    windowEndAt: string;
+    thresholds: {
+      reproPackShareRateMin: number;
+      replayToResolutionRateMin: number;
+    };
+    metrics: {
+      reproPackCaptured: number;
+      reproPackExported: number;
+      reproPackImported: number;
+      incidentReplayReady: number;
+      incidentReplayMemoryEnriched: number;
+      reproPackShareRate: number | null;
+      replayToResolutionRate: number | null;
+    };
+    gates: {
+      telemetryEvidencePass: boolean;
+      reproPackShareRatePass: boolean;
+      replayToResolutionRatePass: boolean;
+      overallPass: boolean;
+    };
+  } | null;
   doctorSummary?: unknown | null;
 };
 
@@ -125,6 +150,7 @@ export function buildIncidentStudioTelemetryFromCache(
     ctaVariantBreakdown: cachedData.ctaVariantBreakdown ?? null,
     studioHardGateStatus: cachedData.studioHardGateStatus ?? null,
     studioRollbackKpiStatus: cachedData.studioRollbackKpiStatus ?? null,
+    studioReproPackKpiStatus: cachedData.studioReproPackKpiStatus ?? null,
     // Always prefer the doctor snapshot freshly read from disk.
     doctorSummary: attachCtaVariantBreakdownToDoctorSummary(
       doctorSummary,
@@ -170,7 +196,8 @@ export function buildIncidentStudioTelemetryPayload(
   } | null,
   doctorSummary: unknown | null,
   studioHardGateStatus?: IncidentStudioTelemetryPayload['studioHardGateStatus'],
-  studioRollbackKpiStatus?: IncidentStudioTelemetryPayload['studioRollbackKpiStatus']
+  studioRollbackKpiStatus?: IncidentStudioTelemetryPayload['studioRollbackKpiStatus'],
+  studioReproPackKpiStatus?: IncidentStudioTelemetryPayload['studioReproPackKpiStatus']
 ): IncidentStudioTelemetryPayload {
   return {
     commandSummary: commandSummary
@@ -204,6 +231,7 @@ export function buildIncidentStudioTelemetryPayload(
       : null,
     studioHardGateStatus: studioHardGateStatus ?? null,
     studioRollbackKpiStatus: studioRollbackKpiStatus ?? null,
+    studioReproPackKpiStatus: studioReproPackKpiStatus ?? null,
     doctorSummary: attachCtaVariantBreakdownToDoctorSummary(doctorSummary, ctaVariantBreakdown),
   };
 }

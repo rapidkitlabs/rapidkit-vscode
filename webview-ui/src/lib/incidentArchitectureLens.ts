@@ -22,6 +22,9 @@ export type IncidentArchitectureLensModel = {
     label: string;
     type: string;
     confidence: number;
+    filePath?: string;
+    symbolName?: string;
+    startLine?: number;
   }>;
   verifyChecklist: string[];
   blockedReasons: string[];
@@ -90,6 +93,9 @@ function summarizeFocusNodes(
       label: node.label,
       type: formatNodeType(node.type),
       confidence: node.confidence,
+      filePath: node.filePath,
+      symbolName: node.symbolName,
+      startLine: node.startLine,
     }));
 }
 

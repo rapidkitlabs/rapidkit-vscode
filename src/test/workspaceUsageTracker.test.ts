@@ -165,6 +165,39 @@ describe('workspaceUsageTracker telemetry stability', () => {
     expect(bySurface.find((entry) => entry.surface === 'onboarding')?.count).toBe(2);
   });
 
+  it('counts clarification-gate telemetry under ask surfaces for rate analysis', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-clarification-gates');
+
+    createWorkspaceMarker(workspacePath, {
+      commandUsage: {
+        'workspai.chat.ask': 2,
+        'workspai.chat.clarification_gate': 3,
+        'workspai.aimodal.ask': 1,
+        'workspai.aimodal.clarification_gate': 4,
+        'workspai.aiQuickActions': 5,
+      },
+      recentEvents: [
+        { command: 'workspai.chat.clarification_gate', at: '2026-04-22T12:10:00.000Z' },
+        { command: 'workspai.aimodal.clarification_gate', at: '2026-04-22T12:11:00.000Z' },
+      ],
+      lastCommand: 'workspai.aimodal.clarification_gate',
+      lastCommandAt: '2026-04-22T12:11:00.000Z',
+    });
+
+    const summary = await WorkspaceUsageTracker.getInstance().getCommandTelemetrySummary(
+      workspacePath,
+      'all'
+    );
+
+    expect(summary).not.toBeNull();
+    expect(summary?.surfaceBreakdown.askEvents).toBe(10);
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(5);
+
+    const bySurface = summary?.surfaceBreakdown.bySurface ?? [];
+    expect(bySurface.find((entry) => entry.surface === 'chat')?.count).toBe(5);
+    expect(bySurface.find((entry) => entry.surface === 'aimodal')?.count).toBe(5);
+  });
+
   it('preserves incident studio loop sequencing and classifies the full loop as action telemetry', async () => {
     const workspacePath = path.join(tempRoot, 'ws-studio-loop');
     createWorkspaceMarker(workspacePath);
@@ -407,12 +440,270 @@ describe('workspaceUsageTracker telemetry stability', () => {
     expect(status?.metrics.predictivePrecision).toBe(71.43);
     expect(status?.metrics.falseAlarmRate).toBe(28.57);
     expect(status?.metrics.preventedIncidentRate).toBe(50);
+    expect(status?.aggregation.prevented_incident_rate).toMatchObject({
+      numerator: 5,
+      denominator: 10,
+      value: 50,
+      unit: 'percent',
+    });
+    expect(status?.aggregation.predictive_precision).toMatchObject({
+      numerator: 5,
+      denominator: 7,
+      value: 71.43,
+      unit: 'percent',
+    });
+    expect(status?.aggregation.false_alarm_rate).toMatchObject({
+      numerator: 2,
+      denominator: 7,
+      value: 28.57,
+      unit: 'percent',
+    });
     expect(status?.metrics.acceptanceRate).toBe(70);
     expect(status?.metrics.verificationCoverage).toBe(100);
     expect(status?.gates.telemetryEvidencePass).toBe(true);
     expect(status?.gates.predictivePrecisionPass).toBe(true);
     expect(status?.gates.falseAlarmRatePass).toBe(true);
     expect(status?.gates.preventedIncidentRatePass).toBe(true);
+    expect(status?.gates.overallPass).toBe(true);
+  });
+
+  it('uses all-time command aggregates for predictive KPI status when recent event history is capped', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-prediction-command-aggregate');
+    createWorkspaceMarker(workspacePath, {
+      commandUsage: {
+        'workspai.studio.prediction_shown': 120,
+        'workspai.studio.prediction_accepted': 90,
+        'workspai.studio.prediction_verified': 72,
+        'workspai.studio.prediction_falsified': 18,
+      },
+      recentEvents: [
+        { command: 'workspai.studio.prediction_shown', at: '2026-04-22T12:10:00.000Z' },
+        { command: 'workspai.studio.prediction_verified', at: '2026-04-22T12:11:00.000Z' },
+      ],
+    });
+
+    const status = await WorkspaceUsageTracker.getInstance().getStudioPredictionKpiStatus(
+      workspacePath,
+      'all'
+    );
+
+    expect(status).not.toBeNull();
+    expect(status?.metrics.predictionShown).toBe(120);
+    expect(status?.metrics.predictionAccepted).toBe(90);
+    expect(status?.metrics.predictionVerified).toBe(72);
+    expect(status?.metrics.predictionFalsified).toBe(18);
+    expect(status?.metrics.preventedIncidentRate).toBe(60);
+    expect(status?.metrics.predictivePrecision).toBe(80);
+    expect(status?.metrics.falseAlarmRate).toBe(20);
+    expect(status?.aggregation.prevented_incident_rate.denominator).toBe(120);
+    expect(status?.aggregation.predictive_precision.denominator).toBe(90);
+    expect(status?.aggregation.false_alarm_rate.denominator).toBe(90);
+  });
+
+  it('aggregates predictive KPI status across multiple workspace markers without actor identifiers', async () => {
+    const workspaceA = path.join(tempRoot, 'ws-portfolio-a');
+    const workspaceB = path.join(tempRoot, 'ws-portfolio-b');
+
+    createWorkspaceMarker(workspaceA, {
+      commandUsage: {
+        'workspai.studio.prediction_shown': 10,
+        'workspai.studio.prediction_accepted': 7,
+        'workspai.studio.prediction_verified': 5,
+        'workspai.studio.prediction_falsified': 2,
+      },
+    });
+    createWorkspaceMarker(workspaceB, {
+      commandUsage: {
+        'workspai.studio.prediction_shown': 5,
+        'workspai.studio.prediction_accepted': 3,
+        'workspai.studio.prediction_verified': 2,
+        'workspai.studio.prediction_falsified': 1,
+      },
+    });
+
+    const status = await WorkspaceUsageTracker.getInstance().getStudioPredictionPortfolioKpiStatus(
+      [workspaceA, workspaceB, workspaceA],
+      'all'
+    );
+
+    expect(status).not.toBeNull();
+    expect(status?.scope).toBe('explicit-workspaces');
+    expect(status?.evaluatedWorkspaceCount).toBe(2);
+    expect(status?.telemetryWorkspaceCount).toBe(2);
+    expect(status?.workspacePaths).toEqual([workspaceA, workspaceB]);
+    expect(status?.metrics.predictionShown).toBe(15);
+    expect(status?.metrics.predictionAccepted).toBe(10);
+    expect(status?.metrics.predictionVerified).toBe(7);
+    expect(status?.metrics.predictionFalsified).toBe(3);
+    expect(status?.metrics.predictionIgnored).toBe(5);
+    expect(status?.metrics.predictivePrecision).toBe(70);
+    expect(status?.metrics.falseAlarmRate).toBe(30);
+    expect(status?.metrics.preventedIncidentRate).toBe(46.67);
+    expect(status?.metrics.workspacePassCount).toBe(2);
+    expect(status?.metrics.workspaceFailCount).toBe(0);
+    expect(status?.aggregation.prevented_incident_rate).toMatchObject({
+      numerator: 7,
+      denominator: 15,
+      value: 46.67,
+    });
+    expect(status?.aggregation.predictive_precision).toMatchObject({
+      numerator: 7,
+      denominator: 10,
+      value: 70,
+    });
+    expect(status?.aggregation.false_alarm_rate).toMatchObject({
+      numerator: 3,
+      denominator: 10,
+      value: 30,
+    });
+    expect(status?.privacy).toEqual({
+      actorModel: 'workspace-marker-only',
+      actorIdPresent: false,
+    });
+    expect(status?.gates.overallPass).toBe(true);
+  });
+
+  it('computes repeat-rate actor model from pseudonymous workspace actors', async () => {
+    const workspaceA = path.join(tempRoot, 'ws-repeat-a');
+    const workspaceB = path.join(tempRoot, 'ws-repeat-b');
+    const workspaceC = path.join(tempRoot, 'ws-repeat-c');
+
+    createWorkspaceMarker(workspaceA, {
+      recentEvents: [
+        { command: 'workspai.chat.ask', at: '2026-04-22T10:05:00.000Z' },
+        { command: 'workspai.studio.loop_started', at: '2026-04-22T12:05:00.000Z' },
+      ],
+      hourlyUsage: [
+        {
+          hour: '2026-04-22T10:00:00.000Z',
+          usage: { 'workspai.chat.ask': 1 },
+        },
+        {
+          hour: '2026-04-22T12:00:00.000Z',
+          usage: { 'workspai.studio.loop_started': 1 },
+        },
+      ],
+    });
+    createWorkspaceMarker(workspaceB, {
+      recentEvents: [{ command: 'workspai.chat.ask', at: '2026-04-22T12:10:00.000Z' }],
+      hourlyUsage: [
+        {
+          hour: '2026-04-22T12:00:00.000Z',
+          usage: { 'workspai.chat.ask': 1 },
+        },
+      ],
+    });
+    createWorkspaceMarker(workspaceC, {
+      recentEvents: [],
+      hourlyUsage: [],
+    });
+
+    const status = await WorkspaceUsageTracker.getInstance().getRepeatRateActorModelStatus(
+      [workspaceA, workspaceB, workspaceC],
+      'last24h'
+    );
+
+    expect(status).not.toBeNull();
+    expect(status?.scope).toBe('explicit-workspaces');
+    expect(status?.workspaceCount).toBe(3);
+    expect(status?.activeActorCount).toBe(2);
+    expect(status?.repeatActorCount).toBe(1);
+    expect(status?.repeatRate).toBe(50);
+    expect(status?.actors).toHaveLength(2);
+    expect(status?.actors[0].actorKey).toMatch(/^[a-f0-9]{16}$/);
+    expect(status?.actors.some((actor) => actor.repeated && actor.activeHourCount === 2)).toBe(
+      true
+    );
+    expect(status?.actors.every((actor) => !actor.actorKey.includes(tempRoot))).toBe(true);
+    expect(status?.privacy).toEqual({
+      actorModel: 'pseudonymous-workspace-marker',
+      rawUserIdPresent: false,
+      rawWorkspacePathInActorKey: false,
+    });
+  });
+
+  it('computes architecture reasoning KPI metrics from impact warning outcome events', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-architecture-kpi');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+    for (let i = 0; i < 8; i += 1) {
+      await tracker.trackCommandEvent('workspai.studio.architecture_warning_shown', workspacePath);
+    }
+    for (let i = 0; i < 5; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.architecture_warning_accepted',
+        workspacePath
+      );
+    }
+    for (let i = 0; i < 3; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.architecture_breakage_prevented',
+        workspacePath
+      );
+    }
+    await tracker.trackCommandEvent(
+      'workspai.studio.architecture_warning_falsified',
+      workspacePath
+    );
+    for (let i = 0; i < 2; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.architecture_unknown_scope_blocked',
+        workspacePath
+      );
+    }
+
+    const status = await tracker.getArchitectureReasoningKpiStatus(workspacePath, 'all', {
+      architectureBreakagePreventedRateMin: 30,
+      architectureFalseAlarmRateMax: 30,
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.metrics.architectureWarningShown).toBe(8);
+    expect(status?.metrics.architectureWarningAccepted).toBe(5);
+    expect(status?.metrics.architectureBreakagePrevented).toBe(3);
+    expect(status?.metrics.architectureWarningFalsified).toBe(1);
+    expect(status?.metrics.architectureUnknownScopeBlocked).toBe(2);
+    expect(status?.metrics.architectureBreakagePreventedRate).toBe(37.5);
+    expect(status?.metrics.architectureFalseAlarmRate).toBe(25);
+    expect(status?.metrics.architectureAcceptanceRate).toBe(62.5);
+    expect(status?.gates.telemetryEvidencePass).toBe(true);
+    expect(status?.gates.architectureBreakagePreventedRatePass).toBe(true);
+    expect(status?.gates.architectureFalseAlarmRatePass).toBe(true);
+    expect(status?.gates.overallPass).toBe(true);
+
+    const summary = await tracker.getCommandTelemetrySummary(workspacePath, 'all');
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(19);
+  });
+
+  it('computes sandbox KPI metrics from simulation and escape outcome events', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-sandbox-kpi');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+    for (let i = 0; i < 5; i += 1) {
+      await tracker.trackCommandEvent('workspai.studio.sandbox_simulation_started', workspacePath);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      await tracker.trackCommandEvent('workspai.studio.sandbox_simulation_passed', workspacePath);
+    }
+    await tracker.trackCommandEvent('workspai.studio.sandbox_simulation_failed', workspacePath);
+
+    const status = await tracker.getSandboxKpiStatus(workspacePath, 'all', {
+      sandboxSimulationPassRateMin: 75,
+      unsafeApplyEscapeRateMax: 5,
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.metrics.sandboxSimulationStarted).toBe(5);
+    expect(status?.metrics.sandboxSimulationPassed).toBe(4);
+    expect(status?.metrics.sandboxSimulationFailed).toBe(1);
+    expect(status?.metrics.unsafeApplyEscaped).toBe(0);
+    expect(status?.metrics.sandboxSimulationPassRate).toBe(80);
+    expect(status?.metrics.unsafeApplyEscapeRate).toBe(0);
+    expect(status?.gates.telemetryEvidencePass).toBe(true);
+    expect(status?.gates.sandboxSimulationPassRatePass).toBe(true);
+    expect(status?.gates.unsafeApplyEscapeRatePass).toBe(true);
     expect(status?.gates.overallPass).toBe(true);
   });
 
@@ -462,6 +753,74 @@ describe('workspaceUsageTracker telemetry stability', () => {
 
     const summary = await tracker.getCommandTelemetrySummary(workspacePath, 'all');
     expect(summary?.surfaceBreakdown.actionEvents).toBe(15);
+  });
+
+  it('computes repro pack KPI metrics from capture/export/import/replay-learning events', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-repro-pack-kpi-pass');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+
+    for (let i = 0; i < 4; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.incident_repro_pack_captured',
+        workspacePath,
+        {
+          framework: 'fastapi',
+        }
+      );
+    }
+
+    for (let i = 0; i < 3; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.incident_repro_pack_exported',
+        workspacePath,
+        {
+          framework: 'fastapi',
+        }
+      );
+    }
+
+    for (let i = 0; i < 2; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.incident_repro_pack_imported',
+        workspacePath,
+        {
+          framework: 'fastapi',
+        }
+      );
+      await tracker.trackCommandEvent('workspai.studio.incident_replay_ready', workspacePath, {
+        framework: 'fastapi',
+      });
+      await tracker.trackCommandEvent(
+        'workspai.studio.incident_replay_memory_enriched',
+        workspacePath,
+        {
+          framework: 'fastapi',
+        }
+      );
+    }
+
+    const status = await tracker.getStudioReproPackKpiStatus(workspacePath, 'all', {
+      reproPackShareRateMin: 50,
+      replayToResolutionRateMin: 60,
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.metrics.reproPackCaptured).toBe(4);
+    expect(status?.metrics.reproPackExported).toBe(3);
+    expect(status?.metrics.reproPackImported).toBe(2);
+    expect(status?.metrics.incidentReplayReady).toBe(2);
+    expect(status?.metrics.incidentReplayMemoryEnriched).toBe(2);
+    expect(status?.metrics.reproPackShareRate).toBe(75);
+    expect(status?.metrics.replayToResolutionRate).toBe(100);
+    expect(status?.gates.telemetryEvidencePass).toBe(true);
+    expect(status?.gates.reproPackShareRatePass).toBe(true);
+    expect(status?.gates.replayToResolutionRatePass).toBe(true);
+    expect(status?.gates.overallPass).toBe(true);
+
+    const summary = await tracker.getCommandTelemetrySummary(workspacePath, 'all');
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(13);
   });
 
   it('uses onboarding hourly buckets for last24h stats instead of recentEvents cap', async () => {
@@ -576,5 +935,67 @@ describe('workspaceUsageTracker telemetry stability', () => {
     expect(stats?.followupClicked).toBe(420);
     expect(stats?.followupDismissed).toBe(260);
     expect(stats?.overallFollowupClickThroughRate).toBe(46.67);
+  });
+
+  it('getClarificationGateKpiStatus reports gate count and rate vs ask for all/last24h/last7d', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-gate-kpi');
+    const hour = '2026-04-22T12:00:00.000Z';
+
+    createWorkspaceMarker(workspacePath, {
+      commandUsage: {
+        'workspai.chat.ask': 10,
+        'workspai.aimodal.ask': 6,
+        'workspai.chat.clarification_gate': 3,
+        'workspai.aimodal.clarification_gate': 2,
+      },
+      recentEvents: [
+        { command: 'workspai.chat.ask', at: '2026-04-22T12:05:00.000Z' },
+        { command: 'workspai.chat.clarification_gate', at: '2026-04-22T12:06:00.000Z' },
+        { command: 'workspai.aimodal.ask', at: '2026-04-22T12:07:00.000Z' },
+        { command: 'workspai.aimodal.clarification_gate', at: '2026-04-22T12:08:00.000Z' },
+      ],
+      hourlyUsage: [
+        {
+          hour,
+          usage: {
+            'workspai.chat.ask': 10,
+            'workspai.aimodal.ask': 6,
+            'workspai.chat.clarification_gate': 3,
+            'workspai.aimodal.clarification_gate': 2,
+          },
+        },
+      ],
+    });
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+
+    // all-time: uses commandUsage totals
+    const statusAll = await tracker.getClarificationGateKpiStatus(workspacePath, 'all');
+    expect(statusAll).not.toBeNull();
+    expect(statusAll?.metrics.chatAskCount).toBe(10);
+    expect(statusAll?.metrics.aimodalAskCount).toBe(6);
+    expect(statusAll?.metrics.totalAskCount).toBe(16);
+    expect(statusAll?.metrics.chatClarificationGateCount).toBe(3);
+    expect(statusAll?.metrics.aimodalClarificationGateCount).toBe(2);
+    expect(statusAll?.metrics.clarificationGateCount).toBe(5);
+    expect(statusAll?.metrics.clarificationRateVsAsk).toBe(31.25);
+    expect(statusAll?.gates.telemetryEvidencePass).toBe(true);
+    expect(statusAll?.gates.clarificationRateVsAskPass).toBe(true); // 31.25 <= 40 default
+    expect(statusAll?.gates.overallPass).toBe(true);
+
+    // last24h/last7d: uses hourly buckets (same data in bucket)
+    const statusLast7d = await tracker.getClarificationGateKpiStatus(workspacePath, 'last7d');
+    expect(statusLast7d).not.toBeNull();
+    expect(statusLast7d?.metrics.totalAskCount).toBe(16);
+    expect(statusLast7d?.metrics.clarificationGateCount).toBe(5);
+    expect(statusLast7d?.timeWindow).toBe('last7d');
+
+    // custom threshold that would fail
+    const statusFail = await tracker.getClarificationGateKpiStatus(workspacePath, 'all', {
+      clarificationRateVsAskMax: 20,
+    });
+    expect(statusFail?.gates.clarificationRateVsAskPass).toBe(false); // 31.25 > 20
+    expect(statusFail?.gates.overallPass).toBe(false);
+    expect(statusFail?.thresholds.clarificationRateVsAskMax).toBe(20);
   });
 });

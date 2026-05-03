@@ -198,6 +198,7 @@ describe('incidentStudioPayload', () => {
       'workspace-memory-wizard',
       'doctor-fix',
       'recipe-pack',
+      'incident-repro-pack',
       'inline-command',
       'custom-mutate-action',
     ];
@@ -574,6 +575,138 @@ describe('incidentStudioPayload', () => {
       signalSources: ['doctor-evidence', 'system-graph'],
       relatedFiles: ['src/orders/service.ts', 'src/orders/controller.ts'],
       recommendedFocus: 'authorization:[REDACTED]',
+    });
+  });
+
+  it('normalizes sandbox simulation evidence in action-result payload', () => {
+    const normalized = normalizeIncidentActionResultPayload({
+      success: false,
+      sandboxSimulation: {
+        actionId: ' action-123 ',
+        workspacePath: ' /tmp/wsp ',
+        riskClass: ' high-risk-mutating ',
+        mode: 'verify-pack-simulation',
+        status: ' failed ',
+        startedAt: ' 2026-04-30T20:00:00.000Z ',
+        completedAt: ' 2026-04-30T20:00:02.000Z ',
+        durationMs: 2000,
+        commandResults: [
+          {
+            label: 'verify: rapidkit',
+            command: 'rapidkit',
+            args: ['doctor', '--fix'],
+            exitCode: 1,
+            stdout: 'token=abc123',
+            stderr: 'connection refused',
+            durationMs: 1200,
+          },
+        ],
+        recommendedRollbackPath: 'Restore workspace to previous baseline before retry.',
+        safeToApply: false,
+        reason: 'Sandbox verify command failed.',
+      },
+    });
+
+    expect(normalized.sandboxSimulation).toEqual({
+      actionId: 'action-123',
+      workspacePath: '/tmp/wsp',
+      riskClass: 'high-risk-mutating',
+      mode: 'verify-pack-simulation',
+      status: 'failed',
+      startedAt: '2026-04-30T20:00:00.000Z',
+      completedAt: '2026-04-30T20:00:02.000Z',
+      durationMs: 2000,
+      commandResults: [
+        {
+          label: 'verify: rapidkit',
+          command: 'rapidkit',
+          args: ['doctor', '--fix'],
+          exitCode: 1,
+          stdout: 'token=[REDACTED]',
+          stderr: 'connection refused',
+          durationMs: 1200,
+        },
+      ],
+      recommendedRollbackPath: 'Restore workspace to previous baseline before retry.',
+      safeToApply: false,
+      reason: 'Sandbox verify command failed.',
+    });
+  });
+
+  it('normalizes incident repro pack evidence in action-result payload', () => {
+    const normalized = normalizeIncidentActionResultPayload({
+      success: false,
+      incidentReproPack: {
+        packId: ' repro-001 ',
+        status: ' captured ',
+        capturedAt: ' 2026-05-01T09:00:00.000Z ',
+        schemaVersion: 'v1',
+        workspacePath: ' /tmp/wsp ',
+        conversationId: ' conv-42 ',
+        actionId: ' action-42 ',
+        redaction: {
+          policy: ' default ',
+          applied: true,
+          redactedFields: ['token', 'authorization', 'token'],
+        },
+        summary: {
+          historyTurns: 6,
+          hasDoctorEvidence: true,
+          hasRollbackEvidence: false,
+          hasSandboxEvidence: true,
+          hasPredictiveWarning: true,
+          verifySuccess: false,
+          affectedFilesCount: 4,
+          blockedReasonCount: 2,
+        },
+        replayPayload: {
+          workspacePath: ' /tmp/wsp ',
+          conversationId: ' conv-42 ',
+          actionType: ' incident-repro-pack ',
+          riskLevel: ' high ',
+          likelyFailureMode: 'authorization: Bearer my-secret',
+          verifyChecklist: ['Run doctor workspace', 'token=abc123'],
+          blockedReasons: ['scope unknown'],
+          relatedFiles: ['src/orders/service.ts', 'src/orders/service.ts'],
+        },
+        exportHint: 'password=super-secret',
+      },
+    });
+
+    expect(normalized.incidentReproPack).toEqual({
+      packId: 'repro-001',
+      status: 'captured',
+      capturedAt: '2026-05-01T09:00:00.000Z',
+      schemaVersion: 'v1',
+      workspacePath: '/tmp/wsp',
+      conversationId: 'conv-42',
+      actionId: 'action-42',
+      redaction: {
+        policy: 'default',
+        applied: true,
+        redactedFields: ['token', 'authorization'],
+      },
+      summary: {
+        historyTurns: 6,
+        hasDoctorEvidence: true,
+        hasRollbackEvidence: false,
+        hasSandboxEvidence: true,
+        hasPredictiveWarning: true,
+        verifySuccess: false,
+        affectedFilesCount: 4,
+        blockedReasonCount: 2,
+      },
+      replayPayload: {
+        workspacePath: '/tmp/wsp',
+        conversationId: 'conv-42',
+        actionType: 'incident-repro-pack',
+        riskLevel: 'high',
+        likelyFailureMode: 'authorization:[REDACTED]',
+        verifyChecklist: ['Run doctor workspace', 'token=[REDACTED]'],
+        blockedReasons: ['scope unknown'],
+        relatedFiles: ['src/orders/service.ts'],
+      },
+      exportHint: 'password=[REDACTED]',
     });
   });
 

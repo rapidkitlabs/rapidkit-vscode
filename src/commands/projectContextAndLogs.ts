@@ -91,6 +91,25 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
           selectedWorkspace?.path,
           timeWindowPick.value
         );
+      const predictionPortfolioKpiStatus =
+        await WorkspaceUsageTracker.getInstance().getStudioPredictionPortfolioKpiStatus(
+          undefined,
+          timeWindowPick.value
+        );
+      const repeatRateActorStatus =
+        await WorkspaceUsageTracker.getInstance().getRepeatRateActorModelStatus(
+          undefined,
+          timeWindowPick.value
+        );
+      const architectureKpiStatus =
+        await WorkspaceUsageTracker.getInstance().getArchitectureReasoningKpiStatus(
+          selectedWorkspace?.path,
+          timeWindowPick.value
+        );
+      const sandboxKpiStatus = await WorkspaceUsageTracker.getInstance().getSandboxKpiStatus(
+        selectedWorkspace?.path,
+        timeWindowPick.value
+      );
       const rollbackKpiStatus =
         await WorkspaceUsageTracker.getInstance().getStudioRollbackKpiStatus(
           selectedWorkspace?.path,
@@ -137,6 +156,36 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
           `(threshold: <=${predictionKpiStatus?.thresholds.falseAlarmRateMax ?? 'n/a'}%)`,
         `Prevented incident rate: ${predictionKpiStatus?.metrics.preventedIncidentRate ?? 'n/a'}% ` +
           `(threshold: ${predictionKpiStatus?.thresholds.preventedIncidentRateMin ?? 'n/a'}%)`,
+        `Predictive portfolio overall: ${
+          predictionPortfolioKpiStatus?.gates.overallPass ? 'PASS' : 'FAIL'
+        }`,
+        `Predictive portfolio workspaces: ${
+          predictionPortfolioKpiStatus?.telemetryWorkspaceCount ?? 'n/a'
+        }/${predictionPortfolioKpiStatus?.evaluatedWorkspaceCount ?? 'n/a'} with telemetry`,
+        `Predictive portfolio privacy: ${
+          predictionPortfolioKpiStatus?.privacy.actorModel ?? 'n/a'
+        }, actor id present: ${predictionPortfolioKpiStatus?.privacy.actorIdPresent ?? 'n/a'}`,
+        `Repeat actor rate: ${repeatRateActorStatus?.repeatRate ?? 'n/a'}% ` +
+          `(${repeatRateActorStatus?.repeatActorCount ?? 'n/a'} repeat / ${
+            repeatRateActorStatus?.activeActorCount ?? 'n/a'
+          } active)`,
+        `Repeat actor privacy: ${
+          repeatRateActorStatus?.privacy.actorModel ?? 'n/a'
+        }, raw user id present: ${repeatRateActorStatus?.privacy.rawUserIdPresent ?? 'n/a'}`,
+        `Architecture KPI overall: ${architectureKpiStatus?.gates.overallPass ? 'PASS' : 'FAIL'}`,
+        `Architecture breakage prevented rate: ${
+          architectureKpiStatus?.metrics.architectureBreakagePreventedRate ?? 'n/a'
+        }% ` +
+          `(threshold: ${
+            architectureKpiStatus?.thresholds.architectureBreakagePreventedRateMin ?? 'n/a'
+          }%)`,
+        `Sandbox KPI overall: ${sandboxKpiStatus?.gates.overallPass ? 'PASS' : 'FAIL'}`,
+        `Sandbox simulation pass rate: ${
+          sandboxKpiStatus?.metrics.sandboxSimulationPassRate ?? 'n/a'
+        }% ` +
+          `(threshold: ${sandboxKpiStatus?.thresholds.sandboxSimulationPassRateMin ?? 'n/a'}%)`,
+        `Unsafe apply escape rate: ${sandboxKpiStatus?.metrics.unsafeApplyEscapeRate ?? 'n/a'}% ` +
+          `(threshold: <=${sandboxKpiStatus?.thresholds.unsafeApplyEscapeRateMax ?? 'n/a'}%)`,
         `Rollback KPI overall: ${rollbackKpiStatus?.gates.overallPass ? 'PASS' : 'FAIL'}`,
         `Rollback auto success rate: ${rollbackKpiStatus?.metrics.verifyAutoRollbackSuccessRate ?? 'n/a'}% ` +
           `(threshold: ${rollbackKpiStatus?.thresholds.verifyAutoRollbackSuccessRateMin ?? 'n/a'}%)`,
@@ -150,6 +199,10 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
         topCommands,
         studioHardGateStatus: gateStatus,
         studioPredictionKpiStatus: predictionKpiStatus,
+        studioPredictionPortfolioKpiStatus: predictionPortfolioKpiStatus,
+        repeatRateActorStatus,
+        architectureReasoningKpiStatus: architectureKpiStatus,
+        sandboxKpiStatus,
         studioRollbackKpiStatus: rollbackKpiStatus,
       };
 

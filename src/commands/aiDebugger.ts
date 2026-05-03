@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import type { AIModalContext } from '../core/aiService';
 import { resolvePreferredAIModalContext } from '../core/aiContextResolver';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
+import { parseLogTrace, readLogFile } from '../core/patchApplyEngine';
 
 // ──────────────────────────────────────────────
 // Context collection helpers
@@ -73,6 +74,40 @@ export function collectExplainPrefillQuestion(
   return getActiveDiagnostics(editor, diagnostics);
 }
 
+/**
+ * Read a log file selected by the user and return structured debug context.
+ * Returns null if the user cancelled or the file could not be read.
+ */
+export async function collectLogFileDebugContext(
+  uri?: vscode.Uri
+): Promise<{
+  rawText: string;
+  parsedTrace: ReturnType<typeof parseLogTrace>;
+  filePath: string;
+} | null> {
+  let fileUri = uri;
+  if (!fileUri) {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: 'Select log file',
+      filters: { 'Log files': ['log', 'txt', 'out', 'err', 'json'], 'All files': ['*'] },
+    });
+    if (!picked || picked.length === 0) {
+      return null;
+    }
+    fileUri = picked[0];
+  }
+
+  const rawText = await readLogFile(fileUri.fsPath);
+  if (rawText === null) {
+    void vscode.window.showErrorMessage(`Could not read log file: ${fileUri.fsPath}`);
+    return null;
+  }
+
+  const parsedTrace = parseLogTrace(rawText);
+  return { rawText, parsedTrace, filePath: fileUri.fsPath };
+}
+
 // ──────────────────────────────────────────────
 // Command registration
 // ──────────────────────────────────────────────
@@ -101,5 +136,42 @@ export function registerAIDebuggerCommand(context: vscode.ExtensionContext): vsc
     }
   );
 
-  return vscode.Disposable.from(debugCommand, explainCommand);
+  // A03: Ingest a log file and open Incident Studio with the trace as context
+  const ingestLogCommand = vscode.commands.registerCommand(
+    'workspai.ingestLogFile',
+    async (uri?: vscode.Uri) => {
+      const logCtx = await collectLogFileDebugContext(uri);
+      if (!logCtx) {
+        return;
+      }
+
+      const { rawText, parsedTrace, filePath } = logCtx;
+
+      // Build a prefill question that includes the parsed trace context
+      const traceHeader = parsedTrace.errorType
+        ? `${parsedTrace.errorType}: ${parsedTrace.errorMessage ?? ''}`
+        : '';
+      const relatedFilesNote =
+        parsedTrace.relatedFiles.length > 0
+          ? `Related files detected: ${parsedTrace.relatedFiles.slice(0, 5).join(', ')}`
+          : '';
+      const prefillQuestion = [
+        traceHeader || `Log file: ${vscode.workspace.asRelativePath(filePath)}`,
+        relatedFilesNote,
+        '',
+        rawText.slice(0, 3000),
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const baseContext: AIModalContext = await resolvePreferredAIModalContext();
+      WelcomePanel.showAIModal(context, {
+        ...baseContext,
+        prefillQuestion,
+        prefillMode: 'debug',
+      });
+    }
+  );
+
+  return vscode.Disposable.from(debugCommand, explainCommand, ingestLogCommand);
 }

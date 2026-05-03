@@ -65,6 +65,103 @@ export type IncidentRollbackEvidence = {
   suggestedNextStep?: string;
 };
 
+export type IncidentSandboxSimulationCommandEvidence = {
+  label: string;
+  command: string;
+  args: string[];
+  exitCode: number;
+  stdout?: string;
+  stderr?: string;
+  durationMs: number;
+};
+
+export type IncidentSandboxSimulationEvidence = {
+  actionId: string;
+  workspacePath: string;
+  riskClass: IncidentActionRiskClass;
+  mode: 'verify-pack-simulation' | 'disposable-sandbox';
+  status: 'passed' | 'failed' | 'skipped';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs: number;
+  commandResults: IncidentSandboxSimulationCommandEvidence[];
+  recommendedRollbackPath?: string;
+  safeToApply: boolean;
+  reason?: string;
+};
+
+export type IncidentReproPackEvidence = {
+  packId: string;
+  status: 'captured' | 'failed' | 'skipped';
+  capturedAt: string;
+  schemaVersion: 'v1';
+  workspacePath: string;
+  conversationId: string;
+  actionId: string;
+  redaction: {
+    policy: string;
+    applied: boolean;
+    redactedFields: string[];
+  };
+  summary: {
+    historyTurns: number;
+    hasDoctorEvidence: boolean;
+    hasRollbackEvidence: boolean;
+    hasSandboxEvidence: boolean;
+    hasPredictiveWarning: boolean;
+    verifySuccess: boolean;
+    affectedFilesCount: number;
+    blockedReasonCount: number;
+  };
+  replayPayload: {
+    workspacePath: string;
+    conversationId: string;
+    actionType: string;
+    riskLevel: IncidentActionRiskLevel;
+    likelyFailureMode?: string;
+    verifyChecklist: string[];
+    blockedReasons: string[];
+    relatedFiles: string[];
+  };
+  exportHint?: string;
+};
+
+// ─── Multi-file patch apply/reject workflow (A02 / A03) ─────────────────────
+
+export type FilePatchStatus = 'pending' | 'accepted' | 'rejected' | 'applied' | 'failed';
+
+export type FilePatchHunk = {
+  startLine: number;
+  removedLines: string[];
+  addedLines: string[];
+};
+
+export type FilePatch = {
+  relativePath: string;
+  language?: string;
+  isNewFile: boolean;
+  originalContent?: string;
+  patchedContent: string;
+  hunks: FilePatchHunk[];
+  status: FilePatchStatus;
+  failReason?: string;
+};
+
+export type MultiFilePatchResult = {
+  patchId: string;
+  generatedAt: string;
+  actionId: string;
+  branchCreated?: string;
+  patches: FilePatch[];
+  verificationPassed?: boolean;
+  verificationNote?: string;
+  appliedCount: number;
+  rejectedCount: number;
+  failedCount: number;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export type NormalizedIncidentActionResultPayload = {
   success: boolean;
   outputSummary?: string;
@@ -73,6 +170,9 @@ export type NormalizedIncidentActionResultPayload = {
   evidence?: IncidentActionEvidence;
   diagnosis?: IncidentDiagnosisEvidence;
   rollback?: IncidentRollbackEvidence;
+  multiFilePatch?: MultiFilePatchResult;
+  sandboxSimulation?: IncidentSandboxSimulationEvidence;
+  incidentReproPack?: IncidentReproPackEvidence;
 };
 
 export type NormalizedIncidentActionProgressPayload = {
@@ -101,6 +201,8 @@ export type IncidentSystemGraphNode = {
   label: string;
   filePath?: string;
   confidence: number;
+  symbolName?: string;
+  startLine?: number;
 };
 
 export type IncidentSystemGraphEdge = {
@@ -405,6 +507,8 @@ export function normalizeIncidentActionResultPayload(
   const evidenceRecord = asRecord(record.evidence);
   const diagnosisRecord = asRecord(record.diagnosis);
   const rollbackRecord = asRecord(record.rollback);
+  const sandboxRecord = asRecord(record.sandboxSimulation);
+  const reproPackRecord = asRecord(record.incidentReproPack);
 
   const verifyPolicy: IncidentVerifyPolicy = {
     requiresVerifyPath: asOptionalBoolean(verifyPolicyRecord.requiresVerifyPath),
@@ -488,6 +592,129 @@ export function normalizeIncidentActionResultPayload(
     typeof rollback.suggestedNextStep === 'string' ||
     typeof rollback.attemptedAt === 'string';
 
+  const sandboxRiskClass = cleanText(sandboxRecord.riskClass)?.toLowerCase();
+  const sandboxStatus = cleanText(sandboxRecord.status)?.toLowerCase();
+  const sandboxMode = cleanText(sandboxRecord.mode)?.toLowerCase();
+  const sandboxCommands = Array.isArray(sandboxRecord.commandResults)
+    ? sandboxRecord.commandResults
+        .map((entry): IncidentSandboxSimulationCommandEvidence | null => {
+          const commandRecord = asRecord(entry);
+          const command = cleanText(commandRecord.command);
+          if (!command) {
+            return null;
+          }
+
+          return {
+            label: sanitizeIncidentText(commandRecord.label, 120) || command,
+            command,
+            args: sanitizeStringArray(commandRecord.args, 120, 20),
+            exitCode: asNumber(commandRecord.exitCode, 1),
+            stdout: sanitizeIncidentText(commandRecord.stdout, 600),
+            stderr: sanitizeIncidentText(commandRecord.stderr, 600),
+            durationMs: Math.max(0, asNumber(commandRecord.durationMs, 0)),
+          };
+        })
+        .filter((entry): entry is IncidentSandboxSimulationCommandEvidence => entry !== null)
+    : [];
+
+  const sandboxSimulation: IncidentSandboxSimulationEvidence = {
+    actionId: cleanText(sandboxRecord.actionId) || cleanText(record.actionId) || 'unknown-action',
+    workspacePath: cleanText(sandboxRecord.workspacePath) || '',
+    riskClass:
+      sandboxRiskClass === 'informational' ||
+      sandboxRiskClass === 'non-mutating-executable' ||
+      sandboxRiskClass === 'guarded-mutating' ||
+      sandboxRiskClass === 'high-risk-mutating'
+        ? sandboxRiskClass
+        : 'guarded-mutating',
+    mode:
+      sandboxMode === 'verify-pack-simulation' || sandboxMode === 'disposable-sandbox'
+        ? sandboxMode
+        : 'verify-pack-simulation',
+    status:
+      sandboxStatus === 'passed' || sandboxStatus === 'failed' || sandboxStatus === 'skipped'
+        ? sandboxStatus
+        : 'skipped',
+    startedAt: cleanText(sandboxRecord.startedAt),
+    completedAt: cleanText(sandboxRecord.completedAt),
+    durationMs: Math.max(0, asNumber(sandboxRecord.durationMs, 0)),
+    commandResults: sandboxCommands,
+    recommendedRollbackPath: sanitizeIncidentText(sandboxRecord.recommendedRollbackPath, 320),
+    safeToApply: asBoolean(sandboxRecord.safeToApply, false),
+    reason: sanitizeIncidentText(sandboxRecord.reason, 320),
+  };
+
+  const hasSandboxField =
+    typeof sandboxRecord.actionId === 'string' ||
+    typeof sandboxRecord.workspacePath === 'string' ||
+    sandboxCommands.length > 0 ||
+    typeof sandboxSimulation.reason === 'string' ||
+    typeof sandboxSimulation.recommendedRollbackPath === 'string';
+
+  const reproStatus = cleanText(reproPackRecord.status)?.toLowerCase();
+  const replayPayloadRecord = asRecord(reproPackRecord.replayPayload);
+  const redactionRecord = asRecord(reproPackRecord.redaction);
+  const incidentReproPack: IncidentReproPackEvidence = {
+    packId:
+      cleanText(reproPackRecord.packId) ||
+      `repro-${cleanText(record.actionId) || Date.now().toString(36)}`,
+    status:
+      reproStatus === 'captured' || reproStatus === 'failed' || reproStatus === 'skipped'
+        ? reproStatus
+        : 'captured',
+    capturedAt: cleanText(reproPackRecord.capturedAt) || new Date().toISOString(),
+    schemaVersion: 'v1',
+    workspacePath: cleanText(reproPackRecord.workspacePath) || '',
+    conversationId: cleanText(reproPackRecord.conversationId) || '',
+    actionId: cleanText(reproPackRecord.actionId) || cleanText(record.actionId) || 'unknown-action',
+    redaction: {
+      policy: sanitizeIncidentText(redactionRecord.policy, 120) || 'incident-studio-default',
+      applied: asBoolean(redactionRecord.applied, true),
+      redactedFields: sanitizeStringArray(redactionRecord.redactedFields, 120, 16),
+    },
+    summary: {
+      historyTurns: Math.max(
+        0,
+        Math.floor(asNumber(asRecord(reproPackRecord.summary).historyTurns, 0))
+      ),
+      hasDoctorEvidence: asBoolean(asRecord(reproPackRecord.summary).hasDoctorEvidence, false),
+      hasRollbackEvidence: asBoolean(asRecord(reproPackRecord.summary).hasRollbackEvidence, false),
+      hasSandboxEvidence: asBoolean(asRecord(reproPackRecord.summary).hasSandboxEvidence, false),
+      hasPredictiveWarning: asBoolean(
+        asRecord(reproPackRecord.summary).hasPredictiveWarning,
+        false
+      ),
+      verifySuccess: asBoolean(asRecord(reproPackRecord.summary).verifySuccess, false),
+      affectedFilesCount: Math.max(
+        0,
+        Math.floor(asNumber(asRecord(reproPackRecord.summary).affectedFilesCount, 0))
+      ),
+      blockedReasonCount: Math.max(
+        0,
+        Math.floor(asNumber(asRecord(reproPackRecord.summary).blockedReasonCount, 0))
+      ),
+    },
+    replayPayload: {
+      workspacePath: cleanText(replayPayloadRecord.workspacePath) || '',
+      conversationId: cleanText(replayPayloadRecord.conversationId) || '',
+      actionType: sanitizeIncidentText(replayPayloadRecord.actionType, 120) || 'unknown',
+      riskLevel: normalizeIncidentRiskLevel(replayPayloadRecord.riskLevel),
+      likelyFailureMode: sanitizeIncidentText(replayPayloadRecord.likelyFailureMode, 240),
+      verifyChecklist: sanitizeStringArray(replayPayloadRecord.verifyChecklist, 220, 12),
+      blockedReasons: sanitizeStringArray(replayPayloadRecord.blockedReasons, 220, 12),
+      relatedFiles: sanitizeStringArray(replayPayloadRecord.relatedFiles, 240, 16),
+    },
+    exportHint: sanitizeIncidentText(reproPackRecord.exportHint, 240),
+  };
+
+  const hasReproPackField =
+    typeof reproPackRecord.packId === 'string' ||
+    typeof reproPackRecord.status === 'string' ||
+    typeof reproPackRecord.workspacePath === 'string' ||
+    typeof reproPackRecord.conversationId === 'string' ||
+    typeof reproPackRecord.actionId === 'string' ||
+    typeof reproPackRecord.exportHint === 'string';
+
   return {
     success: Boolean(record.success),
     outputSummary: sanitizeIncidentText(record.outputSummary, 1200),
@@ -496,6 +723,8 @@ export function normalizeIncidentActionResultPayload(
     evidence: hasEvidenceField ? evidence : undefined,
     diagnosis: hasDiagnosisField ? diagnosis : undefined,
     rollback: hasRollbackField ? rollback : undefined,
+    sandboxSimulation: hasSandboxField ? sandboxSimulation : undefined,
+    incidentReproPack: hasReproPackField ? incidentReproPack : undefined,
   };
 }
 
@@ -539,12 +768,17 @@ export function normalizeIncidentSystemGraphSnapshotPayload(
           }
 
           const filePath = cleanText(node.filePath);
+          const symbolName = sanitizeIncidentText(node.symbolName, 200);
+          const rawStartLine = asNumber(node.startLine, 0);
+          const startLine = rawStartLine > 0 ? Math.floor(rawStartLine) : undefined;
 
           return {
             id,
             type: normalizeIncidentGraphNodeType(node.type),
             label: sanitizeIncidentText(node.label, 200) || id,
             ...(filePath ? { filePath } : {}),
+            ...(symbolName ? { symbolName } : {}),
+            ...(startLine ? { startLine } : {}),
             confidence: clampNumber(asNumber(node.confidence, 50), 0, 100),
           };
         })
@@ -664,11 +898,12 @@ export function buildIncidentActionExecutionMetadata(
     normalized === 'terminal-bridge' ||
     normalized === 'fix-preview-lite' ||
     normalized === 'workspace-memory-wizard' ||
-    normalized === 'recipe-pack'
+    normalized === 'recipe-pack' ||
+    normalized === 'incident-repro-pack'
   ) {
     return {
       riskClass: 'non-mutating-executable',
-      riskLevel: 'low',
+      riskLevel: normalized === 'incident-repro-pack' ? 'medium' : 'low',
       requiresImpactReview: false,
       requiresVerifyPath: false,
       allowCompletionClaimWithoutVerify: true,

@@ -69,6 +69,34 @@
                         "at": "2026-04-28T10:02:04.000Z"
                     },
                     {
+                        "command": "workspai.studio.verify_failed",
+                        "at": "2026-04-28T10:02:05.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.verify_failed",
+                        "at": "2026-04-28T10:02:06.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.rollback_attempted",
+                        "at": "2026-04-28T10:02:07.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.rollback_attempted",
+                        "at": "2026-04-28T10:02:08.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.rollback_attempted",
+                        "at": "2026-04-28T10:02:09.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.rollback_succeeded",
+                        "at": "2026-04-28T10:02:10.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.rollback_succeeded",
+                        "at": "2026-04-28T10:02:11.000Z"
+                    },
+                    {
                         "command": "workspai.studio.prediction_shown",
                         "at": "2026-04-28T10:03:00.000Z"
                     },
@@ -163,6 +191,58 @@
                     {
                         "command": "workspai.studio.prediction_falsified",
                         "at": "2026-04-28T10:06:01.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_captured",
+                        "at": "2026-04-28T10:07:00.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_captured",
+                        "at": "2026-04-28T10:07:01.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_captured",
+                        "at": "2026-04-28T10:07:02.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_captured",
+                        "at": "2026-04-28T10:07:03.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_exported",
+                        "at": "2026-04-28T10:07:10.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_exported",
+                        "at": "2026-04-28T10:07:11.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_exported",
+                        "at": "2026-04-28T10:07:12.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_imported",
+                        "at": "2026-04-28T10:07:20.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_repro_pack_imported",
+                        "at": "2026-04-28T10:07:21.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_replay_ready",
+                        "at": "2026-04-28T10:07:22.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_replay_ready",
+                        "at": "2026-04-28T10:07:23.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_replay_memory_enriched",
+                        "at": "2026-04-28T10:07:30.000Z"
+                    },
+                    {
+                        "command": "workspai.studio.incident_replay_memory_enriched",
+                        "at": "2026-04-28T10:07:31.000Z"
                     }
                 ]
             }

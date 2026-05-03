@@ -18,7 +18,15 @@ import {
   indexProjectSystemGraph,
   queryProjectSystemGraphImpact,
   scoreSystemGraphImpactDeterministic,
+  createProjectSystemGraphWatcher,
+  type ProjectSystemGraphWatcherHandle,
 } from '../../core/systemGraphIndexer';
+import { runSandboxSimulation, type SandboxVerifyCommand } from '../../core/sandboxSimulation';
+import {
+  extractPatchesFromAiResponse,
+  applyPatches,
+  type MultiFilePatchResult,
+} from '../../core/patchApplyEngine';
 import { MODULES, ModuleData } from '../../data/modules';
 import { runningServers } from '../../extension';
 import { run } from '../../utils/exec';
@@ -35,6 +43,11 @@ import { openWorkspace } from '../../commands/workspaceContextMenu';
 import type { WorkspaceExplorerProvider } from '../treeviews/workspaceExplorer';
 import { createDoctorTelemetryRefreshController } from './doctorTelemetryRefresh';
 import {
+  findIncidentNavigatorSelection,
+  resolveIncidentNavigatorTargetPath,
+} from './incidentNavigatorTarget';
+import { buildIncidentPredictiveWarning } from './incidentPredictiveWarning';
+import {
   buildIncidentStudioTelemetryFromCache,
   buildIncidentStudioTelemetryPayload,
   shouldUseIncidentStudioTelemetryCache,
@@ -44,6 +57,7 @@ import { buildIncidentResumeSnapshot, type IncidentResumeSnapshot } from './inci
 import {
   buildIncidentMemoryPromptHint,
   buildIncidentMemoryReuseSnapshot,
+  mergeIncidentReplayLearningIntoMemory,
   prependIncidentMemoryReuseBlock,
   shouldAttachIncidentMemoryReuse,
 } from './incidentStudioMemory';
@@ -52,6 +66,11 @@ import {
   classifyIncidentActionPolicy,
   isIncidentActionAllowlisted,
 } from './incidentStudioPromptPolicy';
+import {
+  buildIncidentReplayQuery,
+  buildLinkSafeExportBundle,
+  parseImportedReproBundle,
+} from './incidentReproPackUtils';
 
 type IncidentWorkspaceGraphSnapshot = {
   snapshotVersion: 'v1';
@@ -503,9 +522,36 @@ export class WelcomePanel {
       actionCount: number;
       verifyPassedAt?: number;
       framework?: string;
+      importedIncidentReplay?: {
+        packId: string;
+        actionType: string;
+        riskLevel: 'low' | 'medium' | 'high' | 'critical';
+        likelyFailureMode?: string;
+        verifyChecklist: string[];
+        blockedReasons: string[];
+        relatedFiles: string[];
+        importedFrom?: string;
+      };
+      // Last AI response text (populated after each _handleAiChatQuery call)
+      lastActionResponseText?: string;
+    }
+  >();
+  private _pendingImportedIncidentReplayByWorkspace = new Map<
+    string,
+    {
+      packId: string;
+      actionType: string;
+      riskLevel: 'low' | 'medium' | 'high' | 'critical';
+      likelyFailureMode?: string;
+      verifyChecklist: string[];
+      blockedReasons: string[];
+      relatedFiles: string[];
+      importedFrom?: string;
     }
   >();
   private _incidentResumeByWorkspace = new Map<string, IncidentResumeSnapshot>();
+  /** Per-workspace system graph watchers for incremental refresh on file change. */
+  private _systemGraphWatcherByPath = new Map<string, ProjectSystemGraphWatcherHandle>();
   private _doctorTelemetryRefreshController = createDoctorTelemetryRefreshController({
     onRefresh: (explicitWorkspacePath?: string) =>
       this._sendIncidentStudioTelemetry(explicitWorkspacePath),
@@ -817,7 +863,13 @@ No markdown, no explanation outside the JSON.`;
               'function';
 
             const trackAIModalOutcome = async (
-              result: 'success' | 'empty' | 'prepare-error' | 'cancelled' | 'error',
+              result:
+                | 'success'
+                | 'empty'
+                | 'prepare-error'
+                | 'clarification-needed'
+                | 'cancelled'
+                | 'error',
               extraProps?: Record<string, unknown>
             ) => {
               if (!canTrackTelemetry) {
@@ -859,12 +911,8 @@ No markdown, no explanation outside the JSON.`;
             this._activeAIQueryRequestId = queryRequestId;
             let currentStage: 'prepare' | 'stream' = 'prepare';
             try {
-              const {
-                streamAIResponse,
-                prepareAIConversation,
-                buildContextContractFromEvidence,
-                extractContractTelemetry,
-              } = await import('../../core/aiService.js');
+              const { streamAIResponse, prepareAIConversation, extractContractTelemetry } =
+                await import('../../core/aiService.js');
 
               // Build doctor snapshot for the contract — best-effort, non-blocking
               const aiQueryDoctorSnapshot =
@@ -881,22 +929,57 @@ No markdown, no explanation outside the JSON.`;
                 conversationHistory,
                 aiQueryDoctorSnapshot ?? undefined
               );
+
+              if (prepared.validation.clarificationNeeded) {
+                const clarificationText =
+                  prepared.validation.clarificationReason ??
+                  'Context evidence is missing. Please select a workspace and run npx rapidkit doctor workspace, then ask again.';
+
+                if (canTrackTelemetry) {
+                  try {
+                    await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+                      'workspai.aimodal.clarification_gate',
+                      typeof aiContext?.path === 'string' ? aiContext.path : undefined,
+                      {
+                        source: 'ai-modal',
+                        mode: normalizedMode,
+                        missingFields: prepared.validation.missing,
+                      }
+                    );
+                  } catch {
+                    // Telemetry should never interrupt AI modal UX.
+                  }
+                }
+
+                panel.webview.postMessage({
+                  command: 'aiChunkUpdate',
+                  data: {
+                    text: `${clarificationText}\n\nPlease share the selected workspace/project path so I can continue with evidence-based guidance.`,
+                    requestId: queryRequestId,
+                  },
+                });
+                panel.webview.postMessage({
+                  command: 'aiStreamDone',
+                  data: { requestId: queryRequestId },
+                });
+                await trackAIModalOutcome('clarification-needed', {
+                  stage: 'prepare',
+                  missingFields: prepared.validation.missing,
+                });
+                break;
+              }
+
               currentStage = 'stream';
 
               // Send contract telemetry to webview before streaming starts
               if (aiContext) {
-                const contract = buildContextContractFromEvidence(
-                  aiContext,
-                  prepared.scanned,
-                  aiQueryDoctorSnapshot ?? undefined
-                );
                 panel.webview.postMessage({
                   command: 'aiContextContract',
                   data: {
                     requestId: queryRequestId,
-                    ...extractContractTelemetry(contract),
-                    persona_level: contract.persona,
-                    evidence_confidence: contract.evidence_confidence,
+                    ...extractContractTelemetry(prepared.contract),
+                    persona_level: prepared.contract.persona,
+                    evidence_confidence: prepared.contract.evidence_confidence,
                   },
                 });
               }
@@ -1191,6 +1274,18 @@ No markdown, no explanation outside the JSON.`;
           case 'aiChatExecuteAction':
             await this._handleAiChatExecuteAction(message.data, protocolRequestId);
             break;
+          case 'aiChatApplyPatch':
+            await this._handleApplyPatch(message.data, protocolRequestId);
+            break;
+          case 'exportIncidentReproPack':
+            await this._handleExportIncidentReproPack(message.data, protocolRequestId);
+            break;
+          case 'exportSandboxSimulationEvidence':
+            await this._handleExportSandboxSimulationEvidence(message.data, protocolRequestId);
+            break;
+          case 'importIncidentReproPack':
+            await this._handleImportIncidentReproPack(protocolRequestId);
+            break;
           case 'incidentPredictionAccepted': {
             const conversationId =
               typeof message.data?.conversationId === 'string'
@@ -1425,6 +1520,101 @@ No markdown, no explanation outside the JSON.`;
                 actionType: 'doctor-workspace-check',
                 workspaceName: workspaceName || path.basename(workspacePath),
               });
+            }
+            break;
+          case 'openIncidentNavigatorTarget':
+            {
+              const targetPath =
+                typeof message.data?.path === 'string' ? message.data.path.trim() : '';
+              const targetKind =
+                typeof message.data?.kind === 'string' ? message.data.kind.trim() : 'file';
+              const targetLabel =
+                typeof message.data?.label === 'string' && message.data.label.trim()
+                  ? message.data.label.trim()
+                  : targetPath;
+              const targetSymbol =
+                typeof message.data?.symbolName === 'string' && message.data.symbolName.trim()
+                  ? message.data.symbolName.trim()
+                  : undefined;
+              const rawTargetLine = Number(message.data?.startLine);
+              const targetLine =
+                Number.isFinite(rawTargetLine) && rawTargetLine > 0
+                  ? Math.floor(rawTargetLine)
+                  : undefined;
+              const explicitWorkspacePath =
+                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
+                  ? message.data.workspacePath.trim()
+                  : undefined;
+              const explicitProjectPath =
+                typeof message.data?.projectPath === 'string' && message.data.projectPath.trim()
+                  ? message.data.projectPath.trim()
+                  : undefined;
+              const selectedWorkspace = this._getSelectedWorkspaceInfo();
+              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
+              const projectPath =
+                explicitProjectPath ||
+                (WelcomePanel._selectedProject?.path &&
+                isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
+                  ? WelcomePanel._selectedProject.path
+                  : undefined);
+
+              if (!targetPath) {
+                vscode.window.showWarningMessage('No impact target was provided.');
+                break;
+              }
+
+              const resolvedTargetPath = resolveIncidentNavigatorTargetPath({
+                targetPath,
+                workspacePath,
+                projectPath,
+              });
+
+              if (!resolvedTargetPath) {
+                vscode.window.showWarningMessage(`Could not resolve impact target: ${targetLabel}`);
+                break;
+              }
+
+              if (!(await fs.pathExists(resolvedTargetPath))) {
+                vscode.window.showWarningMessage(
+                  `Impact target is not available in this workspace: ${targetLabel}`
+                );
+                break;
+              }
+
+              const targetStat = await fs.stat(resolvedTargetPath);
+              if (!targetStat.isFile()) {
+                vscode.window.showWarningMessage(
+                  `Impact target is not an openable file: ${targetLabel}`
+                );
+                break;
+              }
+
+              const document = await vscode.workspace.openTextDocument(
+                vscode.Uri.file(resolvedTargetPath)
+              );
+              const editor = await vscode.window.showTextDocument(document, { preview: false });
+              const selection = findIncidentNavigatorSelection(document.getText(), {
+                symbolName: targetSymbol,
+                startLine: targetLine,
+              });
+              if (selection) {
+                const range = new vscode.Range(
+                  selection.line,
+                  selection.startCharacter,
+                  selection.line,
+                  selection.endCharacter
+                );
+                editor.selection = new vscode.Selection(range.start, range.end);
+                editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+              }
+
+              if (workspacePath) {
+                this._trackStudioEvent('workspai.studio.scope_navigator_opened', workspacePath, {
+                  targetKind: targetKind.slice(0, 40),
+                  targetLabel: targetLabel.slice(0, 180),
+                  ...(targetSymbol ? { targetSymbol: targetSymbol.slice(0, 180) } : {}),
+                });
+              }
             }
             break;
           case 'runIncidentInlineCommand':
@@ -1847,6 +2037,96 @@ No markdown, no explanation outside the JSON.`;
     });
   }
 
+  private _emitArchitectureReasoningRuntimeEvents(input: {
+    conversationId: string;
+    actionId: string;
+    actionType: string;
+    workspacePath: string;
+    framework?: string;
+    wave2Contracts: {
+      impactAssessment: {
+        confidence: number;
+        riskLevel: 'low' | 'medium' | 'high' | 'critical';
+      };
+      releaseGateEvidence: {
+        scopeKnown: boolean;
+        verifyPathPresent: boolean;
+        rollbackPathPresent: boolean;
+        blockedReasons: string[];
+      };
+      architectureTelemetry: {
+        warningCount: number;
+        warnings: string[];
+        unknownScopeBlocked: boolean;
+      };
+    };
+    verifySuccess: boolean;
+  }) {
+    const { wave2Contracts } = input;
+    const warningCount = wave2Contracts.architectureTelemetry.warningCount;
+    const unknownScopeBlocked = wave2Contracts.architectureTelemetry.unknownScopeBlocked;
+
+    if (warningCount <= 0 && !unknownScopeBlocked) {
+      return;
+    }
+
+    const commonProps = {
+      conversationId: input.conversationId,
+      actionId: input.actionId,
+      actionType: input.actionType,
+      framework: input.framework ?? 'unknown',
+      riskLevel: wave2Contracts.impactAssessment.riskLevel,
+      confidence: wave2Contracts.impactAssessment.confidence,
+      warningCount,
+      scopeKnown: wave2Contracts.releaseGateEvidence.scopeKnown,
+      verifyPathPresent: wave2Contracts.releaseGateEvidence.verifyPathPresent,
+      rollbackPathPresent: wave2Contracts.releaseGateEvidence.rollbackPathPresent,
+      blockedReasonCount: wave2Contracts.releaseGateEvidence.blockedReasons.length,
+    };
+
+    if (warningCount > 0) {
+      const warningSample = wave2Contracts.architectureTelemetry.warnings.slice(0, 2).join(' | ');
+
+      this._trackStudioEvent('workspai.studio.architecture_warning_shown', input.workspacePath, {
+        ...commonProps,
+        warnings: warningSample,
+      });
+
+      this._trackStudioEvent('workspai.studio.architecture_warning_accepted', input.workspacePath, {
+        ...commonProps,
+        warnings: warningSample,
+      });
+
+      this._trackStudioEvent(
+        input.verifySuccess
+          ? 'workspai.studio.architecture_warning_falsified'
+          : 'workspai.studio.architecture_breakage_prevented',
+        input.workspacePath,
+        {
+          ...commonProps,
+          warnings: warningSample,
+          verifySuccess: input.verifySuccess,
+        }
+      );
+    }
+
+    if (unknownScopeBlocked) {
+      const blockedReasonSample = wave2Contracts.releaseGateEvidence.blockedReasons
+        .filter((reason) => /scope is unknown/i.test(reason))
+        .slice(0, 2)
+        .join(' | ');
+
+      this._trackStudioEvent(
+        'workspai.studio.architecture_unknown_scope_blocked',
+        input.workspacePath,
+        {
+          ...commonProps,
+          blockedReasons: blockedReasonSample,
+        }
+      );
+    }
+  }
+
   private async _inferFrameworkFromWorkspace(workspacePath: string): Promise<string> {
     const checks: Array<{ framework: string; file: string }> = [
       { framework: 'fastapi', file: path.join(workspacePath, 'src', 'main.py') },
@@ -2032,6 +2312,7 @@ No markdown, no explanation outside the JSON.`;
       queryCount: 0,
       actionCount: 0,
       framework,
+      importedIncidentReplay: undefined,
     };
 
     conversation.workspacePath = workspacePath || conversation.workspacePath;
@@ -2039,6 +2320,14 @@ No markdown, no explanation outside the JSON.`;
     conversation.projectName = projectName || conversation.projectName;
     conversation.projectType = projectType || conversation.projectType;
     conversation.framework = framework;
+    if (workspacePath) {
+      const pendingImportedReplay =
+        this._pendingImportedIncidentReplayByWorkspace.get(workspacePath);
+      if (pendingImportedReplay) {
+        conversation.importedIncidentReplay = pendingImportedReplay;
+        this._pendingImportedIncidentReplayByWorkspace.delete(workspacePath);
+      }
+    }
     this._chatBrainConversations.set(conversationId, conversation);
 
     const inlineResumeSnapshot = buildIncidentResumeSnapshot(conversation);
@@ -2117,6 +2406,9 @@ No markdown, no explanation outside the JSON.`;
       return;
     }
 
+    // Ensure a watcher is running for this workspace so file changes invalidate the cache.
+    void this._ensureSystemGraphWatcher(workspacePath, cacheKey);
+
     const graph = await this._getWorkspaceGraphSnapshot(workspacePath);
     await this._context.globalState.update(cacheKey, { graph, timestamp: now });
 
@@ -2133,6 +2425,39 @@ No markdown, no explanation outside the JSON.`;
     });
   }
 
+  private _ensureSystemGraphWatcher(workspacePath: string | undefined, cacheKey: string): void {
+    if (!workspacePath) {
+      return;
+    }
+    if (this._systemGraphWatcherByPath.has(workspacePath)) {
+      return;
+    }
+    // Start watcher in background; on any update, bust the globalState cache so
+    // the next sync request re-indexes rather than serving a stale snapshot.
+    void createProjectSystemGraphWatcher({
+      workspacePath,
+      useIncrementalCache: true,
+      debounceMs: 300,
+      onUpdate: (update) => {
+        if (update.reason === 'initial') {
+          return;
+        }
+        void this._context.globalState.update(cacheKey, undefined);
+      },
+    })
+      .then((handle) => {
+        if (!this._systemGraphWatcherByPath.has(workspacePath)) {
+          this._systemGraphWatcherByPath.set(workspacePath, handle);
+        } else {
+          // Another call already registered a watcher while we were awaiting — dispose the duplicate.
+          handle.dispose();
+        }
+      })
+      .catch(() => {
+        // Watcher creation is best-effort; panel remains functional without it.
+      });
+  }
+
   private _routeActionTypeFromMessage(
     message: string
   ):
@@ -2142,6 +2467,7 @@ No markdown, no explanation outside the JSON.`;
     | 'workspace-memory-wizard'
     | 'doctor-fix'
     | 'recipe-pack'
+    | 'incident-repro-pack'
     | 'orchestrate' {
     const normalized = message.toLowerCase();
     if (
@@ -2163,6 +2489,14 @@ No markdown, no explanation outside the JSON.`;
     }
     if (normalized.includes('memory') || normalized.includes('convention')) {
       return 'workspace-memory-wizard';
+    }
+    if (
+      normalized.includes('repro') ||
+      normalized.includes('replay') ||
+      normalized.includes('incident pack') ||
+      normalized.includes('share incident')
+    ) {
+      return 'incident-repro-pack';
     }
     return 'orchestrate';
   }
@@ -2388,6 +2722,9 @@ No markdown, no explanation outside the JSON.`;
       projectType: selectedProjectBelongsToWorkspace ? selectedProject?.type : undefined,
     });
     const responseRules = [
+      'EVIDENCE INTEGRITY: Use only facts present in WORKSPACE ARCHITECTURE and PROJECT EXECUTION STATE blocks. Do not invent missing modules, unknown kit, or missing projects.',
+      'If doctor evidence shows healthy projects with zero issues, do not recommend setup/reset commands unless the user explicitly asks for reconfiguration.',
+      'Never claim `kit unknown` or `no modules installed` unless those exact conditions are explicitly listed in the evidence block.',
       ...(selectedProjectBelongsToWorkspace
         ? [
             'When a project is selected, answer as a launch/readiness assistant for that project first.',
@@ -2458,8 +2795,21 @@ No markdown, no explanation outside the JSON.`;
         const issueText = project.issues > 0 ? ` [${project.issues} issue(s)]` : ' [healthy]';
         const depsText = project.depsInstalled === false ? ' [deps missing]' : '';
         const framework = project.framework ?? 'unknown framework';
+        const kitText = project.kit ? ` | kit: ${project.kit}` : '';
+        const modulesText =
+          typeof project.modulesCount === 'number' && Number.isFinite(project.modulesCount)
+            ? ` | modules: ${project.modulesCount}`
+            : '';
+        const modulesHealthText =
+          typeof project.modulesHealthy === 'boolean'
+            ? ` | modulesHealthy: ${project.modulesHealthy ? 'yes' : 'no'}`
+            : '';
+        const vulnText =
+          typeof project.vulnerabilities === 'number' && project.vulnerabilities > 0
+            ? ` | vulnerabilities: ${project.vulnerabilities}`
+            : '';
         lines.push(
-          `    • ${project.name} (${framework}) — path: ${workspacePath}/${project.name}${issueText}${depsText}`
+          `    • ${project.name} (${framework}) — path: ${project.path || `${workspacePath}/${project.name}`}${issueText}${depsText}${kitText}${modulesText}${modulesHealthText}${vulnText}`
         );
       }
     }
@@ -2469,6 +2819,26 @@ No markdown, no explanation outside the JSON.`;
     }
 
     lines.push('');
+    if (
+      snapshot.health.errors === 0 &&
+      snapshot.health.warnings === 0 &&
+      snapshot.projects.length > 0 &&
+      snapshot.projects.every((project) => project.issues === 0)
+    ) {
+      lines.push(
+        'EVIDENCE NOTE: Workspace baseline is healthy. Prefer targeted verification commands over setup/reset flows.'
+      );
+    }
+    if (
+      snapshot.projects.length > 0 &&
+      snapshot.projects.every((project) =>
+        typeof project.modulesHealthy === 'boolean' ? project.modulesHealthy : true
+      )
+    ) {
+      lines.push(
+        'EVIDENCE NOTE: Doctor reports modulesHealthy=true for listed projects. Do NOT claim missing modules unless user provides contradictory evidence.'
+      );
+    }
     lines.push(
       'IMPORTANT: The workspace already has the projects listed above. Do NOT suggest creating a new project unless the user explicitly asks for one. Use the existing project paths for all commands.'
     );
@@ -2718,11 +3088,376 @@ No markdown, no explanation outside the JSON.`;
     };
   }
 
+  private _buildIncidentReproPackEvidence(input: {
+    actionType: string;
+    actionId: string;
+    conversationId: string;
+    workspacePath?: string;
+    verifySuccess: boolean;
+    conversationHistoryTurns: number;
+    doctorEvidence?: {
+      healthScoreText: string;
+      generatedAt?: string;
+      passed?: number;
+      warnings?: number;
+      errors?: number;
+    };
+    rollbackEvidence?: {
+      attempted: boolean;
+    };
+    sandboxEvidence?: {
+      status: 'passed' | 'failed' | 'skipped';
+    };
+    impactAssessment: {
+      riskLevel: 'low' | 'medium' | 'high' | 'critical';
+      likelyFailureMode?: string;
+      verifyChecklist: string[];
+      affectedFiles: string[];
+    };
+    releaseGateEvidence: {
+      blockedReasons: string[];
+    };
+    diagnosisEvidence: {
+      relatedFiles: string[];
+    };
+  }):
+    | {
+        packId: string;
+        status: 'captured' | 'failed' | 'skipped';
+        capturedAt: string;
+        schemaVersion: 'v1';
+        workspacePath: string;
+        conversationId: string;
+        actionId: string;
+        redaction: {
+          policy: string;
+          applied: boolean;
+          redactedFields: string[];
+        };
+        summary: {
+          historyTurns: number;
+          hasDoctorEvidence: boolean;
+          hasRollbackEvidence: boolean;
+          hasSandboxEvidence: boolean;
+          hasPredictiveWarning: boolean;
+          verifySuccess: boolean;
+          affectedFilesCount: number;
+          blockedReasonCount: number;
+        };
+        replayPayload: {
+          workspacePath: string;
+          conversationId: string;
+          actionType: string;
+          riskLevel: 'low' | 'medium' | 'high' | 'critical';
+          likelyFailureMode?: string;
+          verifyChecklist: string[];
+          blockedReasons: string[];
+          relatedFiles: string[];
+        };
+        exportHint?: string;
+      }
+    | undefined {
+    if (input.actionType !== 'incident-repro-pack' || !input.workspacePath) {
+      return undefined;
+    }
+
+    const capturedAt = new Date().toISOString();
+    const packId = `incident-repro-${input.actionId}-${Date.now().toString(36)}`;
+
+    return {
+      packId,
+      status: 'captured',
+      capturedAt,
+      schemaVersion: 'v1',
+      workspacePath: input.workspacePath,
+      conversationId: input.conversationId,
+      actionId: input.actionId,
+      redaction: {
+        policy: 'incident-studio-default',
+        applied: true,
+        redactedFields: ['authorization', 'token', 'password', 'secret', 'apiKey'],
+      },
+      summary: {
+        historyTurns: input.conversationHistoryTurns,
+        hasDoctorEvidence: Boolean(input.doctorEvidence),
+        hasRollbackEvidence: Boolean(input.rollbackEvidence?.attempted),
+        hasSandboxEvidence: Boolean(input.sandboxEvidence),
+        hasPredictiveWarning: Boolean(input.impactAssessment.likelyFailureMode),
+        verifySuccess: input.verifySuccess,
+        affectedFilesCount: input.impactAssessment.affectedFiles.length,
+        blockedReasonCount: input.releaseGateEvidence.blockedReasons.length,
+      },
+      replayPayload: {
+        workspacePath: input.workspacePath,
+        conversationId: input.conversationId,
+        actionType: input.actionType,
+        riskLevel: input.impactAssessment.riskLevel,
+        likelyFailureMode: input.impactAssessment.likelyFailureMode,
+        verifyChecklist: input.impactAssessment.verifyChecklist.slice(0, 8),
+        blockedReasons: input.releaseGateEvidence.blockedReasons.slice(0, 8),
+        relatedFiles: input.diagnosisEvidence.relatedFiles.slice(0, 10),
+      },
+      exportHint:
+        'Use share/export flow for secure handoff: keep redaction enabled and include replay checklist + blocked reasons.',
+    };
+  }
+
+  private async _resolveIncidentReplayWorkspacePath(
+    preferredWorkspacePath?: string
+  ): Promise<{ workspacePath: string; workspaceName: string } | null> {
+    const candidatePaths: string[] = [];
+
+    if (preferredWorkspacePath && preferredWorkspacePath.trim()) {
+      candidatePaths.push(preferredWorkspacePath.trim());
+    }
+
+    const selectedWorkspace = this._getSelectedWorkspaceInfo();
+    if (selectedWorkspace?.path) {
+      candidatePaths.push(selectedWorkspace.path);
+    }
+
+    if (vscode.workspace.workspaceFolders?.length) {
+      candidatePaths.push(vscode.workspace.workspaceFolders[0].uri.fsPath);
+    }
+
+    for (const candidate of candidatePaths) {
+      if (!candidate) {
+        continue;
+      }
+      if (await fs.pathExists(candidate)) {
+        return {
+          workspacePath: candidate,
+          workspaceName:
+            selectedWorkspace?.path === candidate
+              ? selectedWorkspace.name
+              : path.basename(candidate),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private async _handleExportIncidentReproPack(data: any, requestId?: string): Promise<void> {
+    const reproPack =
+      data &&
+      typeof data === 'object' &&
+      data.incidentReproPack &&
+      typeof data.incidentReproPack === 'object'
+        ? (data.incidentReproPack as {
+            packId?: string;
+            status?: string;
+            capturedAt?: string;
+            schemaVersion?: string;
+            workspacePath?: string;
+            conversationId?: string;
+            actionId?: string;
+            redaction?: {
+              policy?: string;
+              applied?: boolean;
+              redactedFields?: string[];
+            };
+            summary?: {
+              historyTurns?: number;
+              hasDoctorEvidence?: boolean;
+              hasRollbackEvidence?: boolean;
+              hasSandboxEvidence?: boolean;
+              hasPredictiveWarning?: boolean;
+              verifySuccess?: boolean;
+              affectedFilesCount?: number;
+              blockedReasonCount?: number;
+            };
+            replayPayload?: {
+              workspacePath?: string;
+              conversationId?: string;
+              actionType?: string;
+              riskLevel?: 'low' | 'medium' | 'high' | 'critical';
+              likelyFailureMode?: string;
+              verifyChecklist?: string[];
+              blockedReasons?: string[];
+              relatedFiles?: string[];
+            };
+            exportHint?: string;
+          })
+        : undefined;
+
+    if (!reproPack?.packId || !reproPack.replayPayload) {
+      vscode.window.showWarningMessage('No incident repro pack is available to export.');
+      return;
+    }
+
+    const workspacePathInput =
+      typeof data?.workspacePath === 'string' && data.workspacePath.trim()
+        ? data.workspacePath.trim()
+        : typeof reproPack.workspacePath === 'string' && reproPack.workspacePath.trim()
+          ? reproPack.workspacePath.trim()
+          : undefined;
+
+    const workspaceResolution = await this._resolveIncidentReplayWorkspacePath(workspacePathInput);
+    const defaultFileName = `${reproPack.packId}-redacted-bundle.json`;
+    const defaultUri = workspaceResolution
+      ? vscode.Uri.file(
+          path.join(workspaceResolution.workspacePath, '.rapidkit', 'reports', defaultFileName)
+        )
+      : undefined;
+
+    const outputUri = await vscode.window.showSaveDialog({
+      title: 'Export Incident Repro Pack (Redacted)',
+      saveLabel: 'Export Redacted Bundle',
+      defaultUri,
+      filters: {
+        JSON: ['json'],
+      },
+    });
+
+    if (!outputUri) {
+      return;
+    }
+
+    const redactedBundle = buildLinkSafeExportBundle(
+      {
+        ...reproPack,
+        packId: reproPack.packId,
+        replayPayload: {
+          ...reproPack.replayPayload,
+          riskLevel:
+            reproPack.replayPayload.riskLevel === 'low' ||
+            reproPack.replayPayload.riskLevel === 'medium' ||
+            reproPack.replayPayload.riskLevel === 'high' ||
+            reproPack.replayPayload.riskLevel === 'critical'
+              ? reproPack.replayPayload.riskLevel
+              : 'high',
+        },
+        redaction: reproPack.redaction ?? {},
+        summary: reproPack.summary ?? {},
+      },
+      workspaceResolution?.workspaceName || path.basename(workspacePathInput || '') || 'workspace'
+    );
+
+    await vscode.workspace.fs.writeFile(
+      outputUri,
+      Buffer.from(JSON.stringify(redactedBundle, null, 2), 'utf8')
+    );
+
+    await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+      'workspai.studio.incident_repro_pack_exported',
+      workspaceResolution?.workspacePath || workspacePathInput,
+      {
+        packId: redactedBundle.incident_repro_pack.packId,
+        redactionApplied: true,
+        verifyChecklistCount:
+          redactedBundle.incident_repro_pack.replayPayload.verifyChecklist.length,
+        blockedReasonCount: redactedBundle.incident_repro_pack.replayPayload.blockedReasons.length,
+      }
+    );
+
+    vscode.window.showInformationMessage(`Incident repro bundle exported: ${outputUri.fsPath}`);
+
+    this._panel.webview.postMessage({
+      command: 'aiChatActionProgress',
+      data: {
+        stage: 'repro-exported',
+        progress: 100,
+        note: `Redacted bundle exported: ${path.basename(outputUri.fsPath)}`,
+      },
+      meta: { requestId, version: 'v1' },
+    });
+  }
+
+  private async _handleImportIncidentReproPack(requestId?: string): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      filters: {
+        JSON: ['json'],
+        'All Files': ['*'],
+      },
+      openLabel: 'Import Incident Repro Bundle',
+      title: 'Select incident repro bundle (JSON)',
+    });
+
+    const fileUri = picked?.[0];
+    if (!fileUri) {
+      return;
+    }
+
+    try {
+      const rawBuffer = await vscode.workspace.fs.readFile(fileUri);
+      const rawText = Buffer.from(rawBuffer).toString('utf8');
+      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+
+      const normalizedReproPack = parseImportedReproBundle(parsed);
+      const rawReplayWorkspacePath =
+        typeof normalizedReproPack.replayPayload.workspacePath === 'string'
+          ? normalizedReproPack.replayPayload.workspacePath.trim()
+          : '';
+      const workspaceResolution =
+        await this._resolveIncidentReplayWorkspacePath(rawReplayWorkspacePath);
+
+      if (!workspaceResolution) {
+        throw new Error(
+          'No local workspace is available for replay. Select or open a workspace first.'
+        );
+      }
+
+      const initialQuery = buildIncidentReplayQuery(normalizedReproPack);
+      this._pendingImportedIncidentReplayByWorkspace.set(workspaceResolution.workspacePath, {
+        packId: normalizedReproPack.packId,
+        actionType: normalizedReproPack.replayPayload.actionType,
+        riskLevel: normalizedReproPack.replayPayload.riskLevel,
+        likelyFailureMode: normalizedReproPack.replayPayload.likelyFailureMode,
+        verifyChecklist: normalizedReproPack.replayPayload.verifyChecklist,
+        blockedReasons: normalizedReproPack.replayPayload.blockedReasons,
+        relatedFiles: normalizedReproPack.replayPayload.relatedFiles,
+        importedFrom: path.basename(fileUri.fsPath),
+      });
+
+      this._panel.webview.postMessage({
+        command: 'openIncidentStudio',
+        data: {
+          workspacePath: workspaceResolution.workspacePath,
+          workspaceName: workspaceResolution.workspaceName,
+          initialQuery,
+        },
+        meta: { requestId, version: 'v1' },
+      });
+
+      await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+        'workspai.studio.incident_repro_pack_imported',
+        workspaceResolution.workspacePath,
+        {
+          packId: normalizedReproPack.packId,
+          sourceFile: path.basename(fileUri.fsPath),
+          verifyChecklistCount: normalizedReproPack.replayPayload.verifyChecklist.length,
+          blockedReasonCount: normalizedReproPack.replayPayload.blockedReasons.length,
+        }
+      );
+
+      this._trackStudioEvent(
+        'workspai.studio.incident_replay_ready',
+        workspaceResolution.workspacePath,
+        {
+          packId: normalizedReproPack.packId,
+          actionType: normalizedReproPack.replayPayload.actionType,
+          verifyChecklistCount: normalizedReproPack.replayPayload.verifyChecklist.length,
+          blockedReasonCount: normalizedReproPack.replayPayload.blockedReasons.length,
+        }
+      );
+
+      vscode.window.showInformationMessage(
+        `Incident repro bundle imported and queued for replay: ${path.basename(fileUri.fsPath)}`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`Failed to import incident repro bundle: ${message}`);
+    }
+  }
+
   private async _buildIncidentWave2Contracts(input: {
     requestId?: string;
     conversationId?: string;
     actionId: string;
     actionType: string;
+    actionQuery?: string;
     workspacePath?: string;
     actionPolicy: ReturnType<typeof classifyIncidentActionPolicy>;
     graphSnapshot: IncidentWorkspaceGraphSnapshot;
@@ -2749,7 +3484,15 @@ No markdown, no explanation outside the JSON.`;
       graphVersion: string;
       nodes: Array<{
         id: string;
-        type: 'route' | 'controller' | 'service' | 'model' | 'datastore' | 'test';
+        type:
+          | 'route'
+          | 'controller'
+          | 'service'
+          | 'model'
+          | 'datastore'
+          | 'test'
+          | 'infra-service'
+          | 'db-schema';
         label: string;
         filePath?: string;
         confidence: number;
@@ -2799,6 +3542,11 @@ No markdown, no explanation outside the JSON.`;
       confidenceSufficient: boolean;
       blockedReasons: string[];
     };
+    architectureTelemetry: {
+      warningCount: number;
+      warnings: string[];
+      unknownScopeBlocked: boolean;
+    };
   }> {
     const workspacePath =
       input.workspacePath ||
@@ -2812,6 +3560,9 @@ No markdown, no explanation outside the JSON.`;
       framework: input.graphSnapshot.project.framework,
       kit: input.graphSnapshot.project.kit,
     });
+    const predictionKpiStatus = workspacePath
+      ? await WorkspaceUsageTracker.getInstance().getStudioPredictionKpiStatus(workspacePath)
+      : null;
 
     const moduleSeeds =
       indexedGraph.topModules.length > 0
@@ -2840,10 +3591,20 @@ No markdown, no explanation outside the JSON.`;
 
     const nodes: Array<{
       id: string;
-      type: 'route' | 'controller' | 'service' | 'model' | 'datastore' | 'test';
+      type:
+        | 'route'
+        | 'controller'
+        | 'service'
+        | 'model'
+        | 'datastore'
+        | 'test'
+        | 'infra-service'
+        | 'db-schema';
       label: string;
       filePath?: string;
       confidence: number;
+      symbolName?: string;
+      startLine?: number;
     }> =
       indexedGraph.nodes.length > 0
         ? indexedGraph.nodes.map((node) => ({
@@ -2852,6 +3613,8 @@ No markdown, no explanation outside the JSON.`;
             label: node.label,
             filePath: node.filePath,
             confidence: node.confidence,
+            symbolName: node.symbolName,
+            startLine: node.startLine,
           }))
         : moduleSeeds.map((moduleName) => ({
             id: `service:${moduleName}`,
@@ -2980,6 +3743,11 @@ No markdown, no explanation outside the JSON.`;
         'Scope is uncertain. Ask for clarification before mutation recommendation.'
       );
     }
+    if (deterministicScore.architectureWarnings.length > 0) {
+      verifyChecklist.push(
+        `Architecture warning: ${deterministicScore.architectureWarnings[0]}. Run focused impact review before apply.`
+      );
+    }
 
     const scopeKnown =
       deterministicScore.scopeKnown &&
@@ -3020,10 +3788,58 @@ No markdown, no explanation outside the JSON.`;
     }
     blockedReasons.push(...deterministicScore.blockedReasons);
 
+    const architectureWarnings = Array.from(
+      new Set(
+        deterministicScore.architectureWarnings
+          .filter((warning) => typeof warning === 'string' && warning.trim().length > 0)
+          .map((warning) => warning.trim())
+      )
+    );
+    const unknownScopeBlocked = blockedReasons.some((reason) => /scope is unknown/i.test(reason));
+
     const predictiveWarningNeeded =
       input.actionPolicy.requiresImpactReview || (input.doctorEvidence?.errors ?? 0) > 0;
     const warningId = `${input.conversationId || 'conv'}:${input.actionId}:prediction`;
     const predictionKey = `${input.actionType}:${warningId}`;
+    const predictiveWarning = predictiveWarningNeeded
+      ? buildIncidentPredictiveWarning({
+          impactAssessment: {
+            confidence,
+            riskLevel: deterministicScore.riskLevel,
+            affectedFiles,
+            affectedModules,
+            affectedTests,
+            likelyFailureMode,
+            rationale: [
+              'Impact is derived from workspace graph topology and doctor/runtime evidence.',
+              input.actionPolicy.requiresImpactReview
+                ? 'Action policy requires impact review before completion claim.'
+                : 'Action policy allows lower-risk execution path.',
+              ...deterministicScore.architectureWarnings.slice(0, 2),
+              ...deterministicScore.rationale.slice(0, 3),
+            ],
+            verifyChecklist,
+          },
+          actionPolicy: input.actionPolicy,
+          doctorEvidence: input.doctorEvidence,
+          graphSummary: {
+            nodeCount: nodes.length,
+            edgeCount: edges.length,
+            supportedTopology:
+              indexedGraph.supportedTopology ||
+              input.graphSnapshot.project.kit ||
+              input.graphSnapshot.project.framework,
+          },
+          evidenceSources: sources,
+          telemetryStatus: predictionKpiStatus,
+          verifyReady: input.verifyReady,
+          verifySuccess: input.verifySuccess,
+          signalContext: {
+            actionType: input.actionType,
+            queryText: input.actionQuery,
+          },
+        })
+      : null;
 
     return {
       systemGraphSnapshot: {
@@ -3056,31 +3872,25 @@ No markdown, no explanation outside the JSON.`;
           input.actionPolicy.requiresImpactReview
             ? 'Action policy requires impact review before completion claim.'
             : 'Action policy allows lower-risk execution path.',
+          ...deterministicScore.architectureWarnings.slice(0, 2),
           ...deterministicScore.rationale.slice(0, 3),
         ],
         verifyChecklist,
         blockMutationWhenScopeUnknown:
           input.actionPolicy.requiresImpactReview || input.actionPolicy.requiresVerifyPath,
       },
-      predictiveWarning: predictiveWarningNeeded
+      predictiveWarning: predictiveWarning
         ? {
             requestId: input.requestId,
             warningId,
-            confidenceBand: this._derivePredictionConfidenceBand(confidence),
-            predictedFailure:
-              likelyFailureMode ||
-              'Potential downstream regression if this action lands without scoped verification.',
-            affectedScopeSummary:
-              affectedModules.length > 0
-                ? `Likely impact: ${affectedModules.slice(0, 3).join(', ')}`
-                : 'Impact scope is uncertain - clarification required.',
-            nextSafeAction: input.actionPolicy.requiresImpactReview
-              ? 'Run change-impact-lite and then execute the verify command with captured output.'
-              : 'Run the verify command and confirm no new doctor errors before closing.',
-            verifyChecklist: verifyChecklist.slice(0, 3),
+            confidenceBand: predictiveWarning.confidenceBand,
+            predictedFailure: predictiveWarning.predictedFailure,
+            affectedScopeSummary: predictiveWarning.affectedScopeSummary,
+            nextSafeAction: predictiveWarning.nextSafeAction,
+            verifyChecklist: predictiveWarning.verifyChecklist,
             telemetrySeed: {
               predictionKey,
-              evidenceSources: sources,
+              evidenceSources: predictiveWarning.evidenceSources,
             },
           }
         : undefined,
@@ -3091,6 +3901,11 @@ No markdown, no explanation outside the JSON.`;
         rollbackPathPresent,
         confidenceSufficient,
         blockedReasons: Array.from(new Set(blockedReasons)),
+      },
+      architectureTelemetry: {
+        warningCount: architectureWarnings.length,
+        warnings: architectureWarnings.slice(0, 4),
+        unknownScopeBlocked,
       },
     };
   }
@@ -3112,8 +3927,13 @@ No markdown, no explanation outside the JSON.`;
         frameworks: Array<{ name: string; count: number }>;
         projects: Array<{
           name: string;
+          path?: string;
           framework?: string;
+          kit?: string;
           issues: number;
+          modulesCount?: number;
+          modulesHealthy?: boolean;
+          vulnerabilities?: number;
           depsInstalled?: boolean;
         }>;
         fixCommands: string[];
@@ -3140,8 +3960,13 @@ No markdown, no explanation outside the JSON.`;
 
       type ParsedDoctorProject = {
         name: string;
+        path?: string;
         framework?: string;
+        kit?: string;
         issues: number;
+        modulesCount?: number;
+        modulesHealthy?: boolean;
+        vulnerabilities?: number;
         depsInstalled?: boolean;
         fixCommands: string[];
       };
@@ -3150,10 +3975,22 @@ No markdown, no explanation outside the JSON.`;
       const projects: ParsedDoctorProject[] = projectsRaw
         .map((project: any) => {
           const issues = Array.isArray(project?.issues) ? project.issues.length : 0;
+          const modulesCountRaw = Number(project?.stats?.modules);
+          const modulesCount = Number.isFinite(modulesCountRaw) ? modulesCountRaw : undefined;
+          const vulnerabilitiesRaw = Number(project?.vulnerabilities);
+          const vulnerabilities = Number.isFinite(vulnerabilitiesRaw)
+            ? vulnerabilitiesRaw
+            : undefined;
           return {
             name: typeof project?.name === 'string' ? project.name : 'unknown',
+            path: typeof project?.path === 'string' ? project.path : undefined,
             framework: typeof project?.framework === 'string' ? project.framework : undefined,
+            kit: typeof project?.kit === 'string' ? project.kit : undefined,
             issues,
+            modulesCount,
+            modulesHealthy:
+              typeof project?.modulesHealthy === 'boolean' ? project.modulesHealthy : undefined,
+            vulnerabilities,
             depsInstalled:
               typeof project?.depsInstalled === 'boolean' ? project.depsInstalled : undefined,
             fixCommands: Array.isArray(project?.fixCommands)
@@ -3200,10 +4037,25 @@ No markdown, no explanation outside the JSON.`;
         issueCount,
         frameworks,
         projects: projects.map(
-          ({ name, framework, issues, depsInstalled }: ParsedDoctorProject) => ({
+          ({
             name,
+            path,
             framework,
+            kit,
             issues,
+            modulesCount,
+            modulesHealthy,
+            vulnerabilities,
+            depsInstalled,
+          }: ParsedDoctorProject) => ({
+            name,
+            path,
+            framework,
+            kit,
+            issues,
+            modulesCount,
+            modulesHealthy,
+            vulnerabilities,
             depsInstalled,
           })
         ),
@@ -3234,6 +4086,40 @@ No markdown, no explanation outside the JSON.`;
       });
     } catch {
       return null;
+    }
+  }
+
+  private async _persistIncidentReplayLearning(input: {
+    workspacePath: string;
+    packId: string;
+    actionType: string;
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    likelyFailureMode?: string;
+    verifyChecklist: string[];
+    blockedReasons: string[];
+    relatedFiles: string[];
+  }): Promise<boolean> {
+    try {
+      const memoryService = WorkspaceMemoryService.getInstance();
+      const currentMemory = await memoryService.read(input.workspacePath);
+      const nextMemory = mergeIncidentReplayLearningIntoMemory(currentMemory, {
+        packId: input.packId,
+        actionType: input.actionType,
+        riskLevel: input.riskLevel,
+        likelyFailureMode: input.likelyFailureMode,
+        verifyChecklist: input.verifyChecklist,
+        blockedReasons: input.blockedReasons,
+        relatedFiles: input.relatedFiles,
+      });
+
+      if (JSON.stringify(nextMemory) === JSON.stringify(currentMemory)) {
+        return false;
+      }
+
+      await memoryService.write(input.workspacePath, nextMemory);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -3666,6 +4552,7 @@ No markdown, no explanation outside the JSON.`;
             content: finalAssistantText,
           },
         ].slice(-12);
+        nextConversation.lastActionResponseText = finalAssistantText;
         this._chatBrainConversations.set(conversationId, nextConversation);
       }
 
@@ -3890,6 +4777,83 @@ No markdown, no explanation outside the JSON.`;
       return 'List the 5 most relevant AI recipe workflows for my current workspace and project type, then run the top one.';
     }
 
+    // ── incident-repro-pack (KF5) ─────────────────────────────────────────────
+    if (actionType === 'incident-repro-pack') {
+      const incidentScope =
+        typeof payload?.incidentScope === 'string' ? payload.incidentScope.trim() : '';
+      const incidentSummary =
+        typeof payload?.incidentSummary === 'string' ? payload.incidentSummary.trim() : '';
+      return [
+        'Prepare a reproducible incident pack and replay brief from the current Incident Studio context.',
+        incidentScope ? `Scope: ${incidentScope}` : '',
+        incidentSummary ? `Incident summary: ${incidentSummary}` : '',
+        '',
+        'Return exactly these sections:',
+        '1) Incident reproduction checklist (deterministic, step-by-step)',
+        '2) Minimal evidence bundle (logs, diff, commands, environment)',
+        '3) Sanitized share payload (what is safe to share and what must be redacted)',
+        '4) Replay procedure for another developer and expected pass/fail signals',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    // ── apply-module-gen (A02) ────────────────────────────────────────────────
+    if (actionType === 'apply-module-gen') {
+      const featureIntent =
+        typeof payload?.featureIntent === 'string' ? payload.featureIntent.trim() : '';
+      const moduleName = typeof payload?.moduleName === 'string' ? payload.moduleName.trim() : '';
+      const targetPath = typeof payload?.targetPath === 'string' ? payload.targetPath.trim() : '';
+      return [
+        featureIntent
+          ? `Generate a complete, production-ready module for this feature: ${featureIntent}`
+          : `Generate a complete module${moduleName ? ` named "${moduleName}"` : ''} for this workspace.`,
+        targetPath ? `Target directory: ${targetPath}` : '',
+        '',
+        'IMPORTANT: For every file you create or modify, output it as a fenced code block with this format:',
+        '```<language> path: <relative/path/to/file>',
+        '// file content here',
+        '```',
+        '',
+        'Include: all required source files, tests, and any configuration changes needed.',
+        'After the code blocks, provide a brief summary of what was generated and verification steps.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    // ── apply-debug-patch (A03) ───────────────────────────────────────────────
+    if (actionType === 'apply-debug-patch') {
+      const traceText = typeof payload?.traceText === 'string' ? payload.traceText.trim() : '';
+      const logContext = typeof payload?.logContext === 'string' ? payload.logContext.trim() : '';
+      const issueSummary =
+        typeof payload?.issueSummary === 'string' ? payload.issueSummary.trim() : '';
+      const parts: string[] = [];
+      if (traceText) {
+        parts.push(`Stack trace / error:\n\`\`\`\n${traceText.slice(0, 4000)}\n\`\`\``);
+      }
+      if (logContext) {
+        parts.push(`Relevant log context:\n\`\`\`\n${logContext.slice(0, 2000)}\n\`\`\``);
+      }
+      if (issueSummary) {
+        parts.push(`Issue description: ${issueSummary}`);
+      }
+      parts.push(
+        '',
+        'Provide a concrete patch to fix this issue.',
+        'IMPORTANT: For every file you create or modify, output it as a fenced code block with this format:',
+        '```<language> path: <relative/path/to/file>',
+        '// patched content here',
+        '```',
+        '',
+        'After the code blocks: explain the root cause, why this patch fixes it, and any required verification commands.'
+      );
+      if (!traceText && !issueSummary) {
+        return 'Scan my workspace for the most likely active bug or error, then generate a targeted patch with before/after code blocks per file.';
+      }
+      return parts.filter(Boolean).join('\n');
+    }
+
     // ── generic/orchestrate fallback ──────────────────────────────────────────
     const label = typeof payload?.label === 'string' ? payload.label : actionType;
     return `Perform the following action for my workspace: ${label}. Analyze the current state and provide specific, actionable guidance.`;
@@ -4104,6 +5068,7 @@ No markdown, no explanation outside the JSON.`;
       conversationId,
       actionId,
       actionType,
+      actionQuery: inlineQuery,
       workspacePath: activeWorkspacePath,
       actionPolicy,
       graphSnapshot,
@@ -4112,14 +5077,53 @@ No markdown, no explanation outside the JSON.`;
       verifySuccess,
       rollbackRuntimePolicy,
     });
+    const unknownScopeMutationBlocked =
+      actionPolicy.requiresImpactReview &&
+      wave2Contracts.impactAssessment.blockMutationWhenScopeUnknown &&
+      !wave2Contracts.releaseGateEvidence.scopeKnown;
+    const effectiveVerifySuccess = verifySuccess && !unknownScopeMutationBlocked;
+    const sandboxEvidence =
+      activeWorkspacePath &&
+      (actionPolicy.riskClass === 'guarded-mutating' ||
+        actionPolicy.riskClass === 'high-risk-mutating')
+        ? await runSandboxSimulation({
+            workspacePath: activeWorkspacePath,
+            actionId,
+            riskClass: actionPolicy.riskClass,
+            verifyCommands: this._buildSandboxVerifyCommands({
+              actionType,
+              inlineQuery,
+              impactVerifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
+              conversationId,
+            }),
+            rollbackHint:
+              rollbackEvidence?.suggestedNextStep ||
+              'Keep apply blocked until simulation evidence and deterministic verification both pass.',
+            defaultTimeoutMs: 20000,
+          })
+        : undefined;
     const diagnosisEvidence = this._buildIncidentDiagnosisEvidence({
       actionPolicy,
       verifyReady,
-      verifySuccess,
+      verifySuccess: effectiveVerifySuccess,
       doctorEvidence,
       impactAssessment: wave2Contracts.impactAssessment,
       predictiveWarning: wave2Contracts.predictiveWarning,
       graphSnapshot: wave2Contracts.systemGraphSnapshot,
+    });
+    const incidentReproPackEvidence = this._buildIncidentReproPackEvidence({
+      actionType,
+      actionId,
+      conversationId,
+      workspacePath: activeWorkspacePath,
+      verifySuccess: effectiveVerifySuccess,
+      conversationHistoryTurns: conv?.history.length ?? 0,
+      doctorEvidence,
+      rollbackEvidence,
+      sandboxEvidence,
+      impactAssessment: wave2Contracts.impactAssessment,
+      releaseGateEvidence: wave2Contracts.releaseGateEvidence,
+      diagnosisEvidence,
     });
 
     if (conv && wave2Contracts.predictiveWarning) {
@@ -4135,7 +5139,7 @@ No markdown, no explanation outside the JSON.`;
     }
 
     if (conv) {
-      if (verifySuccess) {
+      if (effectiveVerifySuccess) {
         conv.verifyPassedAt = Date.now();
         conv.phase = 'learn';
       } else {
@@ -4145,13 +5149,14 @@ No markdown, no explanation outside the JSON.`;
       this._chatBrainConversations.set(conversationId, conv);
 
       this._trackStudioEvent(
-        verifySuccess ? 'workspai.studio.verify_passed' : 'workspai.studio.verify_failed',
+        effectiveVerifySuccess ? 'workspai.studio.verify_passed' : 'workspai.studio.verify_failed',
         conv.workspacePath,
         {
           conversationId,
           actionId,
           actionType,
           verifyReady,
+          unknownScopeMutationBlocked,
           framework: conv.framework ?? 'unknown',
           errors: doctorEvidence?.errors ?? 0,
           warnings: doctorEvidence?.warnings ?? 0,
@@ -4161,7 +5166,7 @@ No markdown, no explanation outside the JSON.`;
 
       if (wave2Contracts.predictiveWarning) {
         this._trackStudioEvent(
-          verifySuccess
+          effectiveVerifySuccess
             ? 'workspai.studio.prediction_falsified'
             : 'workspai.studio.prediction_verified',
           conv.workspacePath,
@@ -4171,10 +5176,83 @@ No markdown, no explanation outside the JSON.`;
             actionType,
             predictionKey: wave2Contracts.predictiveWarning.telemetrySeed.predictionKey,
             warningId: wave2Contracts.predictiveWarning.warningId,
-            verifySuccess,
+            verifySuccess: effectiveVerifySuccess,
             framework: conv.framework ?? 'unknown',
           }
         );
+      }
+
+      this._emitArchitectureReasoningRuntimeEvents({
+        conversationId,
+        actionId,
+        actionType,
+        workspacePath: conv.workspacePath ?? activeWorkspacePath ?? '',
+        framework: conv.framework,
+        wave2Contracts,
+        verifySuccess: effectiveVerifySuccess,
+      });
+
+      if (incidentReproPackEvidence) {
+        this._trackStudioEvent('workspai.studio.incident_repro_pack_captured', conv.workspacePath, {
+          conversationId,
+          actionId,
+          actionType,
+          packId: incidentReproPackEvidence.packId,
+          redactionApplied: incidentReproPackEvidence.redaction.applied,
+          verifySuccess,
+          framework: conv.framework ?? 'unknown',
+        });
+
+        this._trackStudioEvent('workspai.studio.incident_replay_ready', conv.workspacePath, {
+          conversationId,
+          actionId,
+          actionType,
+          packId: incidentReproPackEvidence.packId,
+          blockedReasonCount: incidentReproPackEvidence.summary.blockedReasonCount,
+          verifyChecklistCount: incidentReproPackEvidence.replayPayload.verifyChecklist.length,
+          framework: conv.framework ?? 'unknown',
+        });
+      }
+
+      if (effectiveVerifySuccess && conv.importedIncidentReplay && conv.workspacePath) {
+        const replayMemorySaved = await this._persistIncidentReplayLearning({
+          workspacePath: conv.workspacePath,
+          packId: conv.importedIncidentReplay.packId,
+          actionType: conv.importedIncidentReplay.actionType,
+          riskLevel: conv.importedIncidentReplay.riskLevel,
+          likelyFailureMode:
+            wave2Contracts.impactAssessment.likelyFailureMode ||
+            conv.importedIncidentReplay.likelyFailureMode,
+          verifyChecklist:
+            wave2Contracts.impactAssessment.verifyChecklist.length > 0
+              ? wave2Contracts.impactAssessment.verifyChecklist
+              : conv.importedIncidentReplay.verifyChecklist,
+          blockedReasons:
+            wave2Contracts.releaseGateEvidence.blockedReasons.length > 0
+              ? wave2Contracts.releaseGateEvidence.blockedReasons
+              : conv.importedIncidentReplay.blockedReasons,
+          relatedFiles:
+            wave2Contracts.impactAssessment.affectedFiles.length > 0
+              ? wave2Contracts.impactAssessment.affectedFiles
+              : conv.importedIncidentReplay.relatedFiles,
+        });
+
+        if (replayMemorySaved) {
+          this._trackStudioEvent(
+            'workspai.studio.incident_replay_memory_enriched',
+            conv.workspacePath,
+            {
+              conversationId,
+              actionId,
+              actionType,
+              packId: conv.importedIncidentReplay.packId,
+              framework: conv.framework ?? 'unknown',
+            }
+          );
+        }
+
+        delete conv.importedIncidentReplay;
+        this._chatBrainConversations.set(conversationId, conv);
       }
 
       if (rollbackEvidence?.attempted) {
@@ -4206,7 +5284,7 @@ No markdown, no explanation outside the JSON.`;
       }
 
       const uiPrefs = this._getUiPreferences();
-      if (verifySuccess && uiPrefs.incidentAutoLearningPrompt) {
+      if (effectiveVerifySuccess && uiPrefs.incidentAutoLearningPrompt) {
         this._panel.webview.postMessage({
           command: 'aiChatSuggestedQuestions',
           data: {
@@ -4250,20 +5328,80 @@ No markdown, no explanation outside the JSON.`;
       }
     }
 
+    // ── Multi-file patch extraction (A02 / A03) ────────────────────────────────
+    let multiFilePatchResult: MultiFilePatchResult | undefined;
+    const isPatchAction = actionType === 'apply-module-gen' || actionType === 'apply-debug-patch';
+    if (isPatchAction && activeWorkspacePath) {
+      const convAfterQuery = this._chatBrainConversations.get(conversationId);
+      const lastResponseText = convAfterQuery?.lastActionResponseText ?? '';
+
+      if (lastResponseText) {
+        const rawPatches = extractPatchesFromAiResponse(lastResponseText, {
+          actionId,
+          workspacePath: activeWorkspacePath,
+        });
+
+        if (rawPatches.length > 0) {
+          // For A03 (apply-debug-patch), only auto-apply when sandboxEvidence says safeToApply.
+          // For A02 (apply-module-gen), send patches as 'pending' for user to review.
+          const shouldAutoApply =
+            actionType === 'apply-debug-patch' &&
+            !unknownScopeMutationBlocked &&
+            sandboxEvidence?.safeToApply === true &&
+            actionPolicy.riskClass !== 'high-risk-mutating';
+
+          if (shouldAutoApply) {
+            multiFilePatchResult = await applyPatches({
+              actionId,
+              workspacePath: activeWorkspacePath,
+              patches: rawPatches,
+              branchSafeApply: true,
+              verificationPassed: sandboxEvidence?.status === 'passed',
+              verificationNote: sandboxEvidence?.reason,
+            });
+          } else {
+            // Return patches as 'pending' — user applies/rejects via UI
+            multiFilePatchResult = {
+              patchId: `patch-${actionId}-${Date.now().toString(36)}`,
+              generatedAt: new Date().toISOString(),
+              actionId,
+              patches: rawPatches.map((p) => ({ ...p, status: 'pending' as const })),
+              appliedCount: 0,
+              rejectedCount: 0,
+              failedCount: 0,
+            };
+          }
+
+          await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+            'workspai.patch.extracted',
+            activeWorkspacePath,
+            {
+              actionId,
+              actionType,
+              patchCount: rawPatches.length,
+              autoApplied: shouldAutoApply,
+            }
+          );
+        }
+      }
+    }
+
     // Mark action resolved (stream already showed the result)
     this._panel.webview.postMessage({
       command: 'aiChatActionResult',
       data: {
         conversationId,
         actionId,
-        success: verifySuccess,
-        outputSummary: verifySuccess
-          ? `${actionType} \u2014 result shown in conversation above`
-          : rollbackEvidence
-            ? `${actionType} \u2014 verification failed; rollback status: ${rollbackEvidence.status}`
-            : verifyReady
-              ? `${actionType} \u2014 verification failed; review output and retry safely`
-              : `${actionType} \u2014 verification required before completion claim`,
+        success: effectiveVerifySuccess,
+        outputSummary: unknownScopeMutationBlocked
+          ? `${actionType} - blocked: affected scope is unknown for a mutating action`
+          : effectiveVerifySuccess
+            ? `${actionType} \u2014 result shown in conversation above`
+            : rollbackEvidence
+              ? `${actionType} \u2014 verification failed; rollback status: ${rollbackEvidence.status}`
+              : verifyReady
+                ? `${actionType} \u2014 verification failed; review output and retry safely`
+                : `${actionType} \u2014 verification required before completion claim`,
         verificationRequired: !verifyReady,
         verifyPolicy: {
           requiresVerifyPath: actionPolicy.requiresVerifyPath,
@@ -4278,10 +5416,243 @@ No markdown, no explanation outside the JSON.`;
           : undefined,
         diagnosis: diagnosisEvidence,
         rollback: rollbackEvidence,
+        sandboxSimulation: sandboxEvidence,
+        incidentReproPack: incidentReproPackEvidence,
+        multiFilePatch: multiFilePatchResult,
         systemGraphSnapshot: wave2Contracts.systemGraphSnapshot,
         impactAssessment: wave2Contracts.impactAssessment,
         predictiveWarning: wave2Contracts.predictiveWarning,
         releaseGateEvidence: wave2Contracts.releaseGateEvidence,
+      },
+      meta: { requestId, version: 'v1' },
+    });
+  }
+
+  /**
+   * Handle the user applying or rejecting individual file patches from the
+   * multi-file patch review card (A02 / A03 apply/reject workflow).
+   *
+   * Expected payload:
+   *   { conversationId, patchId, acceptedPaths: string[], workspacePath, branchSafeApply?: boolean }
+   */
+  private async _handleApplyPatch(data: any, requestId?: string) {
+    const conversationId =
+      typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+    const patchId = typeof data?.patchId === 'string' ? data.patchId : `patch-${Date.now()}`;
+    const acceptedPaths: string[] = Array.isArray(data?.acceptedPaths)
+      ? data.acceptedPaths.filter((p: unknown) => typeof p === 'string')
+      : [];
+    const branchSafeApply = data?.branchSafeApply === true;
+
+    const conv = conversationId ? this._chatBrainConversations.get(conversationId) : undefined;
+    const workspacePath =
+      (typeof data?.workspacePath === 'string' && data.workspacePath.trim()
+        ? data.workspacePath.trim()
+        : undefined) ?? conv?.workspacePath;
+
+    if (!workspacePath) {
+      this._panel.webview.postMessage({
+        command: 'aiChatError',
+        data: {
+          conversationId,
+          code: 'INVALID_INPUT',
+          message: 'workspacePath is required to apply patches.',
+          retryable: false,
+        },
+        meta: { requestId, version: 'v1' },
+      });
+      return;
+    }
+
+    const lastResponse = conv?.lastActionResponseText ?? '';
+    const rawPatches = lastResponse
+      ? extractPatchesFromAiResponse(lastResponse, { actionId: patchId, workspacePath })
+      : [];
+
+    if (rawPatches.length === 0) {
+      this._panel.webview.postMessage({
+        command: 'aiChatError',
+        data: {
+          conversationId,
+          code: 'NO_PATCHES',
+          message: 'No patches found to apply.',
+          retryable: false,
+        },
+        meta: { requestId, version: 'v1' },
+      });
+      return;
+    }
+
+    const result = await applyPatches({
+      actionId: patchId,
+      workspacePath,
+      patches: rawPatches,
+      branchSafeApply,
+      acceptedPaths: acceptedPaths.length > 0 ? acceptedPaths : undefined,
+    });
+
+    this._panel.webview.postMessage({
+      command: 'aiChatPatchApplied',
+      data: { conversationId, patchId, result },
+      meta: { requestId, version: 'v1' },
+    });
+  }
+
+  private async _handleExportSandboxSimulationEvidence(
+    data: any,
+    requestId?: string
+  ): Promise<void> {
+    const sandboxSimulation =
+      data &&
+      typeof data === 'object' &&
+      data.sandboxSimulation &&
+      typeof data.sandboxSimulation === 'object'
+        ? (data.sandboxSimulation as {
+            actionId?: string;
+            workspacePath?: string;
+            riskClass?:
+              | 'informational'
+              | 'non-mutating-executable'
+              | 'guarded-mutating'
+              | 'high-risk-mutating';
+            mode?: 'verify-pack-simulation' | 'disposable-sandbox';
+            status?: 'passed' | 'failed' | 'skipped';
+            startedAt?: string;
+            completedAt?: string;
+            durationMs?: number;
+            commandResults?: Array<{
+              label?: string;
+              command?: string;
+              args?: string[];
+              exitCode?: number;
+              stdout?: string;
+              stderr?: string;
+              durationMs?: number;
+            }>;
+            recommendedRollbackPath?: string;
+            safeToApply?: boolean;
+            reason?: string;
+          })
+        : undefined;
+
+    if (!sandboxSimulation?.actionId || !sandboxSimulation.workspacePath) {
+      vscode.window.showWarningMessage('No sandbox simulation evidence is available to export.');
+      return;
+    }
+
+    const workspacePathInput =
+      typeof data?.workspacePath === 'string' && data.workspacePath.trim()
+        ? data.workspacePath.trim()
+        : sandboxSimulation.workspacePath;
+
+    const defaultFileName = `${sandboxSimulation.actionId}-sandbox-simulation-evidence.json`;
+    const defaultUri = vscode.Uri.file(
+      path.join(workspacePathInput, '.rapidkit', 'reports', defaultFileName)
+    );
+
+    const outputUri = await vscode.window.showSaveDialog({
+      title: 'Export Sandbox Simulation Evidence',
+      saveLabel: 'Export Evidence',
+      defaultUri,
+      filters: {
+        JSON: ['json'],
+      },
+    });
+
+    if (!outputUri) {
+      return;
+    }
+
+    const redactText = (value: string | undefined): string | undefined => {
+      if (typeof value !== 'string' || value.length === 0) {
+        return value;
+      }
+
+      return value
+        .replace(/(authorization\s*[:=]\s*)(bearer\s+)?[^\s\n\r"']+/gi, '$1[REDACTED]')
+        .replace(/(token\s*[:=]\s*)[^\s\n\r"']+/gi, '$1[REDACTED]')
+        .replace(/(password\s*[:=]\s*)[^\s\n\r"']+/gi, '$1[REDACTED]')
+        .replace(/(api[_-]?key\s*[:=]\s*)[^\s\n\r"']+/gi, '$1[REDACTED]')
+        .replace(/(secret\s*[:=]\s*)[^\s\n\r"']+/gi, '$1[REDACTED]');
+    };
+
+    const redactedCommandResults = Array.isArray(sandboxSimulation.commandResults)
+      ? sandboxSimulation.commandResults.map((result) => ({
+          label: typeof result?.label === 'string' ? result.label : 'verify command',
+          command: typeof result?.command === 'string' ? result.command : '',
+          args: Array.isArray(result?.args)
+            ? result.args.filter((arg): arg is string => typeof arg === 'string').slice(0, 12)
+            : [],
+          exitCode: typeof result?.exitCode === 'number' ? result.exitCode : -1,
+          stdout: redactText(
+            typeof result?.stdout === 'string' ? result.stdout.slice(0, 4000) : ''
+          ),
+          stderr: redactText(
+            typeof result?.stderr === 'string' ? result.stderr.slice(0, 4000) : ''
+          ),
+          durationMs:
+            typeof result?.durationMs === 'number' && Number.isFinite(result.durationMs)
+              ? Math.max(0, Math.round(result.durationMs))
+              : 0,
+        }))
+      : [];
+
+    const exportPayload = {
+      sandbox_simulation_evidence: {
+        schemaVersion: 'v1',
+        exportedAt: new Date().toISOString(),
+        actionId: sandboxSimulation.actionId,
+        workspacePath: workspacePathInput,
+        riskClass: sandboxSimulation.riskClass || 'guarded-mutating',
+        mode: sandboxSimulation.mode || 'verify-pack-simulation',
+        status: sandboxSimulation.status || 'skipped',
+        startedAt: sandboxSimulation.startedAt,
+        completedAt: sandboxSimulation.completedAt,
+        durationMs:
+          typeof sandboxSimulation.durationMs === 'number' &&
+          Number.isFinite(sandboxSimulation.durationMs)
+            ? Math.max(0, Math.round(sandboxSimulation.durationMs))
+            : 0,
+        safeToApply: sandboxSimulation.safeToApply === true,
+        reason: redactText(sandboxSimulation.reason),
+        recommendedRollbackPath: redactText(sandboxSimulation.recommendedRollbackPath),
+        commandResults: redactedCommandResults,
+        summary: {
+          commandCount: redactedCommandResults.length,
+          failedCommandCount: redactedCommandResults.filter((entry) => entry.exitCode !== 0).length,
+          redactionApplied: true,
+        },
+      },
+    };
+
+    await vscode.workspace.fs.writeFile(
+      outputUri,
+      Buffer.from(JSON.stringify(exportPayload, null, 2), 'utf8')
+    );
+
+    await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+      'workspai.studio.sandbox_simulation_evidence_exported',
+      workspacePathInput,
+      {
+        actionId: sandboxSimulation.actionId,
+        status: exportPayload.sandbox_simulation_evidence.status,
+        mode: exportPayload.sandbox_simulation_evidence.mode,
+        safeToApply: exportPayload.sandbox_simulation_evidence.safeToApply,
+        commandCount: exportPayload.sandbox_simulation_evidence.summary.commandCount,
+        failedCommandCount: exportPayload.sandbox_simulation_evidence.summary.failedCommandCount,
+      }
+    );
+
+    vscode.window.showInformationMessage(
+      `Sandbox simulation evidence exported: ${outputUri.fsPath}`
+    );
+
+    this._panel.webview.postMessage({
+      command: 'aiChatActionProgress',
+      data: {
+        stage: 'simulation-exported',
+        progress: 100,
+        note: `Simulation evidence exported: ${path.basename(outputUri.fsPath)}`,
       },
       meta: { requestId, version: 'v1' },
     });
@@ -4328,12 +5699,14 @@ No markdown, no explanation outside the JSON.`;
       ctaVariantBreakdown,
       studioHardGateStatus,
       studioRollbackKpiStatus,
+      studioReproPackKpiStatus,
     ] = await Promise.all([
       tracker.getCommandTelemetrySummary(workspacePath, 'last7d'),
       tracker.getOnboardingExperimentStats(workspacePath, 'last7d'),
       tracker.getStudioCtaVariantBreakdown(workspacePath, 'last7d'),
       tracker.getStudioHardGateStatus(workspacePath, 'last7d'),
       tracker.getStudioRollbackKpiStatus(workspacePath, 'last7d'),
+      tracker.getStudioReproPackKpiStatus(workspacePath, 'last7d'),
     ]);
 
     const telemetryData = buildIncidentStudioTelemetryPayload(
@@ -4342,7 +5715,8 @@ No markdown, no explanation outside the JSON.`;
       ctaVariantBreakdown,
       doctorSummary,
       studioHardGateStatus,
-      studioRollbackKpiStatus
+      studioRollbackKpiStatus,
+      studioReproPackKpiStatus
     );
 
     // Store in cache
@@ -4944,6 +6318,157 @@ No markdown, no explanation outside the JSON.`;
     };
   }
 
+  private _tokenizeSandboxCommand(commandText: string): { command: string; args: string[] } | null {
+    const trimmed = commandText.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    // Keep simulation command intake strict: reject shell chaining and interpolation.
+    if (/[;&|><`$()]/.test(trimmed)) {
+      return null;
+    }
+
+    const parts = trimmed.split(/\s+/).filter((part) => part.length > 0);
+    if (parts.length === 0) {
+      return null;
+    }
+
+    const command = parts[0];
+    const args = parts.slice(1);
+    const commandAllowlist = new Set([
+      'rapidkit',
+      'npm',
+      'pnpm',
+      'yarn',
+      'poetry',
+      'pytest',
+      'python',
+      'python3',
+      'uv',
+      'go',
+      'mvn',
+      'mvnw',
+      './mvnw',
+      'gradle',
+      './gradlew',
+    ]);
+
+    if (!commandAllowlist.has(command)) {
+      return null;
+    }
+
+    return { command, args };
+  }
+
+  private _extractVerifyCommandCandidatesFromText(text: string): string[] {
+    const candidates: string[] = [];
+    const verifyLineRegex = /^\s*verify command\s*:\s*(.+)$/gim;
+    let lineMatch: RegExpExecArray | null = verifyLineRegex.exec(text);
+    while (lineMatch) {
+      const commandText = (lineMatch[1] || '').trim();
+      if (commandText) {
+        candidates.push(commandText);
+      }
+      lineMatch = verifyLineRegex.exec(text);
+    }
+
+    const fencedCodeRegex = /```(?:bash|sh|zsh)?\n([\s\S]*?)```/gim;
+    let fencedMatch: RegExpExecArray | null = fencedCodeRegex.exec(text);
+    while (fencedMatch) {
+      const block = fencedMatch[1] || '';
+      for (const line of block.split(/\r?\n/)) {
+        const cleaned = line.replace(/^\s*\$\s*/, '').trim();
+        if (cleaned) {
+          candidates.push(cleaned);
+        }
+      }
+      fencedMatch = fencedCodeRegex.exec(text);
+    }
+
+    return candidates;
+  }
+
+  private _toSandboxVerifyCommands(candidates: string[]): SandboxVerifyCommand[] {
+    const results: SandboxVerifyCommand[] = [];
+    const seen = new Set<string>();
+
+    for (const rawCandidate of candidates) {
+      const parsed = this._tokenizeSandboxCommand(rawCandidate);
+      if (!parsed) {
+        continue;
+      }
+
+      const key = `${parsed.command} ${parsed.args.join(' ')}`.trim().toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+
+      results.push({
+        command: parsed.command,
+        args: parsed.args,
+        label: `verify: ${parsed.command}`,
+      });
+
+      if (results.length >= 2) {
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  private _buildSandboxVerifyCommands(input: {
+    actionType: string;
+    inlineQuery: string;
+    impactVerifyChecklist: string[];
+    conversationId?: string;
+  }): SandboxVerifyCommand[] {
+    const candidates: string[] = [];
+
+    for (const checklistItem of input.impactVerifyChecklist) {
+      const trimmed = checklistItem.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const checklistCommandRegex = /`([^`]+)`/g;
+      let match: RegExpExecArray | null = checklistCommandRegex.exec(trimmed);
+      while (match) {
+        const commandText = (match[1] || '').trim();
+        if (commandText) {
+          candidates.push(commandText);
+        }
+        match = checklistCommandRegex.exec(trimmed);
+      }
+    }
+
+    const conversation =
+      input.conversationId && this._chatBrainConversations.has(input.conversationId)
+        ? this._chatBrainConversations.get(input.conversationId)
+        : undefined;
+    const assistantHistory = (conversation?.history || [])
+      .filter((entry) => entry.role === 'assistant')
+      .slice(-3);
+    for (const entry of assistantHistory) {
+      candidates.push(...this._extractVerifyCommandCandidatesFromText(entry.content));
+    }
+
+    candidates.push(...this._extractVerifyCommandCandidatesFromText(input.inlineQuery));
+
+    const fallbackByActionType: Record<string, string> = {
+      'doctor-fix': 'rapidkit doctor --fix',
+      'change-impact-lite': 'rapidkit change-impact-lite',
+      'fix-preview-lite': 'rapidkit fix-preview-lite',
+    };
+    if (fallbackByActionType[input.actionType]) {
+      candidates.push(fallbackByActionType[input.actionType]);
+    }
+
+    return this._toSandboxVerifyCommands(candidates);
+  }
+
   private async _sendModulesCatalog() {
     await this._refreshModulesCatalog();
   }
@@ -5512,6 +7037,11 @@ No markdown, no explanation outside the JSON.`;
     this._aiQueryTokenSource?.dispose();
     this._aiQueryTokenSource = undefined;
     this._activeAIQueryRequestId = undefined;
+
+    for (const watcher of this._systemGraphWatcherByPath.values()) {
+      watcher.dispose();
+    }
+    this._systemGraphWatcherByPath.clear();
 
     this._doctorTelemetryRefreshController.dispose();
 

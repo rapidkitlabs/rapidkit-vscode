@@ -10,7 +10,8 @@
     "requiredVitestTests": [
         "src/test/incidentStudioFlowE2E.test.ts",
         "src/test/incidentStudioTelemetry.test.ts",
-        "src/test/releaseStopGateManifest.test.ts"
+        "src/test/releaseStopGateManifest.test.ts",
+        "src/test/incidentReproPackUtils.test.ts"
     ],
     "requiredContents": [
         {
@@ -32,6 +33,34 @@
         {
             "path": "docs/WAVE2_CONTRACT_TEST_MATRIX.md",
             "contains": "impactAssessment"
+        },
+        {
+            "path": "scripts/release-stop-gate.mjs",
+            "contains": "verifyAutoRollbackSuccessRateMin"
+        },
+        {
+            "path": "scripts/release-stop-gate.mjs",
+            "contains": "falseConfidenceRateMax"
+        },
+        {
+            "path": "scripts/release-stop-gate.mjs",
+            "contains": "reproPackShareRateMin"
+        },
+        {
+            "path": "scripts/release-stop-gate.mjs",
+            "contains": "replayToResolutionRateMin"
+        },
+        {
+            "path": "releases/fixtures/wave2-kpi-marker.json",
+            "contains": "rollback_attempted"
+        },
+        {
+            "path": "releases/fixtures/wave2-kpi-marker.json",
+            "contains": "incident_repro_pack_exported"
+        },
+        {
+            "path": "releases/fixtures/wave2-kpi-marker.json",
+            "contains": "incident_replay_memory_enriched"
         }
     ]
 }

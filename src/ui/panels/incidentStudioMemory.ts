@@ -10,6 +10,23 @@ export type IncidentMemoryReuseInput = {
   doctorFixCommands?: string[];
 };
 
+export type IncidentReplayLearningInput = {
+  packId: string;
+  actionType: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  likelyFailureMode?: string;
+  verifyChecklist?: string[];
+  blockedReasons?: string[];
+  relatedFiles?: string[];
+};
+
+export type IncidentMemoryDocument = {
+  context: string;
+  conventions: string[];
+  decisions: string[];
+  lastUpdated: string;
+};
+
 const REUSE_HEADING = 'Worked previously in this workspace:';
 
 function compactLine(value: string): string {
@@ -25,6 +42,10 @@ function shortenLine(value: string, maxLength = 140): string {
     return compacted;
   }
   return `${compacted.slice(0, maxLength - 1).trim()}...`;
+}
+
+function dedupeKeepOrder(lines: string[], maxItems: number): string[] {
+  return [...new Set(lines.map((line) => compactLine(line)).filter(Boolean))].slice(0, maxItems);
 }
 
 export function buildIncidentMemoryReuseSnapshot(
@@ -117,4 +138,46 @@ export function prependIncidentMemoryReuseBlock(
 
   const bulletBlock = snapshot.bullets.map((line) => `- ${line}`).join('\n');
   return `${snapshot.heading}\n${bulletBlock}\n\n${trimmed}`;
+}
+
+export function mergeIncidentReplayLearningIntoMemory(
+  memory: IncidentMemoryDocument,
+  learning: IncidentReplayLearningInput
+): IncidentMemoryDocument {
+  const verifyStep = shortenLine(learning.verifyChecklist?.[0] || '', 120);
+  const blockedReason = shortenLine(learning.blockedReasons?.[0] || '', 110);
+  const relatedFiles = dedupeKeepOrder(learning.relatedFiles || [], 2).join(', ');
+  const summary = shortenLine(
+    [
+      `Incident replay ${learning.packId} (${learning.riskLevel})`,
+      learning.likelyFailureMode
+        ? `resolved ${learning.likelyFailureMode}`
+        : `verified ${learning.actionType}`,
+      verifyStep ? `Verify with: ${verifyStep}` : '',
+      blockedReason ? `Watch for: ${blockedReason}` : '',
+      relatedFiles ? `Files: ${relatedFiles}` : '',
+    ]
+      .filter(Boolean)
+      .join(' — '),
+    220
+  );
+
+  if (!summary) {
+    return memory;
+  }
+
+  const nextDecisions = dedupeKeepOrder([summary, ...(memory.decisions || [])], 12);
+  const nextConventions = verifyStep
+    ? dedupeKeepOrder(
+        [`Replay verify-first rule: ${verifyStep}`, ...(memory.conventions || [])],
+        12
+      )
+    : memory.conventions || [];
+
+  return {
+    context: compactLine(memory.context || ''),
+    conventions: nextConventions,
+    decisions: nextDecisions,
+    lastUpdated: memory.lastUpdated,
+  };
 }
