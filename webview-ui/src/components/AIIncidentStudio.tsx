@@ -253,6 +253,11 @@ interface AIIncidentStudioProps {
     onExportSandboxSimulationEvidence?: (
         sandboxSimulation: NonNullable<NormalizedIncidentActionResultPayload['sandboxSimulation']>
     ) => void;
+    onExportReleaseReadinessCommander?: (
+        releaseReadinessCommander: NonNullable<
+            NormalizedIncidentActionResultPayload['releaseReadinessCommander']
+        >
+    ) => void;
     onImportIncidentReproPack?: () => void;
     executingCommand?: string | null;
     primaryCtaMode?: PrimaryCtaMode;
@@ -588,6 +593,16 @@ function intentFromBoardAction(action: { id: string; label: string; actionType: 
             actionId: action.id,
         };
     }
+    if (action.actionType === 'release-readiness-commander') {
+        return {
+            id: action.id,
+            label: 'Generate Go/No-Go decision',
+            detail: 'Build a shareable release-readiness artifact from verify and runtime evidence.',
+            kind: 'board-action',
+            actionType: action.actionType,
+            actionId: action.id,
+        };
+    }
 
     return {
         id: action.id,
@@ -632,6 +647,7 @@ export function AIIncidentStudio({
     onApplyPatch,
     onExportIncidentReproPack,
     onExportSandboxSimulationEvidence,
+    onExportReleaseReadinessCommander,
     onImportIncidentReproPack,
     executingCommand,
     primaryCtaMode = 'single',
@@ -2410,6 +2426,54 @@ export function AIIncidentStudio({
                                                     }}
                                                 >
                                                     Replay in Incident Studio
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                    {chatBrainActionResult.releaseReadinessCommander ? (
+                                        <div
+                                            className={`incident-rollback-evidence is-${chatBrainActionResult.releaseReadinessCommander.decision === 'go' ? 'passed' : 'failed'}`}
+                                        >
+                                            <strong>Release readiness commander</strong>
+                                            <p>
+                                                Decision: {chatBrainActionResult.releaseReadinessCommander.decision.toUpperCase()}
+                                                {' · Confidence: '}
+                                                {chatBrainActionResult.releaseReadinessCommander.confidence}%
+                                            </p>
+                                            <p>
+                                                Verify contract: {chatBrainActionResult.releaseReadinessCommander.evidence.verifyPackContractStatus}
+                                                {' · Sandbox: '}
+                                                {chatBrainActionResult.releaseReadinessCommander.evidence.sandboxStatus}
+                                            </p>
+                                            <p>
+                                                Scope known: {chatBrainActionResult.releaseReadinessCommander.evidence.scopeKnown ? 'yes' : 'no'}
+                                                {' · Verify path: '}
+                                                {chatBrainActionResult.releaseReadinessCommander.evidence.verifyPathPresent ? 'yes' : 'no'}
+                                                {' · Rollback path: '}
+                                                {chatBrainActionResult.releaseReadinessCommander.evidence.rollbackPathPresent ? 'yes' : 'no'}
+                                            </p>
+                                            {chatBrainActionResult.releaseReadinessCommander.blockingReasons.length > 0 ? (
+                                                <p>
+                                                    Blocking reasons:{' '}
+                                                    {chatBrainActionResult.releaseReadinessCommander.blockingReasons
+                                                        .slice(0, 4)
+                                                        .join(', ')}
+                                                </p>
+                                            ) : null}
+                                            <p>{chatBrainActionResult.releaseReadinessCommander.summary.goNoGoRationale}</p>
+                                            <p>{chatBrainActionResult.releaseReadinessCommander.summary.recommendedNextStep}</p>
+                                            <div className="incident-command-actions">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn"
+                                                    onClick={() => {
+                                                        const artifact = chatBrainActionResult.releaseReadinessCommander;
+                                                        if (artifact) {
+                                                            onExportReleaseReadinessCommander?.(artifact);
+                                                        }
+                                                    }}
+                                                >
+                                                    Export Go/No-Go artifact
                                                 </button>
                                             </div>
                                         </div>

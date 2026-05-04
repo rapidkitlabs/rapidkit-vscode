@@ -595,6 +595,12 @@
         "title": "Install / Update Module",
         "category": "Workspai",
         "icon": "$(package)"
+      },
+      {
+        "command": "workspai.aiReleaseReadinessCommander",
+        "title": "Release Readiness Commander (Go/No-Go)",
+        "category": "Workspai AI",
+        "icon": "$(shield)"
       }
     ],
     "viewsContainers": {

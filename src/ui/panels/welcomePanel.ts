@@ -22,6 +22,8 @@ import {
   type ProjectSystemGraphWatcherHandle,
 } from '../../core/systemGraphIndexer';
 import { runSandboxSimulation, type SandboxVerifyCommand } from '../../core/sandboxSimulation';
+import { buildVerifyPackOutputContract } from '../../core/verifyPackContract';
+import { buildVerifyPackPlan, toVerifyPackCommandStrings } from '../../core/verifyPackProfiles';
 import {
   extractPatchesFromAiResponse,
   applyPatches,
@@ -1284,6 +1286,9 @@ No markdown, no explanation outside the JSON.`;
           case 'exportSandboxSimulationEvidence':
             await this._handleExportSandboxSimulationEvidence(message.data, protocolRequestId);
             break;
+          case 'exportReleaseReadinessCommander':
+            await this._handleExportReleaseReadinessCommander(message.data, protocolRequestId);
+            break;
           case 'importIncidentReproPack':
             await this._handleImportIncidentReproPack(protocolRequestId);
             break;
@@ -2469,8 +2474,19 @@ No markdown, no explanation outside the JSON.`;
     | 'doctor-fix'
     | 'recipe-pack'
     | 'incident-repro-pack'
+    | 'release-readiness-commander'
     | 'orchestrate' {
     const normalized = message.toLowerCase();
+    if (
+      normalized.includes('release readiness') ||
+      normalized.includes('go/no-go') ||
+      normalized.includes('go no-go') ||
+      normalized.includes('ship readiness') ||
+      normalized.includes('release gate') ||
+      normalized.includes('commander artifact')
+    ) {
+      return 'release-readiness-commander';
+    }
     if (
       normalized.includes('error') ||
       normalized.includes('terminal') ||
@@ -2680,6 +2696,13 @@ No markdown, no explanation outside the JSON.`;
         'What configuration do I need after adding this?',
         'Show me how to test this module is working',
         'What other modules pair well with this one?',
+      ];
+    }
+    if (actionType === 'release-readiness-commander' || /release|ship|go\/no-go/i.test(message)) {
+      return [
+        'Export the Go/No-Go artifact for team signoff',
+        'Show me blocking reasons ranked by risk',
+        'Generate the exact release-stop-gate command for this decision',
       ];
     }
     return [
@@ -3200,6 +3223,119 @@ No markdown, no explanation outside the JSON.`;
       },
       exportHint:
         'Use share/export flow for secure handoff: keep redaction enabled and include replay checklist + blocked reasons.',
+    };
+  }
+
+  private _buildReleaseReadinessCommanderArtifact(input: {
+    actionType: string;
+    actionId: string;
+    workspacePath?: string;
+    confidence: number;
+    verifySuccess: boolean;
+    releaseGateEvidence: {
+      scopeKnown: boolean;
+      verifyPathPresent: boolean;
+      rollbackPathPresent: boolean;
+      blockedReasons: string[];
+    };
+    sandboxEvidence?: {
+      status: 'passed' | 'failed' | 'skipped';
+    };
+    doctorEvidence?: {
+      errors?: number;
+      warnings?: number;
+    };
+  }):
+    | {
+        artifactId: string;
+        schemaVersion: 'v1';
+        generatedAt: string;
+        workspacePath: string;
+        actionId: string;
+        decision: 'go' | 'no-go';
+        confidence: number;
+        blockingReasons: string[];
+        evidence: {
+          verifyPackContractStatus: 'passed' | 'failed' | 'skipped' | 'unavailable';
+          sandboxStatus: 'passed' | 'failed' | 'skipped' | 'unavailable';
+          doctorErrors: number;
+          doctorWarnings: number;
+          scopeKnown: boolean;
+          verifyPathPresent: boolean;
+          rollbackPathPresent: boolean;
+        };
+        summary: {
+          goNoGoRationale: string;
+          recommendedNextStep: string;
+        };
+      }
+    | undefined {
+    if (input.actionType !== 'release-readiness-commander' || !input.workspacePath) {
+      return undefined;
+    }
+
+    const verifyPackContractStatus =
+      input.sandboxEvidence?.status === 'passed' ||
+      input.sandboxEvidence?.status === 'failed' ||
+      input.sandboxEvidence?.status === 'skipped'
+        ? input.sandboxEvidence.status
+        : 'unavailable';
+
+    const evidence = {
+      verifyPackContractStatus,
+      sandboxStatus: verifyPackContractStatus,
+      doctorErrors: Math.max(0, input.doctorEvidence?.errors ?? 0),
+      doctorWarnings: Math.max(0, input.doctorEvidence?.warnings ?? 0),
+      scopeKnown: input.releaseGateEvidence.scopeKnown,
+      verifyPathPresent: input.releaseGateEvidence.verifyPathPresent,
+      rollbackPathPresent: input.releaseGateEvidence.rollbackPathPresent,
+    } as const;
+
+    const blockingReasons = Array.from(
+      new Set([
+        ...input.releaseGateEvidence.blockedReasons,
+        ...(evidence.doctorErrors > 0 ? [`Doctor reported ${evidence.doctorErrors} error(s)`] : []),
+        ...(evidence.verifyPackContractStatus === 'failed'
+          ? ['Verify-pack contract status is failed']
+          : []),
+        ...(!evidence.scopeKnown ? ['Affected scope is unknown'] : []),
+        ...(!evidence.verifyPathPresent ? ['Verify path is missing'] : []),
+      ])
+    ).slice(0, 12);
+
+    const decision: 'go' | 'no-go' =
+      input.verifySuccess &&
+      blockingReasons.length === 0 &&
+      evidence.verifyPackContractStatus !== 'failed'
+        ? 'go'
+        : 'no-go';
+
+    const goNoGoRationale =
+      decision === 'go'
+        ? 'All release-readiness checks are green with no unresolved blockers.'
+        : 'One or more release-readiness blockers are unresolved; ship should remain blocked.';
+
+    const recommendedNextStep =
+      decision === 'go'
+        ? 'Proceed with release gate execution and keep rollback path documented in the release note.'
+        : blockingReasons[0]
+          ? `Resolve blocker: ${blockingReasons[0]}, then regenerate the commander artifact.`
+          : 'Collect missing evidence and rerun release readiness commander.';
+
+    return {
+      artifactId: `release-readiness-${input.actionId}-${Date.now().toString(36)}`,
+      schemaVersion: 'v1',
+      generatedAt: new Date().toISOString(),
+      workspacePath: input.workspacePath,
+      actionId: input.actionId,
+      decision,
+      confidence: Math.max(0, Math.min(100, Math.round(input.confidence))),
+      blockingReasons,
+      evidence,
+      summary: {
+        goNoGoRationale,
+        recommendedNextStep,
+      },
     };
   }
 
@@ -4600,6 +4736,16 @@ No markdown, no explanation outside the JSON.`;
                 requiresImpactReview: actionPolicy.requiresImpactReview,
                 requiresVerifyPath: actionPolicy.requiresVerifyPath,
               },
+              ...(actionType !== 'release-readiness-commander'
+                ? [
+                    {
+                      id: `action-release-readiness-${Date.now()}`,
+                      label: 'Generate release readiness Go/No-Go',
+                      actionType: 'release-readiness-commander',
+                      riskLevel: 'medium',
+                    },
+                  ]
+                : []),
               ...(actionType === 'terminal-bridge'
                 ? [
                     {
@@ -4866,6 +5012,20 @@ No markdown, no explanation outside the JSON.`;
       return parts.filter(Boolean).join('\n');
     }
 
+    // ── release-readiness-commander (KF9) ───────────────────────────────────
+    if (actionType === 'release-readiness-commander') {
+      return [
+        'Build a release readiness decision for this workspace.',
+        'Use strict verify-first and evidence-first policy.',
+        '',
+        'Return exactly these sections:',
+        '1) Decision: GO or NO-GO',
+        '2) Blocking reasons',
+        '3) Evidence summary (verify/sandbox/doctor/scope)',
+        '4) Recommended next safe step',
+      ].join('\n');
+    }
+
     // ── generic/orchestrate fallback ──────────────────────────────────────────
     const label = typeof payload?.label === 'string' ? payload.label : actionType;
     return `Perform the following action for my workspace: ${label}. Analyze the current state and provide specific, actionable guidance.`;
@@ -5107,6 +5267,8 @@ No markdown, no explanation outside the JSON.`;
               inlineQuery,
               impactVerifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
               conversationId,
+              projectType: data?.projectType,
+              projectPath: data?.projectPath,
             }),
             rollbackHint:
               rollbackEvidence?.suggestedNextStep ||
@@ -5136,6 +5298,16 @@ No markdown, no explanation outside the JSON.`;
       impactAssessment: wave2Contracts.impactAssessment,
       releaseGateEvidence: wave2Contracts.releaseGateEvidence,
       diagnosisEvidence,
+    });
+    const releaseReadinessCommanderArtifact = this._buildReleaseReadinessCommanderArtifact({
+      actionType,
+      actionId,
+      workspacePath: activeWorkspacePath,
+      confidence: diagnosisEvidence.confidence,
+      verifySuccess: effectiveVerifySuccess,
+      releaseGateEvidence: wave2Contracts.releaseGateEvidence,
+      sandboxEvidence,
+      doctorEvidence,
     });
 
     if (conv && wave2Contracts.predictiveWarning) {
@@ -5437,6 +5609,7 @@ No markdown, no explanation outside the JSON.`;
         rollback: rollbackEvidence,
         sandboxSimulation: sandboxEvidence,
         incidentReproPack: incidentReproPackEvidence,
+        releaseReadinessCommander: releaseReadinessCommanderArtifact,
         multiFilePatch: multiFilePatchResult,
         systemGraphSnapshot: wave2Contracts.systemGraphSnapshot,
         impactAssessment: wave2Contracts.impactAssessment,
@@ -5644,9 +5817,34 @@ No markdown, no explanation outside the JSON.`;
       },
     };
 
+    const verifyPackContract = buildVerifyPackOutputContract({
+      producer: 'sandbox-simulation',
+      generatedAt:
+        typeof sandboxSimulation.completedAt === 'string' && sandboxSimulation.completedAt.trim()
+          ? sandboxSimulation.completedAt
+          : new Date().toISOString(),
+      commands: redactedCommandResults.map((result) => ({
+        label: result.label,
+        command: result.command,
+        args: result.args,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+      })),
+    });
+
+    const verifyPackContractFileName = `${sandboxSimulation.actionId}-verify-pack-contract.json`;
+    const verifyPackContractUri = vscode.Uri.file(
+      path.join(path.dirname(outputUri.fsPath), verifyPackContractFileName)
+    );
+
     await vscode.workspace.fs.writeFile(
       outputUri,
       Buffer.from(JSON.stringify(exportPayload, null, 2), 'utf8')
+    );
+
+    await vscode.workspace.fs.writeFile(
+      verifyPackContractUri,
+      Buffer.from(JSON.stringify(verifyPackContract, null, 2), 'utf8')
     );
 
     await WorkspaceUsageTracker.getInstance().trackCommandEvent(
@@ -5655,6 +5853,7 @@ No markdown, no explanation outside the JSON.`;
       {
         actionId: sandboxSimulation.actionId,
         status: exportPayload.sandbox_simulation_evidence.status,
+        verifyPackContractStatus: verifyPackContract.overallStatus,
         mode: exportPayload.sandbox_simulation_evidence.mode,
         safeToApply: exportPayload.sandbox_simulation_evidence.safeToApply,
         commandCount: exportPayload.sandbox_simulation_evidence.summary.commandCount,
@@ -5662,16 +5861,196 @@ No markdown, no explanation outside the JSON.`;
       }
     );
 
-    vscode.window.showInformationMessage(
-      `Sandbox simulation evidence exported: ${outputUri.fsPath}`
+    const gateCommand = `node scripts/release-stop-gate.mjs --verify-pack-contract "${verifyPackContractUri.fsPath}"`;
+    const gateEnvForm = `WORKSPAI_VERIFY_PACK_CONTRACT_PATH="${verifyPackContractUri.fsPath}"`;
+    const exportMessage = `Sandbox simulation evidence exported: ${outputUri.fsPath} (contract: ${verifyPackContractUri.fsPath})`;
+    const selectedAction = await vscode.window.showInformationMessage(
+      exportMessage,
+      'Copy Contract Path',
+      'Copy Gate Command',
+      'Copy Env Form'
     );
+
+    if (selectedAction === 'Copy Contract Path') {
+      await vscode.env.clipboard.writeText(verifyPackContractUri.fsPath);
+    } else if (selectedAction === 'Copy Gate Command') {
+      await vscode.env.clipboard.writeText(gateCommand);
+    } else if (selectedAction === 'Copy Env Form') {
+      await vscode.env.clipboard.writeText(gateEnvForm);
+    }
 
     this._panel.webview.postMessage({
       command: 'aiChatActionProgress',
       data: {
         stage: 'simulation-exported',
         progress: 100,
-        note: `Simulation evidence exported: ${path.basename(outputUri.fsPath)}`,
+        note: `Simulation evidence exported: ${path.basename(outputUri.fsPath)} | Contract: ${path.basename(verifyPackContractUri.fsPath)}`,
+      },
+      meta: { requestId, version: 'v1' },
+    });
+  }
+
+  private async _handleExportReleaseReadinessCommander(
+    data: any,
+    requestId?: string
+  ): Promise<void> {
+    const artifact =
+      data &&
+      typeof data === 'object' &&
+      data.releaseReadinessCommander &&
+      typeof data.releaseReadinessCommander === 'object'
+        ? (data.releaseReadinessCommander as {
+            artifactId?: string;
+            schemaVersion?: 'v1';
+            generatedAt?: string;
+            workspacePath?: string;
+            actionId?: string;
+            decision?: 'go' | 'no-go';
+            confidence?: number;
+            blockingReasons?: string[];
+            evidence?: {
+              verifyPackContractStatus?: 'passed' | 'failed' | 'skipped' | 'unavailable';
+              sandboxStatus?: 'passed' | 'failed' | 'skipped' | 'unavailable';
+              doctorErrors?: number;
+              doctorWarnings?: number;
+              scopeKnown?: boolean;
+              verifyPathPresent?: boolean;
+              rollbackPathPresent?: boolean;
+            };
+            summary?: {
+              goNoGoRationale?: string;
+              recommendedNextStep?: string;
+            };
+          })
+        : undefined;
+
+    if (!artifact?.artifactId) {
+      vscode.window.showWarningMessage(
+        'No release readiness commander artifact is available to export.'
+      );
+      return;
+    }
+
+    const workspacePathInput =
+      typeof data?.workspacePath === 'string' && data.workspacePath.trim()
+        ? data.workspacePath.trim()
+        : typeof artifact.workspacePath === 'string' && artifact.workspacePath.trim()
+          ? artifact.workspacePath.trim()
+          : undefined;
+
+    const defaultFileName = `${artifact.artifactId}.json`;
+    const defaultUri = workspacePathInput
+      ? vscode.Uri.file(path.join(workspacePathInput, '.rapidkit', 'reports', defaultFileName))
+      : undefined;
+
+    const outputUri = await vscode.window.showSaveDialog({
+      title: 'Export Release Readiness Commander Artifact',
+      saveLabel: 'Export Artifact',
+      defaultUri,
+      filters: {
+        JSON: ['json'],
+      },
+    });
+
+    if (!outputUri) {
+      return;
+    }
+
+    const payload = {
+      release_readiness_commander: {
+        schemaVersion: 'v1',
+        artifactId: artifact.artifactId,
+        generatedAt:
+          typeof artifact.generatedAt === 'string' && artifact.generatedAt.trim()
+            ? artifact.generatedAt
+            : new Date().toISOString(),
+        workspacePath: workspacePathInput || '',
+        actionId: artifact.actionId || 'unknown-action',
+        decision: artifact.decision === 'go' ? 'go' : 'no-go',
+        confidence:
+          typeof artifact.confidence === 'number' && Number.isFinite(artifact.confidence)
+            ? Math.max(0, Math.min(100, Math.round(artifact.confidence)))
+            : 0,
+        blockingReasons: Array.isArray(artifact.blockingReasons)
+          ? artifact.blockingReasons
+              .filter((item): item is string => typeof item === 'string')
+              .slice(0, 20)
+          : [],
+        evidence: {
+          verifyPackContractStatus:
+            artifact.evidence?.verifyPackContractStatus === 'passed' ||
+            artifact.evidence?.verifyPackContractStatus === 'failed' ||
+            artifact.evidence?.verifyPackContractStatus === 'skipped' ||
+            artifact.evidence?.verifyPackContractStatus === 'unavailable'
+              ? artifact.evidence.verifyPackContractStatus
+              : 'unavailable',
+          sandboxStatus:
+            artifact.evidence?.sandboxStatus === 'passed' ||
+            artifact.evidence?.sandboxStatus === 'failed' ||
+            artifact.evidence?.sandboxStatus === 'skipped' ||
+            artifact.evidence?.sandboxStatus === 'unavailable'
+              ? artifact.evidence.sandboxStatus
+              : 'unavailable',
+          doctorErrors:
+            typeof artifact.evidence?.doctorErrors === 'number'
+              ? Math.max(0, Math.floor(artifact.evidence.doctorErrors))
+              : 0,
+          doctorWarnings:
+            typeof artifact.evidence?.doctorWarnings === 'number'
+              ? Math.max(0, Math.floor(artifact.evidence.doctorWarnings))
+              : 0,
+          scopeKnown: artifact.evidence?.scopeKnown === true,
+          verifyPathPresent: artifact.evidence?.verifyPathPresent === true,
+          rollbackPathPresent: artifact.evidence?.rollbackPathPresent === true,
+        },
+        summary: {
+          goNoGoRationale:
+            typeof artifact.summary?.goNoGoRationale === 'string'
+              ? artifact.summary.goNoGoRationale
+              : 'Release readiness rationale unavailable.',
+          recommendedNextStep:
+            typeof artifact.summary?.recommendedNextStep === 'string'
+              ? artifact.summary.recommendedNextStep
+              : 'Resolve blockers and regenerate artifact.',
+        },
+      },
+    };
+
+    await vscode.workspace.fs.writeFile(
+      outputUri,
+      Buffer.from(JSON.stringify(payload, null, 2), 'utf8')
+    );
+
+    await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+      'workspai.studio.release_readiness_artifact_exported',
+      workspacePathInput,
+      {
+        artifactId: payload.release_readiness_commander.artifactId,
+        decision: payload.release_readiness_commander.decision,
+        blockingReasonCount: payload.release_readiness_commander.blockingReasons.length,
+      }
+    );
+
+    const gateCommand = `node scripts/release-stop-gate.mjs --release-readiness-commander "${outputUri.fsPath}"`;
+
+    const selectedAction = await vscode.window.showInformationMessage(
+      `Release readiness artifact exported: ${outputUri.fsPath}`,
+      'Copy Gate Command',
+      'Copy Artifact Path'
+    );
+
+    if (selectedAction === 'Copy Gate Command') {
+      await vscode.env.clipboard.writeText(gateCommand);
+    } else if (selectedAction === 'Copy Artifact Path') {
+      await vscode.env.clipboard.writeText(outputUri.fsPath);
+    }
+
+    this._panel.webview.postMessage({
+      command: 'aiChatActionProgress',
+      data: {
+        stage: 'release-readiness-exported',
+        progress: 100,
+        note: `Release readiness artifact exported: ${path.basename(outputUri.fsPath)}`,
       },
       meta: { requestId, version: 'v1' },
     });
@@ -6443,6 +6822,8 @@ No markdown, no explanation outside the JSON.`;
     inlineQuery: string;
     impactVerifyChecklist: string[];
     conversationId?: string;
+    projectType?: string;
+    projectPath?: string;
   }): SandboxVerifyCommand[] {
     const candidates: string[] = [];
 
@@ -6475,6 +6856,13 @@ No markdown, no explanation outside the JSON.`;
     }
 
     candidates.push(...this._extractVerifyCommandCandidatesFromText(input.inlineQuery));
+
+    // Add deterministic verify-pack profile commands as stable fallback candidates.
+    const verifyPackPlan = buildVerifyPackPlan({
+      projectType: input.projectType || WelcomePanel._selectedProject?.type,
+      projectPath: input.projectPath || WelcomePanel._selectedProject?.path,
+    });
+    candidates.push(...toVerifyPackCommandStrings(verifyPackPlan));
 
     const fallbackByActionType: Record<string, string> = {
       'doctor-fix': 'rapidkit doctor --fix',

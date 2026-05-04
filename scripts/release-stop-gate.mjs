@@ -32,6 +32,18 @@ function parseArgs(argv) {
     skipKpi: false,
     skipContractChecks: false,
     manifest: '',
+    claimChecklistPath:
+      process.env.WORKSPAI_CLAIM_CHECKLIST_PATH ||
+      path.resolve(process.cwd(), '..', 'Docs', 'workspai', 'Final', 'WORKSPAI_UNIFIED_FINAL_FEATURE_CHECKLIST.md'),
+    enforceClaimChecklist: false,
+    verifyPackContract:
+      process.env.WORKSPAI_VERIFY_PACK_CONTRACT ||
+      process.env.WORKSPAI_VERIFY_PACK_CONTRACT_PATH ||
+      '',
+    releaseReadinessCommander:
+      process.env.WORKSPAI_RELEASE_READINESS_COMMANDER ||
+      process.env.WORKSPAI_RELEASE_READINESS_COMMANDER_PATH ||
+      '',
     marker: process.env.WORKSPAI_GATE_MARKER || process.env.WORKSPAI_GATE_MARKER_PATH || '',
     verifyPhaseReachMin: parseEnvNumber(
       ['WORKSPAI_GATE_VERIFY_MIN', 'WORKSPAI_GATE_VERIFY_PHASE_REACH_MIN'],
@@ -104,6 +116,29 @@ function parseArgs(argv) {
     if (arg === '--marker') {
       options.marker = argv[i + 1] || '';
       i += 1;
+      continue;
+    }
+
+    if (arg === '--verify-pack-contract') {
+      options.verifyPackContract = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--release-readiness-commander') {
+      options.releaseReadinessCommander = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--claim-checklist') {
+      options.claimChecklistPath = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--enforce-claim-checklist') {
+      options.enforceClaimChecklist = true;
       continue;
     }
 
@@ -269,6 +304,157 @@ function runContractAndParityChecks(testFiles = DEFAULT_TEST_FILES) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+}
+
+function buildVerifyPackContractStatus(contractPath) {
+  const resolvedPath = path.resolve(contractPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      contractPath: resolvedPath,
+      message: `Verify-pack contract not found: ${resolvedPath}`,
+    };
+  }
+
+  const payload = readJson(resolvedPath);
+  const hasV1Schema = payload?.schemaVersion === 'v1';
+  const overallStatus = payload?.overallStatus;
+  const isOverallStatusValid =
+    overallStatus === 'passed' || overallStatus === 'failed' || overallStatus === 'skipped';
+  const commands = Array.isArray(payload?.commands) ? payload.commands : null;
+  const summary = payload?.summary;
+  const hasSummary =
+    summary &&
+    typeof summary.totalCommands === 'number' &&
+    typeof summary.passedCommands === 'number' &&
+    typeof summary.failedCommands === 'number' &&
+    typeof summary.totalDurationMs === 'number';
+
+  if (!hasV1Schema || !isOverallStatusValid || !commands || !hasSummary) {
+    return {
+      ok: false,
+      contractPath: resolvedPath,
+      message: 'Verify-pack contract payload is malformed or not schema v1.',
+    };
+  }
+
+  return {
+    ok: overallStatus === 'passed',
+    contractPath: resolvedPath,
+    overallStatus,
+    summary,
+    message:
+      overallStatus === 'passed'
+        ? 'Verify-pack contract passed.'
+        : `Verify-pack contract status is ${overallStatus}.`,
+  };
+}
+
+function buildReleaseReadinessCommanderStatus(artifactPath) {
+  const resolvedPath = path.resolve(artifactPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      artifactPath: resolvedPath,
+      message: `Release readiness commander artifact not found: ${resolvedPath}`,
+    };
+  }
+
+  const payload = readJson(resolvedPath);
+  const artifact = payload?.release_readiness_commander;
+  const decision = artifact?.decision;
+  const schemaVersion = artifact?.schemaVersion;
+  const confidence = artifact?.confidence;
+  const evidence = artifact?.evidence;
+  const hasEvidence =
+    evidence &&
+    typeof evidence === 'object' &&
+    typeof evidence.scopeKnown === 'boolean' &&
+    typeof evidence.verifyPathPresent === 'boolean' &&
+    typeof evidence.rollbackPathPresent === 'boolean';
+  const blockingReasons = Array.isArray(artifact?.blockingReasons)
+    ? artifact.blockingReasons.filter((item) => typeof item === 'string')
+    : [];
+
+  if (
+    schemaVersion !== 'v1' ||
+    (decision !== 'go' && decision !== 'no-go') ||
+    !Number.isFinite(confidence) ||
+    !hasEvidence
+  ) {
+    return {
+      ok: false,
+      artifactPath: resolvedPath,
+      message: 'Release readiness commander artifact is malformed or unsupported.',
+    };
+  }
+
+  return {
+    ok: decision === 'go',
+    artifactPath: resolvedPath,
+    decision,
+    confidence,
+    blockingReasonCount: blockingReasons.length,
+    message:
+      decision === 'go'
+        ? 'Release readiness commander decision is GO.'
+        : 'Release readiness commander decision is NO-GO.',
+  };
+}
+
+function listUncheckedCheckboxes(markdown, sectionTitle) {
+  const lines = markdown.split(/\r?\n/);
+  const sectionIndex = lines.findIndex((line) => line.trim() === sectionTitle.trim());
+  if (sectionIndex < 0) {
+    return [];
+  }
+
+  const unchecked = [];
+  for (let i = sectionIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^##\s+/.test(line) || /^###\s+/.test(line)) {
+      break;
+    }
+
+    const match = line.match(/^\s*- \[ \] (.+)$/);
+    if (match) {
+      unchecked.push(match[1].trim());
+    }
+  }
+
+  return unchecked;
+}
+
+function buildClaimChecklistStatus(checklistPath) {
+  const resolvedPath = path.resolve(checklistPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      checklistPath: resolvedPath,
+      finalMaturityUnchecked: [],
+      wave1ExitUnchecked: [],
+      message: `Claim checklist not found: ${resolvedPath}`,
+    };
+  }
+
+  const markdown = fs.readFileSync(resolvedPath, 'utf-8');
+  const finalMaturityUnchecked = listUncheckedCheckboxes(
+    markdown,
+    '## 4) Final Maturity Definition (Cross-Platform + IR/BYOP)'
+  );
+  const wave1ExitUnchecked = listUncheckedCheckboxes(markdown, '### Wave 1 Exit Package');
+  const allUnchecked = [...finalMaturityUnchecked, ...wave1ExitUnchecked];
+
+  return {
+    ok: allUnchecked.length === 0,
+    checklistPath: resolvedPath,
+    finalMaturityUnchecked,
+    wave1ExitUnchecked,
+    message:
+      allUnchecked.length === 0
+        ? 'Claim checklist gates are fully checked.'
+        : `Claim checklist has ${allUnchecked.length} unchecked gate(s).`,
+  };
 }
 
 function percent(numerator, denominator) {
@@ -778,6 +964,45 @@ function main() {
   } else {
     console.log('[release-stop-gate] Running contract/parity checks...');
     runContractAndParityChecks(testFiles);
+  }
+
+  if (options.verifyPackContract) {
+    const verifyPackContractStatus = buildVerifyPackContractStatus(options.verifyPackContract);
+    console.log('[release-stop-gate] Verify-pack contract result:');
+    console.log(JSON.stringify(verifyPackContractStatus, null, 2));
+
+    if (!verifyPackContractStatus.ok) {
+      console.error(
+        `[release-stop-gate] Release blocked: ${verifyPackContractStatus.message}`
+      );
+      process.exit(1);
+    }
+  }
+
+  if (options.releaseReadinessCommander) {
+    const commanderStatus = buildReleaseReadinessCommanderStatus(options.releaseReadinessCommander);
+    console.log('[release-stop-gate] Release readiness commander result:');
+    console.log(JSON.stringify(commanderStatus, null, 2));
+
+    if (!commanderStatus.ok) {
+      console.error(
+        `[release-stop-gate] Release blocked: ${commanderStatus.message}`
+      );
+      process.exit(1);
+    }
+  }
+
+  if (options.claimChecklistPath) {
+    const claimChecklistStatus = buildClaimChecklistStatus(options.claimChecklistPath);
+    console.log('[release-stop-gate] Claim checklist result:');
+    console.log(JSON.stringify(claimChecklistStatus, null, 2));
+
+    if (options.enforceClaimChecklist && !claimChecklistStatus.ok) {
+      console.error(
+        `[release-stop-gate] Release blocked: ${claimChecklistStatus.message}`
+      );
+      process.exit(1);
+    }
   }
 
   if (options.skipKpi) {

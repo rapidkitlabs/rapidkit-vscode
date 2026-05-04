@@ -126,6 +126,30 @@ export type IncidentReproPackEvidence = {
   exportHint?: string;
 };
 
+export type IncidentReleaseReadinessCommanderArtifact = {
+  artifactId: string;
+  schemaVersion: 'v1';
+  generatedAt: string;
+  workspacePath: string;
+  actionId: string;
+  decision: 'go' | 'no-go';
+  confidence: number;
+  blockingReasons: string[];
+  evidence: {
+    verifyPackContractStatus: 'passed' | 'failed' | 'skipped' | 'unavailable';
+    sandboxStatus: 'passed' | 'failed' | 'skipped' | 'unavailable';
+    doctorErrors: number;
+    doctorWarnings: number;
+    scopeKnown: boolean;
+    verifyPathPresent: boolean;
+    rollbackPathPresent: boolean;
+  };
+  summary: {
+    goNoGoRationale: string;
+    recommendedNextStep: string;
+  };
+};
+
 // ─── Multi-file patch apply/reject workflow (A02 / A03) ─────────────────────
 
 export type FilePatchStatus = 'pending' | 'accepted' | 'rejected' | 'applied' | 'failed';
@@ -173,6 +197,7 @@ export type NormalizedIncidentActionResultPayload = {
   multiFilePatch?: MultiFilePatchResult;
   sandboxSimulation?: IncidentSandboxSimulationEvidence;
   incidentReproPack?: IncidentReproPackEvidence;
+  releaseReadinessCommander?: IncidentReleaseReadinessCommanderArtifact;
 };
 
 export type NormalizedIncidentActionProgressPayload = {
@@ -509,6 +534,7 @@ export function normalizeIncidentActionResultPayload(
   const rollbackRecord = asRecord(record.rollback);
   const sandboxRecord = asRecord(record.sandboxSimulation);
   const reproPackRecord = asRecord(record.incidentReproPack);
+  const commanderRecord = asRecord(record.releaseReadinessCommander);
 
   const verifyPolicy: IncidentVerifyPolicy = {
     requiresVerifyPath: asOptionalBoolean(verifyPolicyRecord.requiresVerifyPath),
@@ -715,6 +741,66 @@ export function normalizeIncidentActionResultPayload(
     typeof reproPackRecord.actionId === 'string' ||
     typeof reproPackRecord.exportHint === 'string';
 
+  const commanderDecision = cleanText(commanderRecord.decision)?.toLowerCase();
+  const commanderEvidenceRecord = asRecord(commanderRecord.evidence);
+  const commanderSummaryRecord = asRecord(commanderRecord.summary);
+  const releaseReadinessCommander: IncidentReleaseReadinessCommanderArtifact = {
+    artifactId:
+      cleanText(commanderRecord.artifactId) ||
+      `release-readiness-${cleanText(record.actionId) || Date.now().toString(36)}`,
+    schemaVersion: 'v1',
+    generatedAt: cleanText(commanderRecord.generatedAt) || new Date().toISOString(),
+    workspacePath: cleanText(commanderRecord.workspacePath) || '',
+    actionId: cleanText(commanderRecord.actionId) || cleanText(record.actionId) || 'unknown-action',
+    decision:
+      commanderDecision === 'go' || commanderDecision === 'no-go' ? commanderDecision : 'no-go',
+    confidence: clampNumber(asNumber(commanderRecord.confidence, 0), 0, 100),
+    blockingReasons: sanitizeStringArray(commanderRecord.blockingReasons, 240, 16),
+    evidence: {
+      verifyPackContractStatus:
+        cleanText(commanderEvidenceRecord.verifyPackContractStatus) === 'passed' ||
+        cleanText(commanderEvidenceRecord.verifyPackContractStatus) === 'failed' ||
+        cleanText(commanderEvidenceRecord.verifyPackContractStatus) === 'skipped' ||
+        cleanText(commanderEvidenceRecord.verifyPackContractStatus) === 'unavailable'
+          ? (cleanText(commanderEvidenceRecord.verifyPackContractStatus) as
+              | 'passed'
+              | 'failed'
+              | 'skipped'
+              | 'unavailable')
+          : 'unavailable',
+      sandboxStatus:
+        cleanText(commanderEvidenceRecord.sandboxStatus) === 'passed' ||
+        cleanText(commanderEvidenceRecord.sandboxStatus) === 'failed' ||
+        cleanText(commanderEvidenceRecord.sandboxStatus) === 'skipped' ||
+        cleanText(commanderEvidenceRecord.sandboxStatus) === 'unavailable'
+          ? (cleanText(commanderEvidenceRecord.sandboxStatus) as
+              | 'passed'
+              | 'failed'
+              | 'skipped'
+              | 'unavailable')
+          : 'unavailable',
+      doctorErrors: Math.max(0, Math.floor(asNumber(commanderEvidenceRecord.doctorErrors, 0))),
+      doctorWarnings: Math.max(0, Math.floor(asNumber(commanderEvidenceRecord.doctorWarnings, 0))),
+      scopeKnown: asBoolean(commanderEvidenceRecord.scopeKnown, false),
+      verifyPathPresent: asBoolean(commanderEvidenceRecord.verifyPathPresent, false),
+      rollbackPathPresent: asBoolean(commanderEvidenceRecord.rollbackPathPresent, false),
+    },
+    summary: {
+      goNoGoRationale:
+        sanitizeIncidentText(commanderSummaryRecord.goNoGoRationale, 320) ||
+        'Release readiness rationale is unavailable.',
+      recommendedNextStep:
+        sanitizeIncidentText(commanderSummaryRecord.recommendedNextStep, 320) ||
+        'Collect missing evidence and re-run release readiness commander.',
+    },
+  };
+
+  const hasCommanderField =
+    typeof commanderRecord.artifactId === 'string' ||
+    typeof commanderRecord.decision === 'string' ||
+    Array.isArray(commanderRecord.blockingReasons) ||
+    typeof commanderRecord.workspacePath === 'string';
+
   return {
     success: Boolean(record.success),
     outputSummary: sanitizeIncidentText(record.outputSummary, 1200),
@@ -725,6 +811,7 @@ export function normalizeIncidentActionResultPayload(
     rollback: hasRollbackField ? rollback : undefined,
     sandboxSimulation: hasSandboxField ? sandboxSimulation : undefined,
     incidentReproPack: hasReproPackField ? incidentReproPack : undefined,
+    releaseReadinessCommander: hasCommanderField ? releaseReadinessCommander : undefined,
   };
 }
 
@@ -899,11 +986,15 @@ export function buildIncidentActionExecutionMetadata(
     normalized === 'fix-preview-lite' ||
     normalized === 'workspace-memory-wizard' ||
     normalized === 'recipe-pack' ||
-    normalized === 'incident-repro-pack'
+    normalized === 'incident-repro-pack' ||
+    normalized === 'release-readiness-commander'
   ) {
     return {
       riskClass: 'non-mutating-executable',
-      riskLevel: normalized === 'incident-repro-pack' ? 'medium' : 'low',
+      riskLevel:
+        normalized === 'incident-repro-pack' || normalized === 'release-readiness-commander'
+          ? 'medium'
+          : 'low',
       requiresImpactReview: false,
       requiresVerifyPath: false,
       allowCompletionClaimWithoutVerify: true,

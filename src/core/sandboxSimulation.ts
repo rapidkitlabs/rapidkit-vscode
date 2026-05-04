@@ -1,5 +1,6 @@
 import { run, type ExecaResult } from '../utils/exec';
 import { WorkspaceUsageTracker } from '../utils/workspaceUsageTracker';
+import { buildVerifyPackOutputContract, type VerifyPackOutputContract } from './verifyPackContract';
 import * as fs from 'fs-extra';
 import * as os from 'os';
 import * as path from 'path';
@@ -49,6 +50,7 @@ export interface SandboxSimulationEvidence {
   recommendedRollbackPath: string;
   safeToApply: boolean;
   reason: string;
+  verifyPackContract: VerifyPackOutputContract;
 }
 
 export type SandboxCommandRunner = (
@@ -59,6 +61,7 @@ export type SandboxCommandRunner = (
 
 export interface SandboxSimulationDeps {
   commandRunner?: SandboxCommandRunner;
+  allowDefaultDisposableSandbox?: boolean;
   telemetry?: {
     trackCommandEvent: (
       command: string,
@@ -75,6 +78,35 @@ export interface SandboxSimulationDeps {
     mode: SandboxSimulationEvidence['mode'];
     cleanup?: () => Promise<void>;
   }>;
+}
+
+const SANDBOX_COPY_EXCLUDED_TOP_LEVEL_NAMES = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  'coverage',
+  'htmlcov',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.pytest_cache',
+]);
+
+function shouldIncludeInSandboxCopy(sourcePath: string, workspacePath: string): boolean {
+  const relativePath = path.relative(workspacePath, sourcePath);
+  if (!relativePath || relativePath === '.') {
+    return true;
+  }
+
+  const topLevelName = relativePath.split(path.sep)[0];
+  if (!topLevelName) {
+    return true;
+  }
+
+  return !SANDBOX_COPY_EXCLUDED_TOP_LEVEL_NAMES.has(topLevelName);
 }
 
 async function createDisposableGitWorktreeSandbox(
@@ -128,6 +160,36 @@ async function createDisposableGitWorktreeSandbox(
   };
 }
 
+async function createDisposableFilesystemSandbox(input: SandboxSimulationInput): Promise<{
+  cwd: string;
+  mode: SandboxSimulationEvidence['mode'];
+  cleanup: () => Promise<void>;
+} | null> {
+  const uniqueToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sandboxDir = path.join(
+    os.tmpdir(),
+    `workspai-sandbox-copy-${input.actionId}-${uniqueToken}`
+  );
+
+  try {
+    await fs.ensureDir(sandboxDir);
+    await fs.copy(input.workspacePath, sandboxDir, {
+      filter: (sourcePath) => shouldIncludeInSandboxCopy(sourcePath, input.workspacePath),
+    });
+  } catch {
+    await fs.remove(sandboxDir).catch(() => undefined);
+    return null;
+  }
+
+  return {
+    cwd: sandboxDir,
+    mode: 'disposable-sandbox',
+    cleanup: async () => {
+      await fs.remove(sandboxDir).catch(() => undefined);
+    },
+  };
+}
+
 async function prepareDefaultSandbox(
   input: SandboxSimulationInput,
   runner: SandboxCommandRunner,
@@ -144,6 +206,11 @@ async function prepareDefaultSandbox(
     const disposable = await createDisposableGitWorktreeSandbox(input, runner);
     if (disposable) {
       return disposable;
+    }
+
+    const disposableCopy = await createDisposableFilesystemSandbox(input);
+    if (disposableCopy) {
+      return disposableCopy;
     }
   }
 
@@ -216,9 +283,13 @@ export async function runSandboxSimulation(
   const verifyCommands = input.verifyCommands
     .map((command) => sanitizeCommand(command))
     .filter((command): command is SandboxVerifyCommand => command !== null);
+  const allowDefaultDisposableSandbox =
+    typeof deps.allowDefaultDisposableSandbox === 'boolean'
+      ? deps.allowDefaultDisposableSandbox
+      : !deps.commandRunner;
   const sandboxRuntime = deps.prepareSandbox
     ? await deps.prepareSandbox(input, runner)
-    : await prepareDefaultSandbox(input, runner, !deps.commandRunner);
+    : await prepareDefaultSandbox(input, runner, allowDefaultDisposableSandbox);
   const cleanupSandbox = sandboxRuntime.cleanup;
 
   await trackSandboxEvent(deps, 'workspai.studio.sandbox_simulation_started', input.workspacePath, {
@@ -231,6 +302,11 @@ export async function runSandboxSimulation(
   try {
     if (verifyCommands.length === 0) {
       const completedAt = now().toISOString();
+      const verifyPackContract = buildVerifyPackOutputContract({
+        producer: 'sandbox-simulation',
+        generatedAt: completedAt,
+        commands: [],
+      });
       return {
         actionId: input.actionId,
         workspacePath: input.workspacePath,
@@ -244,6 +320,7 @@ export async function runSandboxSimulation(
         recommendedRollbackPath: input.rollbackHint ?? defaultRollbackHint(input.riskClass),
         safeToApply: false,
         reason: 'No deterministic verify commands were provided for sandbox simulation.',
+        verifyPackContract,
       };
     }
 
@@ -286,6 +363,17 @@ export async function runSandboxSimulation(
     );
 
     const completedAt = now().toISOString();
+    const verifyPackContract = buildVerifyPackOutputContract({
+      producer: 'sandbox-simulation',
+      generatedAt: completedAt,
+      commands: commandResults.map((item) => ({
+        label: item.label,
+        command: item.command,
+        args: item.args,
+        exitCode: item.exitCode,
+        durationMs: item.durationMs,
+      })),
+    });
     return {
       actionId: input.actionId,
       workspacePath: input.workspacePath,
@@ -302,6 +390,7 @@ export async function runSandboxSimulation(
         status === 'passed'
           ? 'All sandbox verify commands passed before apply.'
           : 'One or more sandbox verify commands failed; keep apply blocked and inspect evidence.',
+      verifyPackContract,
     };
   } finally {
     if (cleanupSandbox) {

@@ -29,6 +29,8 @@ const INCIDENT_ACTION_ALLOWLIST = new Set<string>([
   'apply-module-gen',
   // A03: debug patch generation + policy-gated apply workflow
   'apply-debug-patch',
+  // KF9: release readiness decision artifact (go/no-go)
+  'release-readiness-commander',
 ]);
 
 export function isIncidentActionAllowlisted(actionType: string): boolean {
@@ -59,11 +61,16 @@ export function classifyIncidentActionPolicy(actionType: string): IncidentAction
     case 'doctor-fix':
     case 'recipe-pack':
     case 'incident-repro-pack':
+    case 'release-readiness-commander':
       return {
         actionType: normalized,
         riskClass: 'non-mutating-executable',
         riskLevel:
-          normalized === 'doctor-fix' || normalized === 'incident-repro-pack' ? 'medium' : 'low',
+          normalized === 'doctor-fix' ||
+          normalized === 'incident-repro-pack' ||
+          normalized === 'release-readiness-commander'
+            ? 'medium'
+            : 'low',
         requiresImpactReview: false,
         requiresVerifyPath: normalized === 'doctor-fix',
         allowCompletionClaimWithoutVerify: normalized !== 'doctor-fix',

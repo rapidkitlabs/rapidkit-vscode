@@ -74,6 +74,7 @@ describe('incidentStudioPromptPolicy', () => {
     expect(isIncidentActionAllowlisted('inline-command')).toBe(true);
     expect(isIncidentActionAllowlisted('  recipe-pack  ')).toBe(true);
     expect(isIncidentActionAllowlisted('incident-repro-pack')).toBe(true);
+    expect(isIncidentActionAllowlisted('release-readiness-commander')).toBe(true);
 
     expect(isIncidentActionAllowlisted('shell-exec-root')).toBe(false);
     expect(isIncidentActionAllowlisted('custom-mutate-action')).toBe(false);
@@ -89,6 +90,7 @@ describe('incidentStudioPromptPolicy', () => {
       'doctor-fix',
       'recipe-pack',
       'incident-repro-pack',
+      'release-readiness-commander',
       'inline-command',
       'custom-mutate-action',
     ];

@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs-extra';
+import * as os from 'os';
+import * as path from 'path';
 
 vi.mock('vscode', () => ({
   window: {
@@ -63,6 +66,16 @@ describe('sandboxSimulation', () => {
       exitCode: 0,
       stdout: 'ok',
     });
+    expect(evidence.verifyPackContract).toMatchObject({
+      schemaVersion: 'v1',
+      producer: 'sandbox-simulation',
+      overallStatus: 'passed',
+      summary: {
+        totalCommands: 1,
+        passedCommands: 1,
+        failedCommands: 0,
+      },
+    });
     expect(trackCommandEvent.mock.calls.map((call) => call[0])).toEqual([
       'workspai.studio.sandbox_simulation_started',
       'workspai.studio.sandbox_simulation_passed',
@@ -94,6 +107,8 @@ describe('sandboxSimulation', () => {
 
     expect(evidence.status).toBe('failed');
     expect(evidence.safeToApply).toBe(false);
+    expect(evidence.verifyPackContract.overallStatus).toBe('failed');
+    expect(evidence.verifyPackContract.summary.failedCommands).toBe(1);
     expect(evidence.recommendedRollbackPath).toBe(
       'Run git restore for affected files before retry.'
     );
@@ -124,6 +139,8 @@ describe('sandboxSimulation', () => {
     expect(commandRunner).not.toHaveBeenCalled();
     expect(evidence.status).toBe('skipped');
     expect(evidence.safeToApply).toBe(false);
+    expect(evidence.verifyPackContract.overallStatus).toBe('skipped');
+    expect(evidence.verifyPackContract.summary.totalCommands).toBe(0);
     expect(evidence.reason).toContain('No deterministic verify commands');
     expect(trackCommandEvent.mock.calls.map((call) => call[0])).toEqual([
       'workspai.studio.sandbox_simulation_started',
@@ -166,5 +183,55 @@ describe('sandboxSimulation', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(evidence.mode).toBe('disposable-sandbox');
     expect(trackCommandEvent.mock.calls[0]?.[2]).toMatchObject({ mode: 'disposable-sandbox' });
+  });
+
+  it('falls back to disposable filesystem sandbox when git worktree is unavailable', async () => {
+    const trackCommandEvent = vi.fn().mockResolvedValue(undefined);
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-sandbox-test-'));
+    await fs.writeFile(path.join(workspacePath, 'README.md'), 'sandbox fixture', 'utf-8');
+
+    const commandRunner = vi.fn(async (command: string, args: string[], _options: any) => {
+      if (command === 'git' && args[0] === 'rev-parse') {
+        return {
+          stdout: '',
+          stderr: 'fatal: not a git repository',
+          exitCode: 1,
+        };
+      }
+
+      return {
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+      };
+    });
+
+    try {
+      const evidence = await runSandboxSimulation(
+        {
+          workspacePath,
+          actionId: 'action-5',
+          riskClass: 'high-risk-mutating',
+          verifyCommands: [{ command: 'npm', args: ['test'] }],
+        },
+        {
+          commandRunner,
+          allowDefaultDisposableSandbox: true,
+          telemetry: { trackCommandEvent },
+          now: () => new Date('2026-04-22T12:30:00.000Z'),
+        }
+      );
+
+      const npmCall = commandRunner.mock.calls.find((call) => call[0] === 'npm');
+      expect(npmCall).toBeDefined();
+      expect(npmCall?.[2]).toMatchObject({ reject: false });
+      expect(npmCall?.[2]?.cwd).toContain('workspai-sandbox-copy-action-5-');
+      expect(npmCall?.[2]?.cwd).not.toBe(workspacePath);
+      expect(evidence.mode).toBe('disposable-sandbox');
+      expect(evidence.status).toBe('passed');
+      expect(trackCommandEvent.mock.calls[0]?.[2]).toMatchObject({ mode: 'disposable-sandbox' });
+    } finally {
+      await fs.remove(workspacePath).catch(() => undefined);
+    }
   });
 });

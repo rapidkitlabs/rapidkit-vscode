@@ -28,7 +28,13 @@ interface AIRecipe {
 }
 
 interface AIQuickAction {
-  id: 'fix-preview' | 'change-impact' | 'terminal-bridge' | 'memory-wizard' | 'recipe-packs';
+  id:
+    | 'fix-preview'
+    | 'change-impact'
+    | 'terminal-bridge'
+    | 'memory-wizard'
+    | 'recipe-packs'
+    | 'release-readiness';
   label: string;
   detail: string;
   command: string;
@@ -112,6 +118,22 @@ const AI_RECIPES: AIRecipe[] = [
       '2) Risk matrix (high/medium/low)',
       '3) Observability and config checks',
       '4) Go / no-go recommendation',
+    ].join('\n'),
+  },
+  {
+    id: 'release-readiness-commander',
+    label: 'Release Readiness Commander',
+    detail:
+      'Open Incident Studio with a Go/No-Go flow that aggregates verify/sandbox/doctor evidence.',
+    mode: 'ask',
+    category: 'Quality',
+    prompt:
+      'Run release-readiness-commander for this workspace. Produce a strict Go/No-Go decision with blocking reasons, confidence, and verification evidence pointers.',
+    expectedOutputTemplate: [
+      '1) Decision (GO / NO-GO)',
+      '2) Blocking reasons (explicit and deduplicated)',
+      '3) Evidence summary (verify/sandbox/doctor/scope)',
+      '4) Recommended next safe step',
     ].join('\n'),
   },
   {
@@ -211,6 +233,13 @@ const AI_QUICK_ACTIONS: AIQuickAction[] = [
     label: 'Change Impact Lite',
     detail: 'Assess blast radius before editing',
     command: 'workspai.aiChangeImpactLite',
+    category: 'Planning & Safety',
+  },
+  {
+    id: 'release-readiness',
+    label: 'Release Readiness Commander',
+    detail: 'Run a one-click Go/No-Go decision flow in Incident Studio',
+    command: 'workspai.aiReleaseReadinessCommander',
     category: 'Planning & Safety',
   },
   {
@@ -362,6 +391,56 @@ async function resolveWorkspaceForMemory(): Promise<{ name: string; path: string
   }
 
   return null;
+}
+
+async function resolveIncidentStudioLaunchTarget(): Promise<{
+  workspacePath: string;
+  workspaceName: string;
+  projectPath?: string;
+  projectName?: string;
+  projectType?: string;
+} | null> {
+  const selectedWorkspace = await executeOptionalCommand<WorkspaceSelection>(
+    'workspai.getSelectedWorkspace'
+  );
+  const selectedProject = await executeOptionalCommand<ProjectSelection>(
+    'workspai.getSelectedProject'
+  );
+
+  if (selectedProject?.path) {
+    const workspacePath =
+      selectedWorkspace?.path ||
+      vscode.workspace.workspaceFolders?.find((folder) =>
+        selectedProject.path?.startsWith(folder.uri.fsPath)
+      )?.uri.fsPath;
+
+    if (workspacePath) {
+      return {
+        workspacePath,
+        workspaceName: selectedWorkspace?.name || path.basename(workspacePath),
+        projectPath: selectedProject.path,
+        projectName: selectedProject.name,
+        projectType: selectedProject.type,
+      };
+    }
+  }
+
+  if (selectedWorkspace?.path) {
+    return {
+      workspacePath: selectedWorkspace.path,
+      workspaceName: selectedWorkspace.name || path.basename(selectedWorkspace.path),
+    };
+  }
+
+  const fallback = vscode.workspace.workspaceFolders?.[0];
+  if (!fallback) {
+    return null;
+  }
+
+  return {
+    workspacePath: fallback.uri.fsPath,
+    workspaceName: fallback.name,
+  };
 }
 
 async function shouldSuggestMemoryWizard(): Promise<boolean> {
@@ -527,6 +606,50 @@ export function registerAIFreeFeatureCommands(
 
       await vscode.commands.executeCommand(selected.payload.command);
     }),
+
+    vscode.commands.registerCommand(
+      'workspai.aiReleaseReadinessCommander',
+      async (seed?: unknown) => {
+        const aiContext = await resolvePreferredAIContext();
+        const launchTarget = await resolveIncidentStudioLaunchTarget();
+        const invocation = parseFeatureInvocation(seed);
+        const selection =
+          normalizeInputText(invocation.seedText ?? seed) ??
+          normalizeInputText(getEditorSelectionOrCurrentLine());
+
+        if (!launchTarget) {
+          vscode.window.showWarningMessage('Select or open a workspace first.');
+          await trackAIFreeCommandEvent('workspai.aiReleaseReadinessCommander', aiContext, {
+            result: 'no-workspace',
+            ...invocation.telemetryProps,
+          });
+          return;
+        }
+
+        const initialQuery = selection
+          ? [
+              'Run release-readiness-commander for this workspace and selected context.',
+              'Aggregate verify/sandbox/doctor/scope evidence and produce one deterministic GO/NO-GO decision.',
+              `Selected context:\n${selection}`,
+            ].join('\n\n')
+          : 'Run release-readiness-commander for this workspace. Aggregate verify/sandbox/doctor/scope evidence and produce one deterministic GO/NO-GO decision.';
+
+        await trackAIFreeCommandEvent('workspai.aiReleaseReadinessCommander', aiContext, {
+          result: 'opened',
+          inputSource: selection ? 'selection' : 'workspace-only',
+          ...invocation.telemetryProps,
+        });
+
+        WelcomePanel.openIncidentStudio(context, {
+          workspacePath: launchTarget.workspacePath,
+          workspaceName: launchTarget.workspaceName,
+          projectPath: launchTarget.projectPath,
+          projectName: launchTarget.projectName,
+          projectType: launchTarget.projectType,
+          initialQuery,
+        });
+      }
+    ),
 
     vscode.commands.registerCommand('workspai.aiFixPreviewLite', async (seed?: unknown) => {
       const aiContext = await resolvePreferredAIContext();
@@ -904,6 +1027,18 @@ export function registerAIFreeFeatureCommands(
         recipeCategory: selectedRecipe.category,
         inputSource: selection ? 'selection' : 'recipe-only',
       });
+
+      if (selectedRecipe.id === 'release-readiness-commander') {
+        await vscode.commands.executeCommand(
+          'workspai.aiReleaseReadinessCommander',
+          selection || {
+            source: 'recipe-pack',
+            trigger: 'release-readiness-commander',
+          }
+        );
+        return;
+      }
+
       const expectedOutputBlock = [
         'Expected output template:',
         selectedRecipe.expectedOutputTemplate,

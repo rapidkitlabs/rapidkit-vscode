@@ -61,6 +61,12 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         case 'openWelcome':
           vscode.commands.executeCommand('workspai.showWelcome');
           break;
+        case 'releaseReadinessCommander':
+          vscode.commands.executeCommand('workspai.aiReleaseReadinessCommander', {
+            source: 'sidebar-quick-actions',
+            trigger: 'release-readiness-commander',
+          });
+          break;
       }
     });
   }
@@ -89,6 +95,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M6 1v1h1v3.2L3.3 11a2 2 0 0 0 1.7 3h6a2 2 0 0 0 1.7-3L9 5.2V2h1V1H6zm2 4.8 3.6 5.6a1 1 0 0 1-.8 1.6H5a1 1 0 0 1-.8-1.6L8 5.8zM6.8 9h2.4l.8 1.2H6z"/></svg>',
       docs: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5 1H4v14h1V1zm7 0h-1v14h1V1zM3 3H1v10h2V3zm12 0h-2v10h2V3zM7 4H6v8h1V4zm3 0H9v8h1V4z"/></svg>',
       home: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8.354 1.146a.5.5 0 0 0-.708 0l-6 6A.5.5 0 0 0 1.5 7.5v7a.5.5 0 0 0 .5.5h4.5a.5.5 0 0 0 .5-.5v-4h2v4a.5.5 0 0 0 .5.5H14a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.146-.354L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.354 1.146zM2.5 14V7.707l5.5-5.5 5.5 5.5V14H10v-4a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5v4H2.5z"/></svg>',
+      release:
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l2.2 4.5L15 6.2l-3.5 3.3.8 4.8L8 12l-4.3 2.3.8-4.8L1 6.2l4.8-.7L8 1zm0 2.2L6.5 6.1l-3.1.4 2.3 2.2-.5 3.1L8 10.2l2.8 1.6-.5-3.1 2.3-2.2-3.1-.4L8 3.2z"/></svg>',
     };
 
     return `<!DOCTYPE html>
@@ -317,6 +325,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         <button class="tool-btn docs" onclick="send('openDocs')" title="Open documentation">
             <span class="t-icon">${icons.docs}</span>
             <span class="t-text">Docs</span>
+        </button>
+        <button class="tool-btn ai" onclick="send('releaseReadinessCommander')" title="Run release-readiness commander Go/No-Go flow">
+          <span class="t-icon">${icons.release}</span>
+          <span class="t-text">Release Ready</span>
         </button>
     </div>
 

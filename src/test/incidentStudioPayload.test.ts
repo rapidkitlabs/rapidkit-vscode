@@ -199,6 +199,7 @@ describe('incidentStudioPayload', () => {
       'doctor-fix',
       'recipe-pack',
       'incident-repro-pack',
+      'release-readiness-commander',
       'inline-command',
       'custom-mutate-action',
     ];
@@ -707,6 +708,60 @@ describe('incidentStudioPayload', () => {
         relatedFiles: ['src/orders/service.ts'],
       },
       exportHint: 'password=[REDACTED]',
+    });
+  });
+
+  it('normalizes release readiness commander artifact in action-result payload', () => {
+    const normalized = normalizeIncidentActionResultPayload({
+      success: false,
+      actionId: ' action-rrc ',
+      releaseReadinessCommander: {
+        artifactId: ' rrc-001 ',
+        schemaVersion: 'v1',
+        generatedAt: ' 2026-05-03T10:00:00.000Z ',
+        workspacePath: ' /tmp/wsp ',
+        actionId: ' action-rrc ',
+        decision: ' no-go ',
+        confidence: 63.2,
+        blockingReasons: ['scope unknown', 'verify path missing', 'scope unknown'],
+        evidence: {
+          verifyPackContractStatus: ' failed ',
+          sandboxStatus: ' skipped ',
+          doctorErrors: 2,
+          doctorWarnings: 1,
+          scopeKnown: false,
+          verifyPathPresent: false,
+          rollbackPathPresent: true,
+        },
+        summary: {
+          goNoGoRationale: 'authorization: Bearer secret-token',
+          recommendedNextStep: 'token=abc123',
+        },
+      },
+    });
+
+    expect(normalized.releaseReadinessCommander).toEqual({
+      artifactId: 'rrc-001',
+      schemaVersion: 'v1',
+      generatedAt: '2026-05-03T10:00:00.000Z',
+      workspacePath: '/tmp/wsp',
+      actionId: 'action-rrc',
+      decision: 'no-go',
+      confidence: 63.2,
+      blockingReasons: ['scope unknown', 'verify path missing'],
+      evidence: {
+        verifyPackContractStatus: 'failed',
+        sandboxStatus: 'skipped',
+        doctorErrors: 2,
+        doctorWarnings: 1,
+        scopeKnown: false,
+        verifyPathPresent: false,
+        rollbackPathPresent: true,
+      },
+      summary: {
+        goNoGoRationale: 'authorization:[REDACTED]',
+        recommendedNextStep: 'token=[REDACTED]',
+      },
     });
   });
 

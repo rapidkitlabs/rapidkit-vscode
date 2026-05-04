@@ -1356,6 +1356,21 @@ export function App() {
         });
     };
 
+    const handleExportReleaseReadinessCommander = (
+        releaseReadinessCommander: NonNullable<
+            NormalizedIncidentActionResultPayload['releaseReadinessCommander']
+        >
+    ) => {
+        const workspacePath =
+            selectedWorkspaceForAnalysis ||
+            workspaceStatus.workspacePath ||
+            releaseReadinessCommander.workspacePath;
+        vscode.postMessage('exportReleaseReadinessCommander', {
+            releaseReadinessCommander,
+            workspacePath,
+        });
+    };
+
     useEffect(() => {
         return () => {
             if (chatBrainConversationId) {
@@ -1645,6 +1660,7 @@ export function App() {
                         onPredictiveWarningAccepted={handlePredictiveWarningAccepted}
                         onExportIncidentReproPack={handleExportIncidentReproPack}
                         onExportSandboxSimulationEvidence={handleExportSandboxSimulationEvidence}
+                        onExportReleaseReadinessCommander={handleExportReleaseReadinessCommander}
                         onImportIncidentReproPack={handleImportIncidentReproPack}
                         executingCommand={chatBrainExecutingCommand}
                         primaryCtaMode={incidentPrimaryCtaMode}

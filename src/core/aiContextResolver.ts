@@ -110,7 +110,7 @@ export function buildRapidkitCommandScopeSection(ctx: AIModalContext): string {
   }
 
   lines.push(
-    '- Workspace-level commands belong in workspace root: `npx rapidkit create workspace`, `npx rapidkit bootstrap`, `npx rapidkit setup ...`, `npx rapidkit workspace ...`, `npx rapidkit cache ...`, `npx rapidkit mirror ...`, `npx rapidkit doctor workspace`.'
+    '- Workspace-level commands belong in workspace root: `npx rapidkit create workspace`, `npx rapidkit bootstrap`, `npx rapidkit setup ...`, `npx rapidkit workspace ...`, `npx rapidkit cache ...`, `npx rapidkit mirror ...`, `npx rapidkit readiness`, `npx rapidkit doctor workspace`.'
   );
   lines.push('- `npx rapidkit create project <kit> <name>` belongs in workspace root.');
   lines.push(

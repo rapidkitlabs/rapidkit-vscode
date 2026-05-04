@@ -156,4 +156,131 @@ describe('releaseStopGate manifest mode', () => {
     expect(output).toContain('"preventedIncidentRateMin": 20');
     expect(output).toContain('All release stop conditions passed.');
   });
+
+  it('accepts GO release readiness commander artifact', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-rrc-go-'));
+    const artifactPath = path.join(tempDir, 'release-readiness-go.json');
+
+    fs.writeFileSync(
+      artifactPath,
+      JSON.stringify(
+        {
+          release_readiness_commander: {
+            schemaVersion: 'v1',
+            artifactId: 'rrc-go-001',
+            generatedAt: '2026-05-03T12:00:00.000Z',
+            workspacePath: '/tmp/workspace',
+            actionId: 'action-rrc-go',
+            decision: 'go',
+            confidence: 88,
+            blockingReasons: [],
+            evidence: {
+              verifyPackContractStatus: 'passed',
+              sandboxStatus: 'passed',
+              doctorErrors: 0,
+              doctorWarnings: 1,
+              scopeKnown: true,
+              verifyPathPresent: true,
+              rollbackPathPresent: true,
+            },
+            summary: {
+              goNoGoRationale: 'All checks passed.',
+              recommendedNextStep: 'Proceed with release.',
+            },
+          },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    try {
+      const output = execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--release-readiness-commander',
+          artifactPath,
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+        }
+      );
+
+      expect(output).toContain('Release readiness commander result');
+      expect(output).toContain('decision');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks NO-GO release readiness commander artifact', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-rrc-no-go-'));
+    const artifactPath = path.join(tempDir, 'release-readiness-no-go.json');
+
+    fs.writeFileSync(
+      artifactPath,
+      JSON.stringify(
+        {
+          release_readiness_commander: {
+            schemaVersion: 'v1',
+            artifactId: 'rrc-no-go-001',
+            generatedAt: '2026-05-03T12:00:00.000Z',
+            workspacePath: '/tmp/workspace',
+            actionId: 'action-rrc-no-go',
+            decision: 'no-go',
+            confidence: 52,
+            blockingReasons: ['verify path missing'],
+            evidence: {
+              verifyPackContractStatus: 'failed',
+              sandboxStatus: 'failed',
+              doctorErrors: 2,
+              doctorWarnings: 1,
+              scopeKnown: false,
+              verifyPathPresent: false,
+              rollbackPathPresent: true,
+            },
+            summary: {
+              goNoGoRationale: 'Blocking issues found.',
+              recommendedNextStep: 'Fix blockers and re-run.',
+            },
+          },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--release-readiness-commander',
+          artifactPath,
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      throw new Error('Expected release gate to block on NO-GO commander artifact.');
+    } catch (error) {
+      const failure = error as { status?: number; stderr?: string | Buffer };
+      const stderr = String(failure.stderr || '');
+      expect(failure.status).toBe(1);
+      expect(stderr).toContain('Release blocked: Release readiness commander decision is NO-GO.');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
