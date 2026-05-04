@@ -172,7 +172,9 @@ async function detectProjectStack(projectPath: string): Promise<StackDetection> 
   if (hasPackageJson) {
     try {
       const pkg = await fs.readJSON(packageJsonPath);
-      hasNestDependency = Boolean(pkg?.dependencies?.['@nestjs/core']);
+      hasNestDependency = Boolean(
+        pkg?.dependencies?.['@nestjs/core'] || pkg?.devDependencies?.['@nestjs/core']
+      );
     } catch {
       hasNestDependency = false;
     }

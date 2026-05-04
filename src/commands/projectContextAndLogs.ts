@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { Logger } from '../utils/logger';
 import { CommandTelemetryTimeWindow, WorkspaceUsageTracker } from '../utils/workspaceUsageTracker';
 import { openProjectFolder, copyProjectPath, deleteProject } from './projectContextMenu';
@@ -44,9 +45,54 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
     }),
 
     vscode.commands.registerCommand('workspai.openProjectDashboard', async (projectItem: any) => {
-      vscode.window.showInformationMessage(
-        `Dashboard for ${projectItem?.label ?? 'Project'} - Coming soon!`
-      );
+      const projectFromItem = projectItem?.project;
+      const selectedProject = (await vscode.commands.executeCommand(
+        'workspai.getSelectedProject'
+      )) as { path?: string; name?: string; type?: string; workspacePath?: string } | null;
+      const selectedWorkspace = (await vscode.commands.executeCommand(
+        'workspai.getSelectedWorkspace'
+      )) as { path?: string; name?: string } | null;
+
+      const projectPath =
+        (typeof projectFromItem?.path === 'string' && projectFromItem.path) ||
+        (typeof selectedProject?.path === 'string' && selectedProject.path);
+      const projectName =
+        (typeof projectFromItem?.name === 'string' && projectFromItem.name) ||
+        (typeof selectedProject?.name === 'string' && selectedProject.name) ||
+        (projectPath ? path.basename(projectPath) : undefined);
+      const projectType =
+        (typeof projectFromItem?.type === 'string' && projectFromItem.type) ||
+        (typeof selectedProject?.type === 'string' && selectedProject.type);
+
+      if (!projectPath || !projectName) {
+        vscode.window.showWarningMessage('Select a project first.');
+        return;
+      }
+
+      const workspacePath =
+        (typeof projectFromItem?.workspacePath === 'string' && projectFromItem.workspacePath) ||
+        (typeof selectedProject?.workspacePath === 'string' && selectedProject.workspacePath) ||
+        (typeof selectedWorkspace?.path === 'string' && selectedWorkspace.path);
+
+      if (!workspacePath) {
+        vscode.window.showWarningMessage('Select a workspace first.');
+        return;
+      }
+
+      await vscode.commands.executeCommand('workspai.openIncidentStudio', {
+        workspace: {
+          path: workspacePath,
+          name:
+            (typeof selectedWorkspace?.name === 'string' && selectedWorkspace.name) ||
+            path.basename(workspacePath),
+        },
+        project: {
+          path: projectPath,
+          name: projectName,
+          type: projectType,
+          workspacePath,
+        },
+      });
     }),
 
     vscode.commands.registerCommand('workspai.showLogs', () => {

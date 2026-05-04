@@ -927,24 +927,29 @@
           "group": "inline@2"
         },
         {
+          "command": "workspai.aiReleaseReadinessCommander",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@3"
+        },
+        {
           "command": "workspai.aiQuickActions",
-          "when": "view == rapidkitWorkspaces && viewItem == workspace",
-          "group": "inline@3"
-        },
-        {
-          "command": "workspai.exportWorkspace",
-          "when": "view == rapidkitWorkspaces && viewItem == workspace",
-          "group": "inline@3"
-        },
-        {
-          "command": "workspai.checkWorkspaceHealth",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "inline@4"
         },
         {
-          "command": "workspai.workspaceInit",
+          "command": "workspai.exportWorkspace",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "inline@5"
+        },
+        {
+          "command": "workspai.checkWorkspaceHealth",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@6"
+        },
+        {
+          "command": "workspai.workspaceInit",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@7"
         },
         {
           "command": "workspai.openWorkspace",
@@ -1102,44 +1107,49 @@
           "group": "inline@2"
         },
         {
-          "command": "workspai.aiChangeImpactLite",
+          "command": "workspai.aiReleaseReadinessCommander",
           "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
           "group": "inline@3"
         },
         {
-          "command": "workspai.aiQuickActions",
+          "command": "workspai.aiChangeImpactLite",
           "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
           "group": "inline@4"
         },
         {
-          "command": "workspai.projectTerminal",
+          "command": "workspai.aiQuickActions",
           "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
           "group": "inline@5"
         },
         {
-          "command": "workspai.projectInit",
+          "command": "workspai.projectTerminal",
           "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
           "group": "inline@6"
         },
         {
+          "command": "workspai.projectInit",
+          "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
+          "group": "inline@7"
+        },
+        {
           "command": "workspai.projectDev",
           "when": "view == rapidkitProjects && viewItem == project",
-          "group": "inline@7"
+          "group": "inline@8"
         },
         {
           "command": "workspai.projectStop",
           "when": "view == rapidkitProjects && viewItem == project-running",
-          "group": "inline@7"
+          "group": "inline@8"
         },
         {
           "command": "workspai.projectTest",
           "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
-          "group": "inline@8"
+          "group": "inline@9"
         },
         {
           "command": "workspai.projectBrowser",
           "when": "view == rapidkitProjects && viewItem == project-running",
-          "group": "inline@9"
+          "group": "inline@10"
         },
         {
           "command": "workspai.newFile",

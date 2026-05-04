@@ -111,6 +111,35 @@ function inferKit(type: WorkspaiProject['type']): string {
   return 'generic.imported';
 }
 
+function stackFromKitName(kitName?: string): WorkspaiProject['type'] {
+  if (!kitName) {
+    return 'unknown';
+  }
+
+  if (kitName.startsWith('fastapi.')) {
+    return 'fastapi';
+  }
+  if (kitName.startsWith('nestjs.')) {
+    return 'nestjs';
+  }
+  if (kitName.startsWith('go') || kitName.startsWith('gofiber.') || kitName.startsWith('gogin.')) {
+    return 'go';
+  }
+  if (kitName.startsWith('springboot.')) {
+    return 'springboot';
+  }
+
+  return 'unknown';
+}
+
+function projectBadgeLabel(project: WorkspaiProject): string {
+  if (project.type === 'unknown' && project.managed) {
+    return 'Managed';
+  }
+
+  return frameworkLabel(project.type);
+}
+
 export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectTreeItem> {
   private _onDidChangeTreeData: vscode.EventEmitter<ProjectTreeItem | undefined | null | void> =
     new vscode.EventEmitter<ProjectTreeItem | undefined | null | void>();
@@ -368,11 +397,32 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
             fs.pathExists(path.join(projectPath, '.rapidkit', 'context.json')),
           ]);
 
+          let managedKitName: string | undefined;
+          if (hasRapidkitProjectJson) {
+            try {
+              const projectMarker = await fs.readJSON(
+                path.join(projectPath, '.rapidkit', 'project.json')
+              );
+              if (
+                projectMarker &&
+                typeof projectMarker === 'object' &&
+                typeof projectMarker.kit_name === 'string'
+              ) {
+                managedKitName = projectMarker.kit_name;
+              }
+            } catch {
+              managedKitName = undefined;
+            }
+          }
+
           let hasNestDependency = false;
           if (hasPackageJson) {
             try {
               const packageJson = await fs.readJSON(path.join(projectPath, 'package.json'));
-              hasNestDependency = Boolean(packageJson.dependencies?.['@nestjs/core']);
+              hasNestDependency = Boolean(
+                packageJson.dependencies?.['@nestjs/core'] ||
+                packageJson.devDependencies?.['@nestjs/core']
+              );
             } catch {
               hasNestDependency = false;
             }
@@ -390,8 +440,13 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
 
           const hasRapidkitProjectMarker = hasRapidkitProjectJson || hasRapidkitContextJson;
           const registryStack = registryEntry?.stack;
+          const markerStack = stackFromKitName(managedKitName);
           const projectType: WorkspaiProject['type'] =
-            registryStack && registryStack !== 'unknown' ? registryStack : detection.stack;
+            registryStack && registryStack !== 'unknown'
+              ? registryStack
+              : detection.stack !== 'unknown'
+                ? detection.stack
+                : markerStack;
 
           if (projectType === 'unknown' && !registryEntry && !hasRapidkitProjectMarker) {
             return null;
@@ -400,7 +455,8 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
           const base: Omit<WorkspaiProject, 'type'> = {
             name: entry.name,
             path: projectPath,
-            kit: inferKit(projectType),
+            kit: managedKitName ?? inferKit(projectType),
+            managed: hasRapidkitProjectMarker,
             modules: [],
             isValid: true,
             workspacePath: wsPath,
@@ -441,7 +497,7 @@ export class ProjectTreeItem extends vscode.TreeItem {
     // === Project Item (not running) ===
     if (contextValue === 'project' && project) {
       this.tooltip = `${project.path}\n\n▶️ Click Play to start dev server${isSelected ? '\n\n✓ Currently selected for module operations' : ''}`;
-      this.description = `${frameworkLabel(project.type)} 🟡${isSelected ? ' ✓' : ''}`;
+      this.description = `${projectBadgeLabel(project)} 🟡${isSelected ? ' ✓' : ''}`;
 
       // Use custom framework icons
       if (extensionPath) {
@@ -468,7 +524,9 @@ export class ProjectTreeItem extends vscode.TreeItem {
                 ? 'symbol-structure'
                 : project.type === 'go'
                   ? 'symbol-namespace'
-                  : 'package';
+                  : project.managed
+                    ? 'shield'
+                    : 'package';
         const colorId = isSelected
           ? 'charts.blue'
           : project.type === 'fastapi'
@@ -494,7 +552,7 @@ export class ProjectTreeItem extends vscode.TreeItem {
     else if (contextValue === 'project-running' && project) {
       const portInfo = runningPort ? ` on port ${runningPort}` : '';
       this.tooltip = `${project.path}\n\n🚀 Server running${portInfo}! Click Stop to terminate${isSelected ? '\n\n✓ Currently selected for module operations' : ''}`;
-      this.description = `${frameworkLabel(project.type)} 🟢${isSelected ? ' ✓' : ''}${runningPort ? ` :${runningPort}` : ''}`;
+      this.description = `${projectBadgeLabel(project)} 🟢${isSelected ? ' ✓' : ''}${runningPort ? ` :${runningPort}` : ''}`;
 
       // Use custom framework icons with running indicator
       if (extensionPath) {

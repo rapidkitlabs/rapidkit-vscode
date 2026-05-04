@@ -213,4 +213,38 @@ describe('adoptProjectCommand', () => {
       })
     );
   });
+
+  it('treats NestJS devDependency as managed framework and skips generic conversion', async () => {
+    const { workspacePath, projectPath, projectName } = await createTempProject();
+
+    await fs.writeJSON(path.join(projectPath, 'package.json'), {
+      name: projectName,
+      version: '1.0.0',
+      devDependencies: {
+        '@nestjs/core': '^10.0.0',
+      },
+    });
+
+    const ok = await adoptProjectCommand({
+      workspacePath,
+      projectPath,
+      projectName,
+      projectType: 'unknown',
+    });
+
+    expect(ok).toBe(false);
+    expect(await fs.pathExists(path.join(projectPath, '.rapidkit', 'project.json'))).toBe(false);
+    expect(showInformationMessageMock).toHaveBeenCalledWith(
+      `Project "${projectName}" is NestJS and does not require generic adoption.`
+    );
+    expect(trackCommandEventMock).toHaveBeenCalledWith(
+      'workspai.convertProjectToManaged',
+      workspacePath,
+      expect.objectContaining({
+        result: 'skipped-non-generic',
+        projectName,
+        detectedType: 'nestjs',
+      })
+    );
+  });
 });

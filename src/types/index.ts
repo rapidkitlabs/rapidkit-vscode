@@ -17,6 +17,7 @@ export interface WorkspaiProject {
   path: string;
   type: 'fastapi' | 'nestjs' | 'go' | 'springboot' | 'unknown';
   kit: string;
+  managed?: boolean;
   modules: string[];
   isValid: boolean;
   workspacePath?: string;

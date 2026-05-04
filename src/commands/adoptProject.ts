@@ -128,7 +128,9 @@ async function detectProjectType(
   if (hasPackageJson) {
     try {
       const packageJson = await fs.readJSON(packageJsonPath);
-      hasNestDependency = Boolean(packageJson.dependencies?.['@nestjs/core']);
+      hasNestDependency = Boolean(
+        packageJson.dependencies?.['@nestjs/core'] || packageJson.devDependencies?.['@nestjs/core']
+      );
     } catch {
       hasNestDependency = false;
     }

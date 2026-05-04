@@ -306,6 +306,13 @@ function normalizeInputText(value: unknown): string | undefined {
 function parseFeatureInvocation(value: unknown): {
   seedText?: string;
   telemetryProps?: Record<string, string>;
+  launchTargetOverride?: {
+    workspacePath?: string;
+    workspaceName?: string;
+    projectPath?: string;
+    projectName?: string;
+    projectType?: string;
+  };
 } {
   if (typeof value === 'string') {
     return { seedText: value };
@@ -326,9 +333,50 @@ function parseFeatureInvocation(value: unknown): {
   }
 
   const seedText = typeof payload.seed === 'string' ? payload.seed : undefined;
+
+  const workspaceFromPayload =
+    payload.workspace && typeof payload.workspace === 'object'
+      ? (payload.workspace as Record<string, unknown>)
+      : null;
+  const projectFromPayload =
+    payload.project && typeof payload.project === 'object'
+      ? (payload.project as Record<string, unknown>)
+      : null;
+
+  const launchTargetOverride = {
+    workspacePath:
+      (workspaceFromPayload && typeof workspaceFromPayload.path === 'string'
+        ? workspaceFromPayload.path
+        : undefined) ||
+      (projectFromPayload && typeof projectFromPayload.workspacePath === 'string'
+        ? projectFromPayload.workspacePath
+        : undefined),
+    workspaceName:
+      workspaceFromPayload && typeof workspaceFromPayload.name === 'string'
+        ? workspaceFromPayload.name
+        : undefined,
+    projectPath:
+      projectFromPayload && typeof projectFromPayload.path === 'string'
+        ? projectFromPayload.path
+        : undefined,
+    projectName:
+      projectFromPayload && typeof projectFromPayload.name === 'string'
+        ? projectFromPayload.name
+        : undefined,
+    projectType:
+      projectFromPayload && typeof projectFromPayload.type === 'string'
+        ? projectFromPayload.type
+        : undefined,
+  };
+
+  const hasLaunchTargetOverride =
+    typeof launchTargetOverride.workspacePath === 'string' ||
+    typeof launchTargetOverride.projectPath === 'string';
+
   return {
     seedText,
     telemetryProps: Object.keys(telemetryProps).length > 0 ? telemetryProps : undefined,
+    launchTargetOverride: hasLaunchTargetOverride ? launchTargetOverride : undefined,
   };
 }
 
@@ -393,13 +441,29 @@ async function resolveWorkspaceForMemory(): Promise<{ name: string; path: string
   return null;
 }
 
-async function resolveIncidentStudioLaunchTarget(): Promise<{
+async function resolveIncidentStudioLaunchTarget(override?: {
+  workspacePath?: string;
+  workspaceName?: string;
+  projectPath?: string;
+  projectName?: string;
+  projectType?: string;
+}): Promise<{
   workspacePath: string;
   workspaceName: string;
   projectPath?: string;
   projectName?: string;
   projectType?: string;
 } | null> {
+  if (override?.workspacePath) {
+    return {
+      workspacePath: override.workspacePath,
+      workspaceName: override.workspaceName || path.basename(override.workspacePath),
+      projectPath: override.projectPath,
+      projectName: override.projectName,
+      projectType: override.projectType,
+    };
+  }
+
   const selectedWorkspace = await executeOptionalCommand<WorkspaceSelection>(
     'workspai.getSelectedWorkspace'
   );
@@ -611,8 +675,10 @@ export function registerAIFreeFeatureCommands(
       'workspai.aiReleaseReadinessCommander',
       async (seed?: unknown) => {
         const aiContext = await resolvePreferredAIContext();
-        const launchTarget = await resolveIncidentStudioLaunchTarget();
         const invocation = parseFeatureInvocation(seed);
+        const launchTarget = await resolveIncidentStudioLaunchTarget(
+          invocation.launchTargetOverride
+        );
         const selection =
           normalizeInputText(invocation.seedText ?? seed) ??
           normalizeInputText(getEditorSelectionOrCurrentLine());
