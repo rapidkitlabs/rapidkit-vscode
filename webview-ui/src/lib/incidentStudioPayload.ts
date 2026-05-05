@@ -173,6 +173,25 @@ export type IncidentVerifyCommandPack = {
   blockedReasons: string[];
 };
 
+export type IncidentDecisionClarityContract = {
+  situation?: string;
+  reason?: string;
+  impactScope: string[];
+  risk: {
+    confidenceBand: 'low' | 'medium' | 'high';
+    confidence: number;
+    mutating: boolean;
+  };
+  nextStep?: string;
+  verifyPlan: string[];
+  rollbackPlan?: string;
+  evidenceLinks: string[];
+  requiredMissingFields: Array<
+    'situation' | 'nextStep' | 'verifyPlan' | 'impactScope' | 'rollbackPlan'
+  >;
+  mutationReady: boolean;
+};
+
 // ─── Multi-file patch apply/reject workflow (A02 / A03) ─────────────────────
 
 export type FilePatchStatus = 'pending' | 'accepted' | 'rejected' | 'applied' | 'failed';
@@ -223,6 +242,7 @@ export type NormalizedIncidentActionResultPayload = {
   releaseReadinessCommander?: IncidentReleaseReadinessCommanderArtifact;
   contractRuntimeEvidence?: IncidentContractRuntimeEvidence;
   verifyCommandPack?: IncidentVerifyCommandPack;
+  decisionClarity?: IncidentDecisionClarityContract;
 };
 
 export type NormalizedIncidentActionProgressPayload = {
@@ -514,6 +534,74 @@ function normalizePredictiveConfidenceBand(value: unknown): IncidentPredictiveCo
   }
 
   return 'medium';
+}
+
+function buildIncidentDecisionClarityContract(input: {
+  outputSummary?: string;
+  diagnosis?: IncidentDiagnosisEvidence;
+  verifyPolicy?: IncidentVerifyPolicy;
+  rollback?: IncidentRollbackEvidence;
+  sandboxSimulation?: IncidentSandboxSimulationEvidence;
+  verifyCommandPack?: IncidentVerifyCommandPack;
+}): IncidentDecisionClarityContract | undefined {
+  const mutating =
+    input.verifyPolicy?.requiresImpactReview === true ||
+    input.verifyPolicy?.requiresVerifyPath === true;
+
+  const situation = input.outputSummary;
+  const reason =
+    input.diagnosis?.recommendedFocus ||
+    (input.diagnosis?.signalSources.length
+      ? `Signals: ${input.diagnosis?.signalSources.slice(0, 3).join(', ')}`
+      : undefined);
+  const impactScope = input.diagnosis?.relatedFiles.slice(0, 8) || [];
+  const nextStep = input.verifyCommandPack?.commands[0]?.command;
+  const verifyPlan = (input.verifyCommandPack?.commands || [])
+    .filter((entry) => entry.required)
+    .slice(0, 6)
+    .map((entry) => entry.command);
+  const rollbackPlan =
+    input.rollback?.suggestedNextStep || input.sandboxSimulation?.recommendedRollbackPath;
+  const evidenceLinks = [
+    ...(input.diagnosis?.signalSources || []),
+    ...(input.verifyCommandPack?.blockedReasons || []),
+  ].slice(0, 8);
+
+  const requiredMissingFields: Array<
+    'situation' | 'nextStep' | 'verifyPlan' | 'impactScope' | 'rollbackPlan'
+  > = [];
+  if (!situation) {
+    requiredMissingFields.push('situation');
+  }
+  if (!nextStep) {
+    requiredMissingFields.push('nextStep');
+  }
+  if (verifyPlan.length === 0) {
+    requiredMissingFields.push('verifyPlan');
+  }
+  if (mutating && impactScope.length === 0) {
+    requiredMissingFields.push('impactScope');
+  }
+  if (mutating && !rollbackPlan) {
+    requiredMissingFields.push('rollbackPlan');
+  }
+
+  return {
+    situation,
+    reason,
+    impactScope,
+    risk: {
+      confidenceBand: input.diagnosis?.confidenceBand || 'low',
+      confidence: input.diagnosis?.confidence || 0,
+      mutating,
+    },
+    nextStep,
+    verifyPlan,
+    rollbackPlan,
+    evidenceLinks,
+    requiredMissingFields,
+    mutationReady: requiredMissingFields.length === 0,
+  };
 }
 
 export function normalizeIncidentProtocolMeta(meta: unknown): NormalizedIncidentProtocolMeta {
@@ -903,6 +991,15 @@ export function normalizeIncidentActionResultPayload(
     Array.isArray(verifyCommandPackRecord.commands) ||
     Array.isArray(verifyCommandPackRecord.blockedReasons);
 
+  const decisionClarity = buildIncidentDecisionClarityContract({
+    outputSummary: sanitizeIncidentText(record.outputSummary, 1200),
+    diagnosis: hasDiagnosisField ? diagnosis : undefined,
+    verifyPolicy: hasVerifyPolicyField ? verifyPolicy : undefined,
+    rollback: hasRollbackField ? rollback : undefined,
+    sandboxSimulation: hasSandboxField ? sandboxSimulation : undefined,
+    verifyCommandPack: hasVerifyCommandPackField ? verifyCommandPack : undefined,
+  });
+
   return {
     success: Boolean(record.success),
     outputSummary: sanitizeIncidentText(record.outputSummary, 1200),
@@ -916,6 +1013,7 @@ export function normalizeIncidentActionResultPayload(
     releaseReadinessCommander: hasCommanderField ? releaseReadinessCommander : undefined,
     contractRuntimeEvidence: hasContractRuntimeField ? contractRuntimeEvidence : undefined,
     verifyCommandPack: hasVerifyCommandPackField ? verifyCommandPack : undefined,
+    decisionClarity,
   };
 }
 

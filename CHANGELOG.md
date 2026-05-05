@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-05-05
+
+### Added
+
+- **CLC1 decision clarity contract** — added a single structured decision clarity payload for Incident Studio actionable outputs with situation, reason, scope, risk, next step, verify plan, rollback plan, and evidence links.
+- **CLC5 outcome KPI model** — added `incidentOutcomeKpi` computation and marker telemetry records for first-action success, reopen, override, verify completion, rollback success, and time-to-first-confident-action.
+- **Artifact criteria and mode adapters** — added `incidentArtifactCriteria` and `incidentUxModeAdapter` modules with dedicated acceptance and regression test coverage.
+
+### Changed
+
+- **CLC2 mutation safety enforcement** — moved decision field validation to pre-execution and block completion/mutation-ready language whenever required clarity fields are missing.
+- **CLC3 deterministic phase policy wiring** — connected phase rail and next-action behavior to deterministic policy evaluation instead of heuristic progression.
+- **CLC6 UX mode behavior hardening** — applied Guided/Standard/Expert policy consistently to primary and secondary CTAs, including multi-CTA paths.
+- **CLC7 evidence rendering coverage** — completed UI wiring for all artifact kinds (verify, diagnosis, sandbox, rollback, repro) with explicit per-criterion status display and styles.
+- **Release stop gate integration** — made outcome KPI checks part of mandatory release gate `overallPass` evaluation.
+
+### Fixed
+
+- **Decision clarity dead path** — fixed host-to-webview contract so decision clarity is emitted in `aiChatActionResult` and no longer remains an unused card path.
+- **Mode bypass and criteria styling gaps** — fixed Expert-mode action filtering bypass and missing criteria/card status classes in Incident Studio styles.
+
 ## [0.23.0] - 2026-05-05
 
 ### Added

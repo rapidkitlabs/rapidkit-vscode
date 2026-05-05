@@ -5239,6 +5239,15 @@ No markdown, no explanation outside the JSON.`;
         '// file content here',
         '```',
         '',
+        'Decision Clarity Contract (required):',
+        '1) Situation',
+        '2) Why',
+        '3) Impact scope (exact files/modules)',
+        '4) Risk (confidence + mutating/non-mutating)',
+        '5) Next safe step',
+        '6) Verify plan (required commands)',
+        '7) Rollback plan',
+        '',
         'Include: all required source files, tests, and any configuration changes needed.',
         'After the code blocks, provide a brief summary of what was generated and verification steps.',
       ]
@@ -5270,12 +5279,44 @@ No markdown, no explanation outside the JSON.`;
         '// patched content here',
         '```',
         '',
+        'Decision Clarity Contract (required):',
+        '1) Situation',
+        '2) Why',
+        '3) Impact scope (exact files/modules)',
+        '4) Risk (confidence + mutating/non-mutating)',
+        '5) Next safe step',
+        '6) Verify plan (required commands)',
+        '7) Rollback plan',
+        '',
         'After the code blocks: explain the root cause, why this patch fixes it, and any required verification commands.'
       );
       if (!traceText && !issueSummary) {
         return 'Scan my workspace for the most likely active bug or error, then generate a targeted patch with before/after code blocks per file.';
       }
       return parts.filter(Boolean).join('\n');
+    }
+
+    // ── inline-command (A01) ─────────────────────────────────────────────────
+    if (actionType === 'inline-command') {
+      const command =
+        typeof payload?.command === 'string' && payload.command.trim()
+          ? payload.command.trim()
+          : '';
+      return [
+        command
+          ? `Analyze and safely execute this inline command intent: ${command}`
+          : 'Analyze and safely execute an inline command for this incident context.',
+        'Use fail-closed behavior for mutating steps and never claim completion without deterministic verify evidence.',
+        '',
+        'Return exactly these sections:',
+        '1) Situation',
+        '2) Why',
+        '3) Impact scope (exact files/modules)',
+        '4) Risk (confidence + mutating/non-mutating)',
+        '5) Next safe step',
+        '6) Verify plan (required commands)',
+        '7) Rollback plan',
+      ].join('\n');
     }
 
     // ── release-readiness-commander (KF9) ───────────────────────────────────
@@ -5573,6 +5614,44 @@ No markdown, no explanation outside the JSON.`;
       releaseGateEvidence: wave2Contracts.releaseGateEvidence,
       doctorEvidence,
     });
+    const decisionClarityMissingFields: Array<
+      'situation' | 'nextStep' | 'verifyPlan' | 'impactScope' | 'rollbackPlan'
+    > = [];
+    const decisionClaritySituation =
+      wave2Contracts.impactAssessment.likelyFailureMode || inlineQuery.trim();
+    const hasNextStep = typeof verifyCommandPack.commands[0]?.command === 'string';
+    const requiredVerifyCommandCount = verifyCommandPack.commands.filter(
+      (entry) => entry.required
+    ).length;
+    const hasImpactScope = wave2Contracts.impactAssessment.affectedFiles.length > 0;
+    const hasRollbackPlan = Boolean(
+      rollbackEvidence?.suggestedNextStep || sandboxEvidence?.recommendedRollbackPath
+    );
+    if (!decisionClaritySituation) {
+      decisionClarityMissingFields.push('situation');
+    }
+    if ((isMutatingAction || actionPolicy.requiresImpactReview) && !hasImpactScope) {
+      decisionClarityMissingFields.push('impactScope');
+    }
+    if ((isMutatingAction || actionPolicy.requiresVerifyPath) && !hasNextStep) {
+      decisionClarityMissingFields.push('nextStep');
+    }
+    if ((isMutatingAction || actionPolicy.requiresVerifyPath) && requiredVerifyCommandCount === 0) {
+      decisionClarityMissingFields.push('verifyPlan');
+    }
+    if ((isMutatingAction || actionPolicy.requiresImpactReview) && !hasRollbackPlan) {
+      decisionClarityMissingFields.push('rollbackPlan');
+    }
+    const decisionClarityCompletionBlocked = decisionClarityMissingFields.length > 0;
+    const completionSuccess = effectiveVerifySuccess && !decisionClarityCompletionBlocked;
+    const primaryVerifyCommand =
+      verifyCommandPack.commands.find((entry) => entry.required)?.command ||
+      verifyCommandPack.commands[0]?.command;
+    const decisionClarityVerifyPlan =
+      verifyCommandPack.commands
+        .filter((entry) => entry.required)
+        .map((entry) => entry.command)
+        .filter((command) => typeof command === 'string' && command.trim().length > 0) || [];
 
     if (conv && actionType === 'verify-pack-autopilot') {
       this._trackStudioEvent(
@@ -5612,6 +5691,50 @@ No markdown, no explanation outside the JSON.`;
       verifyCommandPack,
       graphSnapshot: wave2Contracts.systemGraphSnapshot,
     });
+    const decisionClarityImpactScope = Array.from(
+      new Set([
+        ...wave2Contracts.impactAssessment.affectedFiles,
+        ...wave2Contracts.impactAssessment.affectedModules.map(
+          (moduleName) => `module:${moduleName}`
+        ),
+        ...wave2Contracts.impactAssessment.affectedTests.map((testName) => `test:${testName}`),
+      ])
+    ).slice(0, 8);
+    const decisionClarityEvidenceLinks = Array.from(
+      new Set([
+        ...diagnosisEvidence.signalSources,
+        ...(wave2Contracts.predictiveWarning?.telemetrySeed.evidenceSources || []),
+      ])
+    ).slice(0, 8);
+    const decisionClarityContract = {
+      situation: decisionClaritySituation || diagnosisEvidence.recommendedFocus || undefined,
+      reason:
+        wave2Contracts.impactAssessment.rationale[0] ||
+        diagnosisEvidence.recommendedFocus ||
+        undefined,
+      impactScope: decisionClarityImpactScope,
+      risk: {
+        confidenceBand: diagnosisEvidence.confidenceBand,
+        confidence: diagnosisEvidence.confidence,
+        mutating: isMutatingAction || actionPolicy.requiresImpactReview,
+      },
+      nextStep: primaryVerifyCommand,
+      verifyPlan:
+        decisionClarityVerifyPlan.length > 0
+          ? decisionClarityVerifyPlan
+          : wave2Contracts.impactAssessment.verifyChecklist,
+      rollbackPlan:
+        rollbackEvidence?.suggestedNextStep ||
+        sandboxEvidence?.recommendedRollbackPath ||
+        undefined,
+      evidenceLinks: decisionClarityEvidenceLinks,
+      requiredMissingFields: decisionClarityMissingFields,
+      mutationReady:
+        !decisionClarityCompletionBlocked &&
+        !releaseGateCompletionBlocked &&
+        !unknownScopeMutationBlocked &&
+        effectiveVerifySuccess,
+    };
     const incidentReproPackEvidence = this._buildIncidentReproPackEvidence({
       actionType,
       actionId,
@@ -5650,7 +5773,7 @@ No markdown, no explanation outside the JSON.`;
     }
 
     if (conv) {
-      if (effectiveVerifySuccess) {
+      if (completionSuccess) {
         conv.verifyPassedAt = Date.now();
         conv.phase = 'learn';
       } else {
@@ -5660,13 +5783,15 @@ No markdown, no explanation outside the JSON.`;
       this._chatBrainConversations.set(conversationId, conv);
 
       this._trackStudioEvent(
-        effectiveVerifySuccess ? 'workspai.studio.verify_passed' : 'workspai.studio.verify_failed',
+        completionSuccess ? 'workspai.studio.verify_passed' : 'workspai.studio.verify_failed',
         conv.workspacePath,
         {
           conversationId,
           actionId,
           actionType,
           verifyReady,
+          decisionClarityCompletionBlocked,
+          decisionClarityMissingFieldCount: decisionClarityMissingFields.length,
           unknownScopeMutationBlocked,
           releaseGateCompletionBlocked,
           releaseGateBlockedReasonCount: releaseGateBlockedReasons.length,
@@ -5679,7 +5804,7 @@ No markdown, no explanation outside the JSON.`;
 
       if (wave2Contracts.predictiveWarning) {
         this._trackStudioEvent(
-          effectiveVerifySuccess
+          completionSuccess
             ? 'workspai.studio.prediction_falsified'
             : 'workspai.studio.prediction_verified',
           conv.workspacePath,
@@ -5689,7 +5814,7 @@ No markdown, no explanation outside the JSON.`;
             actionType,
             predictionKey: wave2Contracts.predictiveWarning.telemetrySeed.predictionKey,
             warningId: wave2Contracts.predictiveWarning.warningId,
-            verifySuccess: effectiveVerifySuccess,
+            verifySuccess: completionSuccess,
             framework: conv.framework ?? 'unknown',
           }
         );
@@ -5702,7 +5827,7 @@ No markdown, no explanation outside the JSON.`;
         workspacePath: conv.workspacePath ?? activeWorkspacePath ?? '',
         framework: conv.framework,
         wave2Contracts,
-        verifySuccess: effectiveVerifySuccess,
+        verifySuccess: completionSuccess,
       });
 
       if (incidentReproPackEvidence) {
@@ -5727,7 +5852,7 @@ No markdown, no explanation outside the JSON.`;
         });
       }
 
-      if (effectiveVerifySuccess && conv.importedIncidentReplay && conv.workspacePath) {
+      if (completionSuccess && conv.importedIncidentReplay && conv.workspacePath) {
         const replayMemorySaved = await this._persistIncidentReplayLearning({
           workspacePath: conv.workspacePath,
           packId: conv.importedIncidentReplay.packId,
@@ -5797,9 +5922,9 @@ No markdown, no explanation outside the JSON.`;
       }
 
       const uiPrefs = this._getUiPreferences();
-      if (effectiveVerifySuccess && uiPrefs.incidentAutoLearningPrompt) {
+      if (completionSuccess && uiPrefs.incidentAutoLearningPrompt) {
         const memorySuggestion = buildIncidentMemoryEnrichmentSuggestion({
-          verifySuccess: effectiveVerifySuccess,
+          verifySuccess: completionSuccess,
           actionType,
           likelyFailureMode: wave2Contracts.impactAssessment.likelyFailureMode,
           verifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
@@ -5868,6 +5993,7 @@ No markdown, no explanation outside the JSON.`;
             actionType === 'apply-debug-patch' &&
             !unknownScopeMutationBlocked &&
             !releaseGateCompletionBlocked &&
+            !decisionClarityCompletionBlocked &&
             sandboxEvidence?.safeToApply === true &&
             actionPolicy.riskClass !== 'high-risk-mutating';
 
@@ -5913,20 +6039,22 @@ No markdown, no explanation outside the JSON.`;
       data: {
         conversationId,
         actionId,
-        success: effectiveVerifySuccess,
+        success: completionSuccess,
         outputSummary: releaseGateCompletionBlocked
           ? `${actionType} - blocked by release gate: ${
               releaseGateBlockedReasons[0] ||
               'verify, scope, and rollback requirements are not satisfied'
             }`
-          : effectiveVerifySuccess
-            ? `${actionType} \u2014 result shown in conversation above`
-            : rollbackEvidence
-              ? `${actionType} \u2014 verification failed; rollback status: ${rollbackEvidence.status}`
-              : verifyReady
-                ? `${actionType} \u2014 verification failed; review output and retry safely`
-                : `${actionType} \u2014 verification required before completion claim`,
-        verificationRequired: !verifyReady,
+          : decisionClarityCompletionBlocked
+            ? `${actionType} - blocked by decision clarity contract: ${decisionClarityMissingFields[0] || 'required fields are missing'}`
+            : completionSuccess
+              ? `${actionType} \u2014 result shown in conversation above`
+              : rollbackEvidence
+                ? `${actionType} \u2014 verification failed; rollback status: ${rollbackEvidence.status}`
+                : verifyReady
+                  ? `${actionType} \u2014 verification failed; review output and retry safely`
+                  : `${actionType} \u2014 verification required before completion claim`,
+        verificationRequired: !verifyReady || decisionClarityCompletionBlocked,
         verifyPolicy: {
           requiresVerifyPath: actionPolicy.requiresVerifyPath,
           requiresImpactReview: actionPolicy.requiresImpactReview,
@@ -5950,6 +6078,7 @@ No markdown, no explanation outside the JSON.`;
         releaseGateEvidence: wave2Contracts.releaseGateEvidence,
         contractRuntimeEvidence: wave2Contracts.contractRuntimeEvidence,
         verifyCommandPack,
+        decisionClarity: decisionClarityContract,
       },
       meta: { requestId, version: 'v1' },
     });

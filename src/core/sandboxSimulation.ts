@@ -25,6 +25,9 @@ export interface SandboxSimulationInput {
   verifyCommands: SandboxVerifyCommand[];
   rollbackHint?: string;
   defaultTimeoutMs?: number;
+  maxTotalDurationMs?: number;
+  maxVerifyCommands?: number;
+  stopOnFirstFailure?: boolean;
 }
 
 export interface SandboxSimulationCommandResult {
@@ -280,9 +283,113 @@ export async function runSandboxSimulation(
     typeof input.defaultTimeoutMs === 'number' && Number.isFinite(input.defaultTimeoutMs)
       ? Math.max(1000, Math.min(120000, Math.round(input.defaultTimeoutMs)))
       : 30000;
+  const maxTotalDurationMs =
+    typeof input.maxTotalDurationMs === 'number' && Number.isFinite(input.maxTotalDurationMs)
+      ? Math.max(1000, Math.min(300000, Math.round(input.maxTotalDurationMs)))
+      : 120000;
+  const maxVerifyCommands =
+    typeof input.maxVerifyCommands === 'number' && Number.isFinite(input.maxVerifyCommands)
+      ? Math.max(1, Math.min(100, Math.round(input.maxVerifyCommands)))
+      : 25;
+  const stopOnFirstFailure = input.stopOnFirstFailure !== false;
   const verifyCommands = input.verifyCommands
     .map((command) => sanitizeCommand(command))
     .filter((command): command is SandboxVerifyCommand => command !== null);
+
+  const workspacePath = typeof input.workspacePath === 'string' ? input.workspacePath.trim() : '';
+  const workspaceExists = workspacePath.length > 0 && (await fs.pathExists(workspacePath));
+  if (!workspaceExists) {
+    const completedAt = now().toISOString();
+    const verifyPackContract = buildVerifyPackOutputContract({
+      producer: 'sandbox-simulation',
+      generatedAt: completedAt,
+      commands: [
+        {
+          label: 'workspace-path-validation',
+          command: '__workspace_path_validation__',
+          args: [input.workspacePath],
+          exitCode: 2,
+          durationMs: 0,
+        },
+      ],
+    });
+
+    await trackSandboxEvent(
+      deps,
+      'workspai.studio.sandbox_simulation_failed',
+      input.workspacePath,
+      {
+        actionId: input.actionId,
+        riskClass: input.riskClass,
+        reason: 'workspace-path-invalid',
+        mode: 'verify-pack-simulation',
+      }
+    );
+
+    return {
+      actionId: input.actionId,
+      workspacePath: input.workspacePath,
+      riskClass: input.riskClass,
+      mode: 'verify-pack-simulation',
+      status: 'failed',
+      startedAt,
+      completedAt,
+      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)),
+      commandResults: [],
+      recommendedRollbackPath: input.rollbackHint ?? defaultRollbackHint(input.riskClass),
+      safeToApply: false,
+      reason: 'Workspace path is missing or not accessible for sandbox simulation.',
+      verifyPackContract,
+    };
+  }
+
+  if (verifyCommands.length > maxVerifyCommands) {
+    const completedAt = now().toISOString();
+    const verifyPackContract = buildVerifyPackOutputContract({
+      producer: 'sandbox-simulation',
+      generatedAt: completedAt,
+      commands: [
+        {
+          label: 'verify-command-limit',
+          command: '__verify_command_limit__',
+          args: [String(verifyCommands.length), String(maxVerifyCommands)],
+          exitCode: 2,
+          durationMs: 0,
+        },
+      ],
+    });
+
+    await trackSandboxEvent(
+      deps,
+      'workspai.studio.sandbox_simulation_failed',
+      input.workspacePath,
+      {
+        actionId: input.actionId,
+        riskClass: input.riskClass,
+        verifyCommandCount: verifyCommands.length,
+        maxVerifyCommands,
+        reason: 'verify-command-limit-exceeded',
+        mode: 'verify-pack-simulation',
+      }
+    );
+
+    return {
+      actionId: input.actionId,
+      workspacePath: input.workspacePath,
+      riskClass: input.riskClass,
+      mode: 'verify-pack-simulation',
+      status: 'failed',
+      startedAt,
+      completedAt,
+      durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)),
+      commandResults: [],
+      recommendedRollbackPath: input.rollbackHint ?? defaultRollbackHint(input.riskClass),
+      safeToApply: false,
+      reason: `Verify command pack exceeds limit (${verifyCommands.length} > ${maxVerifyCommands}); keep apply blocked and reduce verify scope.`,
+      verifyPackContract,
+    };
+  }
+
   const allowDefaultDisposableSandbox =
     typeof deps.allowDefaultDisposableSandbox === 'boolean'
       ? deps.allowDefaultDisposableSandbox
@@ -296,6 +403,9 @@ export async function runSandboxSimulation(
     actionId: input.actionId,
     riskClass: input.riskClass,
     verifyCommandCount: verifyCommands.length,
+    maxVerifyCommands,
+    stopOnFirstFailure,
+    maxTotalDurationMs,
     mode: sandboxRuntime.mode,
   });
 
@@ -325,6 +435,8 @@ export async function runSandboxSimulation(
     }
 
     const commandResults: SandboxSimulationCommandResult[] = [];
+    let totalDurationMs = 0;
+    let exceededTotalTimeout = false;
     for (const verifyCommand of verifyCommands) {
       const commandStartedAt = now().getTime();
       const result = await runner(verifyCommand.command, verifyCommand.args ?? [], {
@@ -342,11 +454,30 @@ export async function runSandboxSimulation(
         stderr: result.stderr,
         durationMs: Math.max(0, commandCompletedAt - commandStartedAt),
       });
+
+      totalDurationMs += Math.max(0, commandCompletedAt - commandStartedAt);
+      if (totalDurationMs > maxTotalDurationMs) {
+        commandResults.push({
+          label: 'cumulative-timeout',
+          command: '__cumulative_timeout__',
+          args: [String(maxTotalDurationMs)],
+          exitCode: 124,
+          stdout: '',
+          stderr: `Cumulative verify timeout exceeded (${maxTotalDurationMs}ms).`,
+          durationMs: 0,
+        });
+        exceededTotalTimeout = true;
+        break;
+      }
+
+      if (stopOnFirstFailure && result.exitCode !== 0) {
+        break;
+      }
     }
 
     const failedCommands = commandResults.filter((result) => result.exitCode !== 0);
     const status: SandboxSimulationEvidence['status'] =
-      failedCommands.length === 0 ? 'passed' : 'failed';
+      failedCommands.length === 0 && !exceededTotalTimeout ? 'passed' : 'failed';
     await trackSandboxEvent(
       deps,
       status === 'passed'
@@ -358,6 +489,9 @@ export async function runSandboxSimulation(
         riskClass: input.riskClass,
         verifyCommandCount: verifyCommands.length,
         failedCommandCount: failedCommands.length,
+        exceededTotalTimeout,
+        totalDurationMs,
+        stopOnFirstFailure,
         mode: sandboxRuntime.mode,
       }
     );
@@ -389,12 +523,14 @@ export async function runSandboxSimulation(
       reason:
         status === 'passed'
           ? 'All sandbox verify commands passed before apply.'
-          : 'One or more sandbox verify commands failed; keep apply blocked and inspect evidence.',
+          : exceededTotalTimeout
+            ? `Sandbox verify exceeded cumulative timeout budget (${maxTotalDurationMs}ms); keep apply blocked and inspect evidence.`
+            : 'One or more sandbox verify commands failed; keep apply blocked and inspect evidence.',
       verifyPackContract,
     };
   } finally {
     if (cleanupSandbox) {
-      await cleanupSandbox();
+      await cleanupSandbox().catch(() => undefined);
     }
   }
 }

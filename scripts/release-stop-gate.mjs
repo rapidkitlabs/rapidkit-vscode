@@ -62,6 +62,30 @@ function parseArgs(argv) {
     replayToResolutionRateMin: parseEnvNumber(['WORKSPAI_GATE_REPLAY_TO_RESOLUTION_RATE_MIN'], 60),
     verifyAutoRollbackSuccessRateMin: parseEnvNumber(['WORKSPAI_GATE_ROLLBACK_SUCCESS_RATE_MIN'], 60),
     falseConfidenceRateMax: parseEnvNumber(['WORKSPAI_GATE_FALSE_CONFIDENCE_RATE_MAX'], 40),
+    maxTimeToFirstConfidentActionP50Ms: parseEnvNumber(
+      ['WORKSPAI_GATE_OUTCOME_MAX_TTFCA_P50_MS'],
+      30000
+    ),
+    minFirstActionSuccessRate: parseEnvNumber(
+      ['WORKSPAI_GATE_OUTCOME_MIN_FIRST_ACTION_SUCCESS_RATE'],
+      0.6
+    ),
+    maxReopenRateAfterSuggestedFix: parseEnvNumber(
+      ['WORKSPAI_GATE_OUTCOME_MAX_REOPEN_RATE_AFTER_SUGGESTED_FIX'],
+      0.25
+    ),
+    maxOverrideRateOnRecommendations: parseEnvNumber(
+      ['WORKSPAI_GATE_OUTCOME_MAX_OVERRIDE_RATE_ON_RECOMMENDATIONS'],
+      0.35
+    ),
+    minVerifyPathCompletionRate: parseEnvNumber(
+      ['WORKSPAI_GATE_OUTCOME_MIN_VERIFY_PATH_COMPLETION_RATE'],
+      0.8
+    ),
+    minRollbackRecoverySuccessRate: parseEnvNumber(
+      ['WORKSPAI_GATE_OUTCOME_MIN_ROLLBACK_RECOVERY_SUCCESS_RATE'],
+      0.7
+    ),
     verifyPackAutopilotReadinessRateMin: parseEnvNumber(
       ['WORKSPAI_GATE_VERIFY_PACK_AUTOPILOT_READINESS_RATE_MIN'],
       0
@@ -72,6 +96,25 @@ function parseArgs(argv) {
     verifyPackAutopilotGeneratedMinForEnforcement: parseEnvNumber(
       ['WORKSPAI_GATE_VERIFY_PACK_AUTOPILOT_GENERATED_MIN_FOR_ENFORCEMENT'],
       20
+    ),
+    releaseReadinessValidationMode: String(
+      process.env.WORKSPAI_GATE_RELEASE_READINESS_VALIDATION_MODE || 'warn'
+    ).toLowerCase(),
+    releaseReadinessArtifactsMinForEnforcement: parseEnvNumber(
+      ['WORKSPAI_GATE_RELEASE_READINESS_ARTIFACTS_MIN_FOR_ENFORCEMENT'],
+      10
+    ),
+    releaseReadinessDecisionsMinForEnforcement: parseEnvNumber(
+      ['WORKSPAI_GATE_RELEASE_READINESS_DECISIONS_MIN_FOR_ENFORCEMENT'],
+      5
+    ),
+    releaseReadinessDecisionAccuracyMin: parseEnvNumber(
+      ['WORKSPAI_GATE_RELEASE_READINESS_DECISION_ACCURACY_MIN'],
+      80
+    ),
+    releaseReadinessNoGoPreventedIncidentRateMin: parseEnvNumber(
+      ['WORKSPAI_GATE_RELEASE_READINESS_NO_GO_PREVENTED_INCIDENT_RATE_MIN'],
+      70
     ),
     predictiveCalibrationMode: String(
       process.env.WORKSPAI_GATE_PREDICTIVE_CALIBRATION_MODE || 'off'
@@ -255,6 +298,48 @@ function parseArgs(argv) {
       const value = Number(argv[i + 1]);
       if (Number.isFinite(value)) {
         options.verifyPackAutopilotGeneratedMinForEnforcement = value;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--release-readiness-validation-mode') {
+      options.releaseReadinessValidationMode = String(argv[i + 1] || 'warn').toLowerCase();
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--release-readiness-artifacts-min') {
+      const value = Number(argv[i + 1]);
+      if (Number.isFinite(value)) {
+        options.releaseReadinessArtifactsMinForEnforcement = value;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--release-readiness-decisions-min') {
+      const value = Number(argv[i + 1]);
+      if (Number.isFinite(value)) {
+        options.releaseReadinessDecisionsMinForEnforcement = value;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--release-readiness-decision-accuracy-min') {
+      const value = Number(argv[i + 1]);
+      if (Number.isFinite(value)) {
+        options.releaseReadinessDecisionAccuracyMin = value;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--release-readiness-no-go-prevented-min') {
+      const value = Number(argv[i + 1]);
+      if (Number.isFinite(value)) {
+        options.releaseReadinessNoGoPreventedIncidentRateMin = value;
       }
       i += 1;
       continue;
@@ -522,6 +607,10 @@ function buildClaimChecklistStatus(checklistPath) {
 
 function percent(numerator, denominator) {
   return denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(2)) : null;
+}
+
+function ratio(numerator, denominator) {
+  return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : null;
 }
 
 function buildPredictionAggregation({ predictionShown, predictionVerified, predictionFalsified }) {
@@ -914,6 +1003,102 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
   const replayToResolutionRate = percent(incidentReplayMemoryEnriched, reproPackImported);
   const releaseReadinessDecisionAccuracy = percent(decisionsCorrect, decisionsValidated);
   const noGoPreventedIncidentRate = percent(noGoPreventedIncident, noGoDecisionsValidated);
+
+  const outcomeRecordsRaw = Array.isArray(telemetry?.outcomeRecords)
+    ? telemetry.outcomeRecords
+    : [];
+  const outcomeRecords = outcomeRecordsRaw
+    .filter((record) => record && typeof record === 'object')
+    .map((record) => ({
+      timeToFirstConfidentActionMs:
+        typeof record.timeToFirstConfidentActionMs === 'number' &&
+        Number.isFinite(record.timeToFirstConfidentActionMs) &&
+        record.timeToFirstConfidentActionMs >= 0
+          ? record.timeToFirstConfidentActionMs
+          : null,
+      firstActionSucceeded: record.firstActionSucceeded === true,
+      reopenedAfterSuggestedFix: record.reopenedAfterSuggestedFix === true,
+      recommendationOverridden: record.recommendationOverridden === true,
+      mutatingActionReachedVerify:
+        typeof record.mutatingActionReachedVerify === 'boolean'
+          ? record.mutatingActionReachedVerify
+          : null,
+      rollbackAttemptResult:
+        typeof record.rollbackAttemptResult === 'boolean' ? record.rollbackAttemptResult : null,
+    }));
+
+  const timeToFirstConfidentActionSamples = outcomeRecords
+    .map((record) => record.timeToFirstConfidentActionMs)
+    .filter((value) => typeof value === 'number');
+  const sortedTimeToFirstConfidentActionSamples = [...timeToFirstConfidentActionSamples].sort(
+    (left, right) => left - right
+  );
+  const timeToFirstConfidentActionP50Ms =
+    sortedTimeToFirstConfidentActionSamples.length === 0
+      ? null
+      : sortedTimeToFirstConfidentActionSamples.length % 2 === 1
+      ? sortedTimeToFirstConfidentActionSamples[
+          Math.floor(sortedTimeToFirstConfidentActionSamples.length / 2)
+        ]
+      : Math.round(
+          (sortedTimeToFirstConfidentActionSamples[
+            sortedTimeToFirstConfidentActionSamples.length / 2 - 1
+          ] +
+            sortedTimeToFirstConfidentActionSamples[
+              sortedTimeToFirstConfidentActionSamples.length / 2
+            ]) /
+            2
+        );
+
+  const firstActionSuccessRate = ratio(
+    outcomeRecords.filter((record) => record.firstActionSucceeded).length,
+    outcomeRecords.length
+  );
+  const reopenRateAfterSuggestedFix = ratio(
+    outcomeRecords.filter((record) => record.reopenedAfterSuggestedFix).length,
+    outcomeRecords.length
+  );
+  const overrideRateOnRecommendations = ratio(
+    outcomeRecords.filter((record) => record.recommendationOverridden).length,
+    outcomeRecords.length
+  );
+
+  const mutatingOutcomeRecords = outcomeRecords.filter(
+    (record) => record.mutatingActionReachedVerify !== null
+  );
+  const verifyPathCompletionRate = ratio(
+    mutatingOutcomeRecords.filter((record) => record.mutatingActionReachedVerify === true).length,
+    mutatingOutcomeRecords.length
+  );
+
+  const rollbackOutcomeRecords = outcomeRecords.filter(
+    (record) => record.rollbackAttemptResult !== null
+  );
+  const rollbackRecoverySuccessRate = ratio(
+    rollbackOutcomeRecords.filter((record) => record.rollbackAttemptResult === true).length,
+    rollbackOutcomeRecords.length
+  );
+
+  const outcomeTelemetryEvidencePass = outcomeRecords.length > 0;
+  const timeToFirstConfidentActionP50Pass =
+    timeToFirstConfidentActionP50Ms !== null &&
+    timeToFirstConfidentActionP50Ms <= effectiveThresholds.maxTimeToFirstConfidentActionP50Ms;
+  const firstActionSuccessRatePass =
+    firstActionSuccessRate !== null &&
+    firstActionSuccessRate >= effectiveThresholds.minFirstActionSuccessRate;
+  const reopenRateAfterSuggestedFixPass =
+    reopenRateAfterSuggestedFix !== null &&
+    reopenRateAfterSuggestedFix <= effectiveThresholds.maxReopenRateAfterSuggestedFix;
+  const overrideRateOnRecommendationsPass =
+    overrideRateOnRecommendations !== null &&
+    overrideRateOnRecommendations <= effectiveThresholds.maxOverrideRateOnRecommendations;
+  const verifyPathCompletionRatePass =
+    verifyPathCompletionRate !== null &&
+    verifyPathCompletionRate >= effectiveThresholds.minVerifyPathCompletionRate;
+  const rollbackRecoverySuccessRatePass =
+    rollbackRecoverySuccessRate !== null &&
+    rollbackRecoverySuccessRate >= effectiveThresholds.minRollbackRecoverySuccessRate;
+
   const rollbackTelemetryEvidencePass = rollbackAttempted > 0;
   const verifyAutoRollbackSuccessRatePass =
     verifyAutoRollbackSuccessRate !== null &&
@@ -959,6 +1144,59 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
     verifyPackReadinessMode === 'warn' ||
     (verifyPackReadinessEnforced && verifyPackReadinessWouldPass);
 
+  const releaseReadinessValidationModeRaw = String(
+    calibrationOptions.releaseReadinessValidationMode || 'warn'
+  ).toLowerCase();
+  const releaseReadinessValidationMode =
+    releaseReadinessValidationModeRaw === 'off' ||
+    releaseReadinessValidationModeRaw === 'warn' ||
+    releaseReadinessValidationModeRaw === 'enforce' ||
+    releaseReadinessValidationModeRaw === 'auto'
+      ? releaseReadinessValidationModeRaw
+      : 'warn';
+  const releaseReadinessArtifactsMinForEnforcement = Math.max(
+    1,
+    Number.isFinite(calibrationOptions.releaseReadinessArtifactsMinForEnforcement)
+      ? Math.round(calibrationOptions.releaseReadinessArtifactsMinForEnforcement)
+      : 10
+  );
+  const releaseReadinessDecisionsMinForEnforcement = Math.max(
+    1,
+    Number.isFinite(calibrationOptions.releaseReadinessDecisionsMinForEnforcement)
+      ? Math.round(calibrationOptions.releaseReadinessDecisionsMinForEnforcement)
+      : 5
+  );
+  const releaseReadinessDecisionAccuracyMin = Number.isFinite(
+    calibrationOptions.releaseReadinessDecisionAccuracyMin
+  )
+    ? calibrationOptions.releaseReadinessDecisionAccuracyMin
+    : 80;
+  const releaseReadinessNoGoPreventedIncidentRateMin = Number.isFinite(
+    calibrationOptions.releaseReadinessNoGoPreventedIncidentRateMin
+  )
+    ? calibrationOptions.releaseReadinessNoGoPreventedIncidentRateMin
+    : 70;
+  const releaseReadinessEvidenceEnoughForEnforcement =
+    releaseReadinessArtifactsExported >= releaseReadinessArtifactsMinForEnforcement &&
+    decisionsValidated >= releaseReadinessDecisionsMinForEnforcement;
+  const releaseReadinessValidationEnforced =
+    releaseReadinessValidationMode === 'enforce' ||
+    (releaseReadinessValidationMode === 'auto' && releaseReadinessEvidenceEnoughForEnforcement);
+  const releaseReadinessValidationWouldPass =
+    (releaseReadinessArtifactsExported > 0 || decisionsValidated > 0 || noGoDecisionsExported > 0) &&
+    decisionsValidated > 0 &&
+    noGoDecisionsValidated > 0 &&
+    releaseReadinessDecisionAccuracy !== null &&
+    releaseReadinessDecisionAccuracy >= releaseReadinessDecisionAccuracyMin &&
+    noGoPreventedIncidentRate !== null &&
+    noGoPreventedIncidentRate >= releaseReadinessNoGoPreventedIncidentRateMin;
+  const releaseReadinessValidationPass =
+    releaseReadinessValidationMode === 'off' ||
+    releaseReadinessValidationMode === 'warn' ||
+    (releaseReadinessValidationMode === 'auto' &&
+      (!releaseReadinessValidationEnforced || releaseReadinessValidationWouldPass)) ||
+    (releaseReadinessValidationMode === 'enforce' && releaseReadinessValidationWouldPass);
+
   // D04: performance SLO — compute P95 from latency samples stored in the marker
   const latencySamplesRaw = Array.isArray(telemetry?.latencySamples) ? telemetry.latencySamples : [];
   const latencySamples = latencySamplesRaw.filter(
@@ -996,9 +1234,17 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
       falseAlarmRate !== null && falseAlarmRate <= effectiveThresholds.falseAlarmRateMax,
     preventedIncidentRatePass:
       preventedIncidentRate !== null && preventedIncidentRate >= effectiveThresholds.preventedIncidentRateMin,
+    outcomeTelemetryEvidencePass,
+    timeToFirstConfidentActionP50Pass,
+    firstActionSuccessRatePass,
+    reopenRateAfterSuggestedFixPass,
+    overrideRateOnRecommendationsPass,
+    verifyPathCompletionRatePass,
+    rollbackRecoverySuccessRatePass,
     reproPackShareRatePass,
     replayToResolutionRatePass,
     verifyPackAutopilotReadinessRatePass,
+    releaseReadinessValidationPass,
     rollbackTelemetryEvidencePass,
     verifyAutoRollbackSuccessRatePass,
     falseConfidenceRatePass,
@@ -1018,6 +1264,16 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
       evidenceEnoughForEnforcement: verifyPackReadinessEvidenceEnough,
       enforced: verifyPackReadinessEnforced,
       wouldPass: verifyPackReadinessWouldPass,
+    },
+    releaseReadinessValidationRollout: {
+      mode: releaseReadinessValidationMode,
+      decisionAccuracyMin: releaseReadinessDecisionAccuracyMin,
+      noGoPreventedIncidentRateMin: releaseReadinessNoGoPreventedIncidentRateMin,
+      artifactsMinForEnforcement: releaseReadinessArtifactsMinForEnforcement,
+      decisionsMinForEnforcement: releaseReadinessDecisionsMinForEnforcement,
+      evidenceEnoughForEnforcement: releaseReadinessEvidenceEnoughForEnforcement,
+      enforced: releaseReadinessValidationEnforced,
+      wouldPass: releaseReadinessValidationWouldPass,
     },
     releaseReadinessValidation: {
       telemetryEvidencePass:
@@ -1069,6 +1325,13 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
       noGoPreventedIncident,
       releaseReadinessDecisionAccuracy,
       noGoPreventedIncidentRate,
+      outcomeSampleCount: outcomeRecords.length,
+      timeToFirstConfidentActionP50Ms,
+      firstActionSuccessRate,
+      reopenRateAfterSuggestedFix,
+      overrideRateOnRecommendations,
+      verifyPathCompletionRate,
+      rollbackRecoverySuccessRate,
       firstChunkP95,
       syncP95,
       boardRenderP95,
@@ -1085,9 +1348,17 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
         gates.predictivePrecisionPass &&
         gates.falseAlarmRatePass &&
         gates.preventedIncidentRatePass &&
+        gates.outcomeTelemetryEvidencePass &&
+        gates.timeToFirstConfidentActionP50Pass &&
+        gates.firstActionSuccessRatePass &&
+        gates.reopenRateAfterSuggestedFixPass &&
+        gates.overrideRateOnRecommendationsPass &&
+        gates.verifyPathCompletionRatePass &&
+        gates.rollbackRecoverySuccessRatePass &&
         gates.reproPackShareRatePass &&
         gates.replayToResolutionRatePass &&
         gates.verifyPackAutopilotReadinessRatePass &&
+        gates.releaseReadinessValidationPass &&
         gates.rollbackTelemetryEvidencePass &&
         gates.verifyAutoRollbackSuccessRatePass &&
         gates.falseConfidenceRatePass &&
@@ -1192,6 +1463,12 @@ function main() {
     replayToResolutionRateMin: options.replayToResolutionRateMin,
     verifyAutoRollbackSuccessRateMin: options.verifyAutoRollbackSuccessRateMin,
     falseConfidenceRateMax: options.falseConfidenceRateMax,
+    maxTimeToFirstConfidentActionP50Ms: options.maxTimeToFirstConfidentActionP50Ms,
+    minFirstActionSuccessRate: options.minFirstActionSuccessRate,
+    maxReopenRateAfterSuggestedFix: options.maxReopenRateAfterSuggestedFix,
+    maxOverrideRateOnRecommendations: options.maxOverrideRateOnRecommendations,
+    minVerifyPathCompletionRate: options.minVerifyPathCompletionRate,
+    minRollbackRecoverySuccessRate: options.minRollbackRecoverySuccessRate,
     verifyPackAutopilotReadinessRateMin: options.verifyPackAutopilotReadinessRateMin,
     firstChunkLatencyP95MaxMs: options.firstChunkLatencyP95MaxMs,
     syncLatencyP95MaxMs: options.syncLatencyP95MaxMs,
@@ -1209,6 +1486,14 @@ function main() {
       verifyPackAutopilotReadinessMode: options.verifyPackAutopilotReadinessMode,
       verifyPackAutopilotGeneratedMinForEnforcement:
         options.verifyPackAutopilotGeneratedMinForEnforcement,
+      releaseReadinessValidationMode: options.releaseReadinessValidationMode,
+      releaseReadinessArtifactsMinForEnforcement:
+        options.releaseReadinessArtifactsMinForEnforcement,
+      releaseReadinessDecisionsMinForEnforcement:
+        options.releaseReadinessDecisionsMinForEnforcement,
+      releaseReadinessDecisionAccuracyMin: options.releaseReadinessDecisionAccuracyMin,
+      releaseReadinessNoGoPreventedIncidentRateMin:
+        options.releaseReadinessNoGoPreventedIncidentRateMin,
     }
   );
 
@@ -1224,6 +1509,19 @@ function main() {
   ) {
     console.warn(
       `[release-stop-gate] Verify-pack readiness below threshold but not enforced (mode=${verifyPackRollout.mode}, evidenceEnough=${verifyPackRollout.evidenceEnoughForEnforcement}).`
+    );
+  }
+
+  const releaseReadinessRollout = gateStatus.releaseReadinessValidationRollout;
+  if (
+    releaseReadinessRollout &&
+    releaseReadinessRollout.wouldPass === false &&
+    releaseReadinessRollout.enforced === false &&
+    releaseReadinessRollout.mode !== 'off' &&
+    releaseReadinessRollout.mode !== 'warn'
+  ) {
+    console.warn(
+      `[release-stop-gate] Release-readiness validation below threshold but not enforced (mode=${releaseReadinessRollout.mode}, evidenceEnough=${releaseReadinessRollout.evidenceEnoughForEnforcement}).`
     );
   }
 

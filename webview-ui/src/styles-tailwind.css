@@ -5540,6 +5540,14 @@
     color: #00b894;
   }
 
+  .incident-rollback-evidence.is-passed {
+    color: #00b894;
+  }
+
+  .incident-rollback-evidence.is-warning {
+    color: #fdcb6e;
+  }
+
   .incident-rollback-evidence.is-partial {
     color: #fdcb6e;
   }
@@ -5547,6 +5555,40 @@
   .incident-rollback-evidence.is-failed,
   .incident-rollback-evidence.is-unavailable {
     color: #e17055;
+  }
+
+  .incident-criteria-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+    margin-right: 4px;
+  }
+
+  .incident-criteria-status.is-pass {
+    color: #00b894;
+    border-color: color-mix(in srgb, #00b894 55%, transparent);
+    background: color-mix(in srgb, #00b894 15%, transparent);
+  }
+
+  .incident-criteria-status.is-fail {
+    color: #e17055;
+    border-color: color-mix(in srgb, #e17055 55%, transparent);
+    background: color-mix(in srgb, #e17055 15%, transparent);
+  }
+
+  .incident-criteria-status.is-partial,
+  .incident-criteria-status.is-unknown {
+    color: #fdcb6e;
+    border-color: color-mix(in srgb, #fdcb6e 55%, transparent);
+    background: color-mix(in srgb, #fdcb6e 16%, transparent);
   }
 
   /* ── Command Chat ──────────────────────────── */

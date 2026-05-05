@@ -534,7 +534,7 @@ describe('incidentStudioPayload', () => {
       },
     });
 
-    expect(normalized).toEqual({
+    expect(normalized).toMatchObject({
       success: true,
       outputSummary: 'authorization:[REDACTED]',
       verificationRequired: true,
@@ -550,6 +550,22 @@ describe('incidentStudioPayload', () => {
         passed: 7,
         warnings: 1,
         errors: 0,
+      },
+      decisionClarity: {
+        situation: 'authorization:[REDACTED]',
+        reason: undefined,
+        impactScope: [],
+        risk: {
+          confidenceBand: 'low',
+          confidence: 0,
+          mutating: true,
+        },
+        nextStep: undefined,
+        verifyPlan: [],
+        rollbackPlan: undefined,
+        evidenceLinks: [],
+        requiredMissingFields: ['nextStep', 'verifyPlan', 'impactScope', 'rollbackPlan'],
+        mutationReady: false,
       },
     });
   });
@@ -858,6 +874,77 @@ describe('incidentStudioPayload', () => {
         },
       ],
       blockedReasons: ['scope unknown'],
+    });
+
+    expect(normalized.decisionClarity).toEqual({
+      situation: undefined,
+      reason: undefined,
+      impactScope: [],
+      risk: {
+        confidenceBand: 'low',
+        confidence: 0,
+        mutating: false,
+      },
+      nextStep: 'rapidkit doctor workspace',
+      verifyPlan: ['rapidkit doctor workspace'],
+      rollbackPlan: undefined,
+      evidenceLinks: ['scope unknown'],
+      requiredMissingFields: ['situation'],
+      mutationReady: false,
+    });
+  });
+
+  it('marks decision clarity as mutation-ready when mandatory fields are present for mutating flow', () => {
+    const normalized = normalizeIncidentActionResultPayload({
+      success: false,
+      outputSummary: 'Orders write path failed after config change.',
+      verifyPolicy: {
+        requiresVerifyPath: true,
+        requiresImpactReview: true,
+      },
+      diagnosis: {
+        confidence: 78,
+        confidenceBand: 'high',
+        signalSources: ['doctor-evidence', 'system-graph'],
+        relatedFiles: ['src/orders/service.ts', 'src/orders/repository.ts'],
+        recommendedFocus: 'Dependency chain changed in persistence layer.',
+      },
+      verifyCommandPack: {
+        qualityScore: 90,
+        readiness: 'ready',
+        rationale: 'Run required checks before any apply step.',
+        commands: [
+          {
+            label: 'integration verify',
+            command: 'npm run test:integration',
+            scope: 'project',
+            required: true,
+          },
+        ],
+        blockedReasons: [],
+      },
+      rollback: {
+        attempted: false,
+        status: 'skipped',
+        suggestedNextStep: 'Restore affected files with git restore and rerun verify.',
+      },
+    });
+
+    expect(normalized.decisionClarity).toEqual({
+      situation: 'Orders write path failed after config change.',
+      reason: 'Dependency chain changed in persistence layer.',
+      impactScope: ['src/orders/service.ts', 'src/orders/repository.ts'],
+      risk: {
+        confidenceBand: 'high',
+        confidence: 78,
+        mutating: true,
+      },
+      nextStep: 'npm run test:integration',
+      verifyPlan: ['npm run test:integration'],
+      rollbackPlan: 'Restore affected files with git restore and rerun verify.',
+      evidenceLinks: ['doctor-evidence', 'system-graph'],
+      requiredMissingFields: [],
+      mutationReady: true,
     });
   });
 

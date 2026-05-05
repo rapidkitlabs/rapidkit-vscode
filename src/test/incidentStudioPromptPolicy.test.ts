@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildIncidentFirstResponseRules,
   classifyIncidentActionPolicy,
   isIncidentActionAllowlisted,
 } from '../ui/panels/incidentStudioPromptPolicy';
+
+function readWelcomePanelSource(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const welcomePanelPath = path.resolve(currentDir, '../ui/panels/welcomePanel.ts');
+  return readFileSync(welcomePanelPath, 'utf8');
+}
 
 describe('incidentStudioPromptPolicy', () => {
   it('returns no extra rules for workspace-scoped mode', () => {
@@ -107,5 +116,29 @@ describe('incidentStudioPromptPolicy', () => {
         expect(policy.requiresImpactReview).toBe(true);
       }
     }
+  });
+
+  it('keeps inline-command prompt contract sections stable', () => {
+    const source = readWelcomePanelSource();
+
+    expect(source).toContain("if (actionType === 'inline-command')");
+    expect(source).toContain('Decision Clarity Contract');
+    expect(source).toContain("'1) Situation'");
+    expect(source).toContain("'2) Why'");
+    expect(source).toContain("'3) Impact scope (exact files/modules)'");
+    expect(source).toContain("'4) Risk (confidence + mutating/non-mutating)'");
+    expect(source).toContain("'5) Next safe step'");
+    expect(source).toContain("'6) Verify plan (required commands)'");
+    expect(source).toContain("'7) Rollback plan'");
+  });
+
+  it('keeps apply patch/module prompt contract sections stable', () => {
+    const source = readWelcomePanelSource();
+
+    expect(source).toContain("if (actionType === 'apply-module-gen')");
+    expect(source).toContain("if (actionType === 'apply-debug-patch')");
+
+    const decisionContractOccurrences = source.match(/Decision Clarity Contract \(required\):/g);
+    expect(decisionContractOccurrences?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 });

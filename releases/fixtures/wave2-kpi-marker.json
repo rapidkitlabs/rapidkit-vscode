@@ -396,6 +396,48 @@
                         "ms": 350,
                         "at": "2026-04-28T10:12:09.000Z"
                     }
+                ],
+                "outcomeRecords": [
+                    {
+                        "timeToFirstConfidentActionMs": 12000,
+                        "firstActionSucceeded": true,
+                        "reopenedAfterSuggestedFix": false,
+                        "recommendationOverridden": false,
+                        "mutatingActionReachedVerify": true,
+                        "rollbackAttemptResult": true
+                    },
+                    {
+                        "timeToFirstConfidentActionMs": 18000,
+                        "firstActionSucceeded": true,
+                        "reopenedAfterSuggestedFix": false,
+                        "recommendationOverridden": false,
+                        "mutatingActionReachedVerify": true,
+                        "rollbackAttemptResult": true
+                    },
+                    {
+                        "timeToFirstConfidentActionMs": 22000,
+                        "firstActionSucceeded": false,
+                        "reopenedAfterSuggestedFix": false,
+                        "recommendationOverridden": false,
+                        "mutatingActionReachedVerify": true,
+                        "rollbackAttemptResult": true
+                    },
+                    {
+                        "timeToFirstConfidentActionMs": 14000,
+                        "firstActionSucceeded": true,
+                        "reopenedAfterSuggestedFix": false,
+                        "recommendationOverridden": true,
+                        "mutatingActionReachedVerify": true,
+                        "rollbackAttemptResult": null
+                    },
+                    {
+                        "timeToFirstConfidentActionMs": 9000,
+                        "firstActionSucceeded": true,
+                        "reopenedAfterSuggestedFix": false,
+                        "recommendationOverridden": false,
+                        "mutatingActionReachedVerify": null,
+                        "rollbackAttemptResult": null
+                    }
                 ]
             }
         }

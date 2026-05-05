@@ -273,6 +273,49 @@ describe('incidentStudioFlowE2E', () => {
     expect(getActionResultPresentation(rollbackFailure).tone).toBe('failure');
   });
 
+  it('keeps decision clarity contract block in verification-required warning state', () => {
+    const policy = classifyIncidentActionPolicy('inline-command');
+    expect(policy.requiresImpactReview).toBe(true);
+    expect(policy.requiresVerifyPath).toBe(true);
+
+    const blockedByDecisionClarity = normalizeIncidentActionResultPayload({
+      success: false,
+      verificationRequired: true,
+      verifyPolicy: policy,
+      outputSummary: 'inline-command - blocked by decision clarity contract: rollbackPlan',
+      diagnosis: {
+        confidence: 82,
+        confidenceBand: 'high',
+        signalSources: ['doctor-evidence', 'system-graph'],
+        relatedFiles: ['src/orders/service.ts'],
+      },
+      verifyCommandPack: {
+        qualityScore: 84,
+        readiness: 'ready',
+        rationale: 'deterministic checks are available',
+        commands: [
+          {
+            label: 'run verify',
+            command: 'npm run test:integration',
+            scope: 'project',
+            required: true,
+          },
+        ],
+        blockedReasons: [],
+      },
+    });
+
+    expect(blockedByDecisionClarity.decisionClarity?.mutationReady).toBe(false);
+    expect(blockedByDecisionClarity.decisionClarity?.requiredMissingFields).toContain(
+      'rollbackPlan'
+    );
+    expect(getActionResultPresentation(blockedByDecisionClarity)).toEqual({
+      tone: 'warning',
+      title: 'Verification required',
+      description: 'inline-command - blocked by decision clarity contract: rollbackPlan',
+    });
+  });
+
   it('guards finalization from duplicate request IDs during verify completion', () => {
     const doneMeta = normalizeIncidentProtocolMeta({
       requestId: ' req-done-1 ',
@@ -377,5 +420,85 @@ describe('incidentStudioFlowE2E', () => {
         'Verification evidence is missing for a verify-first action.',
       ],
     });
+  });
+
+  it('enforces host-level decision clarity block on aiChatActionResult when mandatory fields are missing', () => {
+    // Simulate a mutating action (inline-command) that returns verify=true but is missing:
+    //   - impactScope (diagnosis.relatedFiles is empty → no affected scope)
+    //   - nextStep + verifyPlan (no verifyCommandPack)
+    //   - rollbackPlan (no rollback.suggestedNextStep)
+    const policy = classifyIncidentActionPolicy('inline-command');
+
+    const blockedResult = normalizeIncidentActionResultPayload({
+      success: false,
+      verificationRequired: true,
+      verifyPolicy: policy,
+      outputSummary: 'inline-command - blocked by decision clarity contract: impactScope',
+      diagnosis: {
+        confidence: 75,
+        confidenceBand: 'medium',
+        signalSources: ['doctor-evidence'],
+        relatedFiles: [], // empty → impactScope missing for mutating flow
+      },
+      // no verifyCommandPack → nextStep + verifyPlan missing
+      // no rollback.suggestedNextStep, no sandboxSimulation.recommendedRollbackPath → rollbackPlan missing
+    });
+
+    // All mandatory CLC1 fields absent for a mutating flow
+    expect(blockedResult.decisionClarity?.mutationReady).toBe(false);
+    expect(blockedResult.decisionClarity?.requiredMissingFields).toContain('impactScope');
+    expect(blockedResult.decisionClarity?.requiredMissingFields).toContain('nextStep');
+    expect(blockedResult.decisionClarity?.requiredMissingFields).toContain('verifyPlan');
+    expect(blockedResult.decisionClarity?.requiredMissingFields).toContain('rollbackPlan');
+
+    // Host-level: verificationRequired must remain true
+    expect(blockedResult.verificationRequired).toBe(true);
+
+    // Presentation layer must show warning, not success
+    const presentation = getActionResultPresentation(blockedResult);
+    expect(presentation.tone).toBe('warning');
+    expect(presentation.title).toBe('Verification required');
+    expect(presentation.description).toContain('blocked by decision clarity contract');
+
+    // Case 2: providing all mandatory fields flips mutationReady to true
+    const clearedResult = normalizeIncidentActionResultPayload({
+      success: true,
+      verificationRequired: false,
+      verifyPolicy: policy,
+      outputSummary: 'inline-command - result shown in conversation above',
+      diagnosis: {
+        confidence: 85,
+        confidenceBand: 'high',
+        signalSources: ['doctor-evidence', 'system-graph'],
+        relatedFiles: ['src/payments/service.ts'], // impactScope present
+      },
+      verifyCommandPack: {
+        qualityScore: 90,
+        readiness: 'ready',
+        rationale: 'deterministic verify available',
+        commands: [
+          {
+            label: 'run integration tests',
+            command: 'npm run test:integration',
+            scope: 'project',
+            required: true, // nextStep + verifyPlan present
+          },
+        ],
+        blockedReasons: [],
+      },
+      rollback: {
+        attempted: false,
+        status: 'skipped',
+        candidateFiles: ['src/payments/service.ts'],
+        restoredFiles: [],
+        failedFiles: [],
+        suggestedNextStep: 'git checkout src/payments/service.ts', // rollbackPlan present
+      },
+    });
+
+    expect(clearedResult.decisionClarity?.mutationReady).toBe(true);
+    expect(clearedResult.decisionClarity?.requiredMissingFields).toHaveLength(0);
+    expect(clearedResult.verificationRequired).toBe(false);
+    expect(getActionResultPresentation(clearedResult).tone).toBe('success');
   });
 });

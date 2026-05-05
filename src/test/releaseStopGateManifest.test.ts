@@ -685,4 +685,69 @@ describe('releaseStopGate manifest mode', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('blocks KPI gate in enforce mode when release-readiness validation evidence is insufficient', () => {
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-contract-checks',
+          '--marker',
+          'releases/fixtures/wave3-kpi-marker.json',
+          '--release-readiness-validation-mode',
+          'enforce',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      throw new Error('Expected KPI gate to fail when release-readiness validation is enforced.');
+    } catch (error) {
+      const failure = error as {
+        status?: number;
+        stderr?: string | Buffer;
+        stdout?: string | Buffer;
+      };
+      const stderr = String(failure.stderr || '');
+      const stdout = String(failure.stdout || '');
+
+      expect(failure.status).toBe(1);
+      expect(stderr).toContain('Release blocked: KPI hard-gate failed.');
+      expect(stdout).toContain('"releaseReadinessValidationPass": false');
+      expect(stdout).toContain('"mode": "enforce"');
+    }
+  });
+
+  it('keeps KPI pass in auto mode when release-readiness enforcement evidence is not enough', () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        'scripts/release-stop-gate.mjs',
+        '--skip-contract-checks',
+        '--marker',
+        'releases/fixtures/wave3-kpi-marker.json',
+        '--release-readiness-validation-mode',
+        'auto',
+        '--release-readiness-artifacts-min',
+        '50',
+        '--release-readiness-decisions-min',
+        '30',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      }
+    );
+
+    expect(output).toContain('"mode": "auto"');
+    expect(output).toContain('"evidenceEnoughForEnforcement": false');
+    expect(output).toContain('"enforced": false');
+    expect(output).toContain('"releaseReadinessValidationPass": true');
+    expect(output).toContain('All release stop conditions passed.');
+  });
 });

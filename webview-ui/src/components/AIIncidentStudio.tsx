@@ -19,7 +19,11 @@ import {
 import {
     getActionResultPresentation,
     getBoardActionGuardHint,
+    getDecisionClarityWordingPolicy,
+    getPhaseNextAction,
 } from '../lib/incidentStudioVerifyPolicy';
+import { applyIncidentUxModePolicy } from '../lib/incidentUxModeAdapter';
+import { evaluateArtifactSuccessCriteria } from '../lib/incidentArtifactCriteria';
 import { buildIncidentArchitectureLens } from '../lib/incidentArchitectureLens';
 import {
     buildIncidentArchitectureNavigator,
@@ -819,7 +823,35 @@ export function AIIncidentStudio({
         });
     }, [chatBrainBoard?.actions]);
     const primaryBoardAction = sortedBoardActions[0];
-    const secondaryBoardActions = sortedBoardActions.slice(1, 4);
+    const rawSecondaryBoardActions = sortedBoardActions.slice(1);
+    const advancedBoardActionLabels = sortedBoardActions
+        .filter(
+            (action) =>
+                action.actionType === 'release-readiness-commander' ||
+                riskTone(action.riskLevel) === 'critical'
+        )
+        .map((action) => action.label);
+    const modePresentation = primaryBoardAction
+        ? applyIncidentUxModePolicy(activeUserMode, {
+            primaryCta: primaryBoardAction.label,
+            secondaryCtaLabels: rawSecondaryBoardActions.map((a) => a.label),
+            advancedActionLabels: advancedBoardActionLabels,
+            plainRationale: actionExecutionHint(primaryBoardAction.actionType),
+            conciseRationale:
+                primaryBoardAction.riskLevel
+                    ? `${primaryBoardAction.riskLevel} risk path: validate impact and verify before completion.`
+                    : undefined,
+            evidenceItems: sortedBoardActions
+                .slice(0, 4)
+                .map((action) => `${action.label} (${action.riskLevel || 'unknown'} risk)`),
+        })
+        : null;
+    const modeVisibleBoardActions = modePresentation
+        ? sortedBoardActions.filter((a) => modePresentation.visibleCtaLabels.includes(a.label))
+        : sortedBoardActions;
+    const secondaryBoardActions = modePresentation
+        ? modeVisibleBoardActions.filter((a) => primaryBoardAction && a.id !== primaryBoardAction.id)
+        : rawSecondaryBoardActions;
     const primaryBoardGuardHint = primaryBoardAction ? getBoardActionGuardHint(primaryBoardAction) : null;
     const boardGuardHint = useMemo(() => {
         for (const action of sortedBoardActions) {
@@ -869,52 +901,79 @@ export function AIIncidentStudio({
         () => (latestAssistantEntry ? parseStructuredResponse(latestAssistantEntry.text) : null),
         [latestAssistantEntry]
     );
+    const phaseContext = useMemo(
+        () => ({
+            workspaceReady: Boolean(
+                workspaceName ||
+                chatBrainSystemGraphSnapshot?.workspacePath ||
+                doctorSummary?.workspaceName ||
+                commandSummary?.totalEvents
+            ),
+            diagnosisReady: Boolean(
+                chatBrainActionResult?.diagnosis ||
+                chatBrainImpactAssessment ||
+                (chatBrainHistory?.length || 0) > 0
+            ),
+            planReady: Boolean(sortedBoardActions.length > 0),
+            verifyReady: Boolean(
+                chatBrainActionResult?.success ||
+                latestStructuredResponse?.verifyCommand ||
+                (chatBrainActionResult?.verifyCommandPack?.commands.length || 0) > 0
+            ),
+            priorResolutionAvailable: Boolean(incidentResume?.resolved || onboardingSummary?.followupClicked),
+        }),
+        [
+            workspaceName,
+            chatBrainSystemGraphSnapshot?.workspacePath,
+            doctorSummary?.workspaceName,
+            commandSummary?.totalEvents,
+            chatBrainActionResult?.diagnosis,
+            chatBrainActionResult?.success,
+            chatBrainActionResult?.verifyCommandPack?.commands.length,
+            chatBrainImpactAssessment,
+            chatBrainHistory,
+            sortedBoardActions.length,
+            latestStructuredResponse?.verifyCommand,
+            incidentResume?.resolved,
+            onboardingSummary?.followupClicked,
+        ]
+    );
 
     const phaseProgress = useMemo(() => {
         const steps = [
             {
                 key: 'detect',
                 label: 'Detect',
-                done: true,
+                done: phaseContext.workspaceReady,
                 cue: doctorSummary?.generatedAt
                     ? `Doctor ${formatRelativeCue(doctorSummary.generatedAt)}`
-                    : 'Workspace signals loaded',
+                    : getPhaseNextAction('detect', phaseContext).primaryAction,
             },
             {
                 key: 'diagnose',
                 label: 'Diagnose',
-                done: conversationTurns > 0 || isAnalyzing,
+                done: phaseContext.diagnosisReady,
                 cue: isAnalyzing
                     ? 'AI reading context'
-                    : conversationTurns > 0
-                        ? `${conversationTurns} turn${conversationTurns === 1 ? '' : 's'}`
-                        : 'Awaiting first query',
+                    : getPhaseNextAction('diagnose', phaseContext).primaryAction,
             },
             {
                 key: 'plan',
                 label: 'Plan',
-                done: !aiUnavailable && conversationTurns > 1,
-                cue: sortedBoardActions.length > 0
-                    ? `${sortedBoardActions.length} action${sortedBoardActions.length === 1 ? '' : 's'} queued`
-                    : 'No action plan yet',
+                done: phaseContext.planReady,
+                cue: getPhaseNextAction('plan', phaseContext).primaryAction,
             },
             {
                 key: 'verify',
                 label: 'Verify',
-                done: commandSummary?.totalEvents ? commandSummary.totalEvents > 3 : false,
-                cue: chatBrainActionResult?.success
-                    ? 'Proof captured'
-                    : latestStructuredResponse?.verifyCommand
-                        ? 'Verify command ready'
-                        : 'Verification pending',
+                done: phaseContext.verifyReady,
+                cue: getPhaseNextAction('verify', phaseContext).primaryAction,
             },
             {
                 key: 'learn',
                 label: 'Learn',
-                done: Boolean(onboardingSummary?.followupClicked),
-                cue: onboardingSummary?.followupClicked
-                    ? `${onboardingSummary.followupClicked} pattern${onboardingSummary.followupClicked === 1 ? '' : 's'} reused`
-                    : 'Capture next reusable pattern',
+                done: phaseContext.priorResolutionAvailable,
+                cue: getPhaseNextAction('learn', phaseContext).primaryAction,
             },
         ];
         // Enforce sequential progression: a step is only done if all prior steps are done
@@ -937,7 +996,7 @@ export function AIIncidentStudio({
         isAnalyzing,
         latestStructuredResponse?.verifyCommand,
         onboardingSummary?.followupClicked,
-        sortedBoardActions.length,
+        phaseContext,
     ]);
 
     useEffect(() => {
@@ -960,7 +1019,16 @@ export function AIIncidentStudio({
     }, [recentConversationEntries]);
 
     const activePhase = phaseProgress.steps[phaseProgress.activeIndex]?.label ?? 'Detect';
-    const nextActionLabel = sortedBoardActions[0]?.label ?? 'Ask AI for the next step';
+    const deterministicFallbackAction = getPhaseNextAction(
+        phaseProgress.steps[phaseProgress.activeIndex]?.key as
+        | 'detect'
+        | 'diagnose'
+        | 'plan'
+        | 'verify'
+        | 'learn',
+        phaseContext
+    ).primaryAction;
+    const nextActionLabel = sortedBoardActions[0]?.label ?? deterministicFallbackAction;
     const summaryTitle = aiUnavailable
         ? 'AI is temporarily unavailable'
         : isAnalyzing
@@ -1054,7 +1122,7 @@ export function AIIncidentStudio({
             return;
         }
 
-        const fallbackQuery = 'Analyze this workspace and give me exactly one safe next action.';
+        const fallbackQuery = deterministicFallbackAction;
         setLastUserQuery(fallbackQuery);
         onChatBrainQuery?.(fallbackQuery);
     };
@@ -1710,6 +1778,9 @@ export function AIIncidentStudio({
                                     <h3>{latestAssistantEntry ? 'Current diagnosis' : 'Workspace ready for incident analysis'}</h3>
                                     <p>{focusNarrative}</p>
                                     <small className="incident-mode-hint">{modeHint}</small>
+                                    {modePresentation?.rationale ? (
+                                        <small className="incident-mode-hint">Mode rationale: {modePresentation.rationale}</small>
+                                    ) : null}
                                 </div>
                                 {focusReason ? (
                                     <div className="incident-focus-reason">
@@ -2751,7 +2822,29 @@ export function AIIncidentStudio({
                                     ) : null}
                                     {chatBrainActionResult.diagnosis ? (
                                         <div className="incident-verify-evidence">
-                                            <strong>Diagnosis confidence</strong>
+                                            {(() => {
+                                                const diagnosisCriteria = evaluateArtifactSuccessCriteria({
+                                                    kind: 'diagnosis',
+                                                    confidence:
+                                                        chatBrainActionResult.diagnosis!.confidence > 1
+                                                            ? chatBrainActionResult.diagnosis!.confidence / 100
+                                                            : chatBrainActionResult.diagnosis!.confidence,
+                                                    confidenceBand: chatBrainActionResult.diagnosis!.confidenceBand,
+                                                    relatedFilesCount: chatBrainActionResult.diagnosis!.relatedFiles.length,
+                                                    signalSourcesCount: chatBrainActionResult.diagnosis!.signalSources.length,
+                                                });
+                                                return (
+                                                    <div className={`incident-rollback-evidence is-${diagnosisCriteria.overallStatus === 'pass' ? 'passed' : diagnosisCriteria.overallStatus === 'partial' ? 'warning' : 'failed'}`}>
+                                                        <strong>{diagnosisCriteria.summaryLabel}</strong>
+                                                        {diagnosisCriteria.criteria.map((c) => (
+                                                            <p key={c.label}>
+                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                            </p>
+                                                        ))}
+                                                    </div>
+                                                );
+                                            })()}
                                             <p>
                                                 Confidence: {chatBrainActionResult.diagnosis.confidence}% ({chatBrainActionResult.diagnosis.confidenceBand})
                                             </p>
@@ -2771,8 +2864,80 @@ export function AIIncidentStudio({
                                             ) : null}
                                         </div>
                                     ) : null}
+                                    {chatBrainActionResult.decisionClarity ? (() => {
+                                        const wordingPolicy = getDecisionClarityWordingPolicy({
+                                            mutationReady: chatBrainActionResult.decisionClarity.mutationReady,
+                                            requiredMissingFields: chatBrainActionResult.decisionClarity.requiredMissingFields,
+                                            verificationRequired: chatBrainActionResult.verificationRequired ?? false,
+                                        });
+                                        return (
+                                            <div className={`incident-rollback-evidence is-${wordingPolicy.cardState === 'complete' ? 'passed' : 'warning'}`}>
+                                                <strong>{wordingPolicy.cardHeading}</strong>
+                                                <p>
+                                                    Situation: {chatBrainActionResult.decisionClarity.situation || 'unknown'}
+                                                </p>
+                                                <p>
+                                                    Why: {chatBrainActionResult.decisionClarity.reason || 'unknown'}
+                                                </p>
+                                                <p>
+                                                    Impact scope: {chatBrainActionResult.decisionClarity.impactScope.length > 0
+                                                        ? chatBrainActionResult.decisionClarity.impactScope.slice(0, 4).join(', ')
+                                                        : 'unknown'}
+                                                </p>
+                                                <p>
+                                                    Risk: {chatBrainActionResult.decisionClarity.risk.confidenceBand}
+                                                    {' · '}
+                                                    {chatBrainActionResult.decisionClarity.risk.confidence}%
+                                                    {' · '}
+                                                    {chatBrainActionResult.decisionClarity.risk.mutating ? 'mutating' : 'non-mutating'}
+                                                </p>
+                                                <p>
+                                                    Next: {chatBrainActionResult.decisionClarity.nextStep || 'unknown'}
+                                                </p>
+                                                <p>
+                                                    Verify: {chatBrainActionResult.decisionClarity.verifyPlan.length > 0
+                                                        ? chatBrainActionResult.decisionClarity.verifyPlan.slice(0, 3).join(' | ')
+                                                        : 'unknown'}
+                                                </p>
+                                                <p>
+                                                    Rollback: {chatBrainActionResult.decisionClarity.rollbackPlan || 'unknown'}
+                                                </p>
+                                                {chatBrainActionResult.decisionClarity.requiredMissingFields.length > 0 ? (
+                                                    <p>
+                                                        Missing required fields: {chatBrainActionResult.decisionClarity.requiredMissingFields.join(', ')}
+                                                    </p>
+                                                ) : wordingPolicy.mutationReadyLabel !== null ? (
+                                                    <p>Mutation ready: {wordingPolicy.mutationReadyLabel}</p>
+                                                ) : null}
+                                            </div>
+                                        );
+                                    })() : null}
                                     {chatBrainActionResult.verifyCommandPack ? (
                                         <div className={`incident-rollback-evidence is-${chatBrainActionResult.verifyCommandPack.readiness === 'ready' ? 'passed' : 'warning'}`}>
+                                            {(() => {
+                                                const verifyCriteria = evaluateArtifactSuccessCriteria({
+                                                    kind: 'verify',
+                                                    runCompleted: true,
+                                                    errors:
+                                                        chatBrainActionResult.evidence?.errors ??
+                                                        (chatBrainActionResult.success ? 0 : 1),
+                                                    warnings: chatBrainActionResult.evidence?.warnings ?? 0,
+                                                    passed:
+                                                        chatBrainActionResult.evidence?.passed ??
+                                                        (chatBrainActionResult.success ? 1 : 0),
+                                                });
+                                                return (
+                                                    <>
+                                                        <strong>{verifyCriteria.summaryLabel}</strong>
+                                                        {verifyCriteria.criteria.map((c) => (
+                                                            <p key={c.label}>
+                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                            </p>
+                                                        ))}
+                                                    </>
+                                                );
+                                            })()}
                                             <strong>Deterministic verify command pack</strong>
                                             <p>
                                                 Quality score: {chatBrainActionResult.verifyCommandPack.qualityScore}%
@@ -2870,140 +3035,133 @@ export function AIIncidentStudio({
                                             ) : null}
                                         </div>
                                     ) : null}
-                                    {chatBrainActionResult.rollback ? (
-                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.rollback.status}`}>
-                                            <strong>Rollback evidence</strong>
-                                            <p>
-                                                Status: {chatBrainActionResult.rollback.status}
-                                                {chatBrainActionResult.rollback.attempted ? ' (auto attempted)' : ''}
-                                            </p>
-                                            {chatBrainActionResult.rollback.reason ? (
-                                                <p>{chatBrainActionResult.rollback.reason}</p>
-                                            ) : null}
-                                            {chatBrainActionResult.rollback.restoredFiles.length > 0 ? (
-                                                <p>
-                                                    Restored files ({chatBrainActionResult.rollback.restoredFiles.length}):{' '}
-                                                    {chatBrainActionResult.rollback.restoredFiles.slice(0, 4).join(', ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.rollback.failedFiles.length > 0 ? (
-                                                <p>
-                                                    Pending manual restore ({chatBrainActionResult.rollback.failedFiles.length}):{' '}
-                                                    {chatBrainActionResult.rollback.failedFiles.slice(0, 3).join(', ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.rollback.suggestedNextStep ? (
-                                                <p>{chatBrainActionResult.rollback.suggestedNextStep}</p>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.sandboxSimulation ? (
-                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.sandboxSimulation.status}`}>
-                                            <strong>Sandbox simulation evidence</strong>
-                                            <p>
-                                                Status: {chatBrainActionResult.sandboxSimulation.status}
-                                                {chatBrainActionResult.sandboxSimulation.safeToApply
-                                                    ? ' · safe to apply'
-                                                    : ' · keep apply blocked'}
-                                            </p>
-                                            <p>
-                                                Risk class: {chatBrainActionResult.sandboxSimulation.riskClass}
-                                                {' · '}
-                                                Commands: {chatBrainActionResult.sandboxSimulation.commandResults.length}
-                                            </p>
-                                            {chatBrainActionResult.sandboxSimulation.reason ? (
-                                                <p>{chatBrainActionResult.sandboxSimulation.reason}</p>
-                                            ) : null}
-                                            {chatBrainActionResult.sandboxSimulation.recommendedRollbackPath ? (
-                                                <p>{chatBrainActionResult.sandboxSimulation.recommendedRollbackPath}</p>
-                                            ) : null}
-                                            {chatBrainActionResult.sandboxSimulation.commandResults.length > 0 ? (
-                                                <p>
-                                                    Command outcomes:{' '}
-                                                    {chatBrainActionResult.sandboxSimulation.commandResults
-                                                        .slice(0, 3)
-                                                        .map((result) => `${result.command} (${result.exitCode === 0 ? 'pass' : 'fail'})`)
-                                                        .join(', ')}
-                                                </p>
-                                            ) : null}
-                                            <div className="incident-command-actions">
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn"
-                                                    onClick={() => {
-                                                        const sandboxSimulation = chatBrainActionResult.sandboxSimulation;
-                                                        if (sandboxSimulation) {
-                                                            onExportSandboxSimulationEvidence?.(sandboxSimulation);
-                                                        }
-                                                    }}
-                                                >
-                                                    Export simulation evidence
-                                                </button>
+                                    {chatBrainActionResult.rollback ? (() => {
+                                        const rollbackCriteria = evaluateArtifactSuccessCriteria({
+                                            kind: 'rollback',
+                                            status: chatBrainActionResult.rollback.status,
+                                            restoredFilesCount: chatBrainActionResult.rollback.restoredFiles.length,
+                                            failedFilesCount: chatBrainActionResult.rollback.failedFiles.length,
+                                        });
+                                        return (
+                                            <div className={`incident-rollback-evidence is-${rollbackCriteria.overallStatus === 'pass' ? 'passed' : rollbackCriteria.overallStatus === 'partial' ? 'warning' : chatBrainActionResult.rollback!.status}`}>
+                                                <strong>{rollbackCriteria.summaryLabel}</strong>
+                                                {rollbackCriteria.criteria.map((c) => (
+                                                    <p key={c.label}>
+                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                    </p>
+                                                ))}
+                                                {chatBrainActionResult.rollback!.reason ? (
+                                                    <p>{chatBrainActionResult.rollback!.reason}</p>
+                                                ) : null}
+                                                {chatBrainActionResult.rollback!.suggestedNextStep ? (
+                                                    <p>{chatBrainActionResult.rollback!.suggestedNextStep}</p>
+                                                ) : null}
                                             </div>
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.incidentReproPack ? (
-                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.incidentReproPack.status === 'captured' ? 'passed' : chatBrainActionResult.incidentReproPack.status}`}>
-                                            <strong>Incident repro pack</strong>
-                                            <p>
-                                                Status: {chatBrainActionResult.incidentReproPack.status}
-                                                {' · Pack ID: '}
-                                                {chatBrainActionResult.incidentReproPack.packId}
-                                            </p>
-                                            <p>
-                                                Redaction: {chatBrainActionResult.incidentReproPack.redaction.applied ? 'applied' : 'not applied'}
-                                                {' · fields: '}
-                                                {chatBrainActionResult.incidentReproPack.redaction.redactedFields.length > 0
-                                                    ? chatBrainActionResult.incidentReproPack.redaction.redactedFields.slice(0, 5).join(', ')
-                                                    : 'none'}
-                                            </p>
-                                            <p>
-                                                Replay payload: {chatBrainActionResult.incidentReproPack.replayPayload.verifyChecklist.length} verify checks
-                                                {' · '}
-                                                {chatBrainActionResult.incidentReproPack.replayPayload.blockedReasons.length} blocked reasons
-                                            </p>
-                                            {chatBrainActionResult.incidentReproPack.exportHint ? (
-                                                <p>{chatBrainActionResult.incidentReproPack.exportHint}</p>
-                                            ) : null}
-                                            <div className="incident-command-actions">
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn"
-                                                    onClick={() => {
-                                                        const reproPack = chatBrainActionResult.incidentReproPack;
-                                                        if (reproPack) {
-                                                            onExportIncidentReproPack?.(reproPack);
-                                                        }
-                                                    }}
-                                                >
-                                                    Export redacted bundle
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn"
-                                                    onClick={() => onImportIncidentReproPack?.()}
-                                                >
-                                                    Import bundle and replay
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn primary"
-                                                    onClick={() => {
-                                                        const reproPack = chatBrainActionResult.incidentReproPack;
-                                                        if (reproPack) {
-                                                            const replayQuery = buildReplayQueryFromIncidentReproPack(
-                                                                reproPack
-                                                            );
-                                                            setLastUserQuery(replayQuery);
-                                                            onChatBrainQuery?.(replayQuery);
-                                                        }
-                                                    }}
-                                                >
-                                                    Replay in Incident Studio
-                                                </button>
+                                        );
+                                    })() : null}
+                                    {chatBrainActionResult.sandboxSimulation ? (() => {
+                                        const sim = chatBrainActionResult.sandboxSimulation!;
+                                        const sandboxCriteria = evaluateArtifactSuccessCriteria({
+                                            kind: 'sandbox',
+                                            status: sim.status,
+                                            safeToApply: sim.safeToApply,
+                                            commandCount: sim.commandResults.length,
+                                            failedCommandCount: sim.commandResults.filter((r) => r.exitCode !== 0).length,
+                                        });
+                                        return (
+                                            <div className={`incident-rollback-evidence is-${sandboxCriteria.overallStatus === 'pass' ? 'passed' : sandboxCriteria.overallStatus === 'partial' ? 'warning' : sim.status}`}>
+                                                <strong>{sandboxCriteria.summaryLabel}</strong>
+                                                {sandboxCriteria.criteria.map((c) => (
+                                                    <p key={c.label}>
+                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                    </p>
+                                                ))}
+                                                <p>Risk class: {sim.riskClass}</p>
+                                                {sim.reason ? <p>{sim.reason}</p> : null}
+                                                {sim.recommendedRollbackPath ? <p>{sim.recommendedRollbackPath}</p> : null}
+                                                <div className="incident-command-actions">
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn"
+                                                        onClick={() => {
+                                                            const sandboxSimulation = chatBrainActionResult.sandboxSimulation;
+                                                            if (sandboxSimulation) {
+                                                                onExportSandboxSimulationEvidence?.(sandboxSimulation);
+                                                            }
+                                                        }}
+                                                    >
+                                                        Export simulation evidence
+                                                    </button>
+                                                </div>
                                             </div>
-                                        </div>
-                                    ) : null}
+                                        );
+                                    })() : null}
+                                    {chatBrainActionResult.incidentReproPack ? (() => {
+                                        const reproPack = chatBrainActionResult.incidentReproPack!;
+                                        const reproCriteria = evaluateArtifactSuccessCriteria({
+                                            kind: 'repro',
+                                            status: reproPack.status,
+                                            redactionApplied: reproPack.redaction.applied,
+                                            secretsLeakCount: 0,
+                                        });
+                                        return (
+                                            <div className={`incident-rollback-evidence is-${reproCriteria.overallStatus === 'pass' ? 'passed' : reproCriteria.overallStatus === 'partial' ? 'warning' : reproPack.status === 'captured' ? 'passed' : reproPack.status}`}>
+                                                <strong>{reproCriteria.summaryLabel}</strong>
+                                                {reproCriteria.criteria.map((c) => (
+                                                    <p key={c.label}>
+                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                    </p>
+                                                ))}
+                                                <p>Pack ID: {reproPack.packId}</p>
+                                                <p>
+                                                    Replay payload: {reproPack.replayPayload.verifyChecklist.length} verify checks
+                                                    {' · '}
+                                                    {reproPack.replayPayload.blockedReasons.length} blocked reasons
+                                                </p>
+                                                {reproPack.exportHint ? (
+                                                    <p>{reproPack.exportHint}</p>
+                                                ) : null}
+                                                <div className="incident-command-actions">
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn"
+                                                        onClick={() => {
+                                                            if (reproPack) {
+                                                                onExportIncidentReproPack?.(reproPack);
+                                                            }
+                                                        }}
+                                                    >
+                                                        Export redacted bundle
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn"
+                                                        onClick={() => onImportIncidentReproPack?.()}
+                                                    >
+                                                        Import bundle and replay
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn primary"
+                                                        onClick={() => {
+                                                            if (reproPack) {
+                                                                const replayQuery = buildReplayQueryFromIncidentReproPack(
+                                                                    reproPack
+                                                                );
+                                                                setLastUserQuery(replayQuery);
+                                                                onChatBrainQuery?.(replayQuery);
+                                                            }
+                                                        }}
+                                                    >
+                                                        Replay in Incident Studio
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })() : null}
                                     {chatBrainActionResult.releaseReadinessCommander ? (
                                         <div
                                             className={`incident-rollback-evidence is-${chatBrainActionResult.releaseReadinessCommander.decision === 'go' ? 'passed' : 'failed'}`}
@@ -3149,9 +3307,9 @@ export function AIIncidentStudio({
                                                 {boardGuardHint}
                                             </div>
                                         ) : null}
-                                        {(primaryCtaMode === 'single' ? secondaryBoardActions : sortedBoardActions).length > 0 ? (
+                                        {(primaryCtaMode === 'single' ? secondaryBoardActions : modeVisibleBoardActions).length > 0 ? (
                                             <div className="incident-board-actions incident-board-actions--chat">
-                                                {(primaryCtaMode === 'single' ? secondaryBoardActions : sortedBoardActions).map((action) => {
+                                                {(primaryCtaMode === 'single' ? secondaryBoardActions : modeVisibleBoardActions).map((action) => {
                                                     const tone = riskTone(action.riskLevel);
                                                     return (
                                                         <button
