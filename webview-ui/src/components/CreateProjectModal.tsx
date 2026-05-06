@@ -25,6 +25,7 @@ export function CreateProjectModal({ isOpen, framework, availableKits, onClose, 
 
     // Filter kits by framework
     const frameworkKits = availableKits.filter(kit => kit.category === framework);
+    const isKitsLoading = isOpen && frameworkKits.length === 0;
 
     useEffect(() => {
         if (isOpen) {
@@ -140,6 +141,10 @@ export function CreateProjectModal({ isOpen, framework, availableKits, onClose, 
             onCreate(projectName, framework, selectedKit);
             onClose();
         }
+    };
+
+    const handleRetryKits = () => {
+        vscode.postMessage('requestAvailableKits');
     };
 
     const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -433,6 +438,36 @@ export function CreateProjectModal({ isOpen, framework, availableKits, onClose, 
                                     </option>
                                 ))}
                             </select>
+                            {isKitsLoading && (
+                                <div
+                                    style={{
+                                        marginTop: '8px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: '8px',
+                                        fontSize: '12px',
+                                        color: 'var(--vscode-descriptionForeground)',
+                                    }}
+                                >
+                                    <span>Fetching kits for {framework}...</span>
+                                    <button
+                                        type="button"
+                                        onClick={handleRetryKits}
+                                        style={{
+                                            background: 'transparent',
+                                            border: '1px solid var(--vscode-input-border)',
+                                            borderRadius: '4px',
+                                            color: 'var(--vscode-foreground)',
+                                            cursor: 'pointer',
+                                            fontSize: '11px',
+                                            padding: '2px 8px',
+                                        }}
+                                    >
+                                        Retry
+                                    </button>
+                                </div>
+                            )}
                             {selectedKit && frameworkKits.find(k => k.name === selectedKit) && (
                                 <div
                                     style={{
@@ -587,21 +622,21 @@ export function CreateProjectModal({ isOpen, framework, availableKits, onClose, 
                             </button>
                             <button
                                 onClick={handleCreate}
-                                disabled={!projectName.trim() || !!error}
+                                disabled={!projectName.trim() || !!error || !selectedKit}
                                 style={{
                                     padding: '8px 20px',
                                     fontSize: '13px',
                                     fontWeight: 600,
                                     borderRadius: '6px',
                                     border: 'none',
-                                    backgroundColor: projectName.trim() && !error ? info.color : '#555',
+                                    backgroundColor: projectName.trim() && !error && selectedKit ? info.color : '#555',
                                     color: 'white',
-                                    cursor: projectName.trim() && !error ? 'pointer' : 'not-allowed',
+                                    cursor: projectName.trim() && !error && selectedKit ? 'pointer' : 'not-allowed',
                                     transition: 'all 0.2s',
-                                    opacity: projectName.trim() && !error ? 1 : 0.5,
+                                    opacity: projectName.trim() && !error && selectedKit ? 1 : 0.5,
                                 }}
                                 onMouseEnter={(e) => {
-                                    if (projectName.trim() && !error) {
+                                    if (projectName.trim() && !error && selectedKit) {
                                         e.currentTarget.style.transform = 'translateY(-1px)';
                                         e.currentTarget.style.boxShadow = `0 4px 12px ${info.color}40`;
                                     }

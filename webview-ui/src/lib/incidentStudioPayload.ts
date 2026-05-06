@@ -536,6 +536,75 @@ function normalizePredictiveConfidenceBand(value: unknown): IncidentPredictiveCo
   return 'medium';
 }
 
+// ---------------------------------------------------------------------------
+// Host decision-clarity contract pass-through normalizer (BUG-01 / ARCH-01)
+// ---------------------------------------------------------------------------
+
+/**
+ * Safely normalizes the raw `decisionClarity` field that the host extension
+ * computed with full workspace context and sent inside `aiChatActionResult`.
+ *
+ * Returns `undefined` when the raw value is absent or structurally invalid,
+ * allowing callers to fall back to the locally-reconstructed contract.
+ *
+ * This is intentionally strict: if the host payload is present and valid it
+ * takes absolute precedence — the local reconstruction has less information
+ * (e.g. it cannot know `isMutatingAction` or `actionPolicy` flags).
+ */
+function normalizeIncidentDecisionClarityContract(
+  raw: unknown
+): IncidentDecisionClarityContract | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const rec = asRecord(raw);
+  // Require the three array fields the host always populates; absent arrays
+  // indicate a legacy or incomplete payload — fall back to local build.
+  if (
+    !Array.isArray(rec.impactScope) ||
+    !Array.isArray(rec.verifyPlan) ||
+    !Array.isArray(rec.requiredMissingFields)
+  ) {
+    return undefined;
+  }
+
+  const riskRecord = asRecord(rec.risk);
+  const rawBand = cleanText(riskRecord.confidenceBand)?.toLowerCase();
+  const confidenceBand: 'low' | 'medium' | 'high' =
+    rawBand === 'low' || rawBand === 'medium' || rawBand === 'high' ? rawBand : 'low';
+
+  const VALID_MISSING_FIELDS: ReadonlyArray<string> = [
+    'situation',
+    'nextStep',
+    'verifyPlan',
+    'impactScope',
+    'rollbackPlan',
+  ];
+  const requiredMissingFields = (rec.requiredMissingFields as unknown[]).filter(
+    (f): f is 'situation' | 'nextStep' | 'verifyPlan' | 'impactScope' | 'rollbackPlan' =>
+      typeof f === 'string' && VALID_MISSING_FIELDS.includes(f)
+  );
+
+  return {
+    situation: sanitizeIncidentText(rec.situation, 480),
+    reason: sanitizeIncidentText(rec.reason, 480),
+    impactScope: sanitizeStringArray(rec.impactScope, 240, 8),
+    risk: {
+      confidenceBand,
+      confidence: clampNumber(asNumber(riskRecord.confidence, 0), 0, 100),
+      mutating: asBoolean(riskRecord.mutating, false),
+    },
+    nextStep: sanitizeIncidentText(rec.nextStep, 320),
+    verifyPlan: sanitizeStringArray(rec.verifyPlan, 320, 6),
+    rollbackPlan: sanitizeIncidentText(rec.rollbackPlan, 480),
+    evidenceLinks: Array.isArray(rec.evidenceLinks)
+      ? sanitizeStringArray(rec.evidenceLinks, 240, 8)
+      : [],
+    requiredMissingFields,
+    mutationReady: asBoolean(rec.mutationReady, false),
+  };
+}
+
 function buildIncidentDecisionClarityContract(input: {
   outputSummary?: string;
   diagnosis?: IncidentDiagnosisEvidence;
@@ -991,14 +1060,21 @@ export function normalizeIncidentActionResultPayload(
     Array.isArray(verifyCommandPackRecord.commands) ||
     Array.isArray(verifyCommandPackRecord.blockedReasons);
 
-  const decisionClarity = buildIncidentDecisionClarityContract({
-    outputSummary: sanitizeIncidentText(record.outputSummary, 1200),
-    diagnosis: hasDiagnosisField ? diagnosis : undefined,
-    verifyPolicy: hasVerifyPolicyField ? verifyPolicy : undefined,
-    rollback: hasRollbackField ? rollback : undefined,
-    sandboxSimulation: hasSandboxField ? sandboxSimulation : undefined,
-    verifyCommandPack: hasVerifyCommandPackField ? verifyCommandPack : undefined,
-  });
+  // Prefer the host-computed contract (full workspace context: knows isMutatingAction,
+  // actionPolicy flags, impact assessment, etc.) over the locally-reconstructed one.
+  // Fall back to local reconstruction only when the host didn't include the field
+  // (older extension version, or an early-exit code path that skips the full build).
+  const hostDecisionClarity = normalizeIncidentDecisionClarityContract(record.decisionClarity);
+  const decisionClarity =
+    hostDecisionClarity ??
+    buildIncidentDecisionClarityContract({
+      outputSummary: sanitizeIncidentText(record.outputSummary, 1200),
+      diagnosis: hasDiagnosisField ? diagnosis : undefined,
+      verifyPolicy: hasVerifyPolicyField ? verifyPolicy : undefined,
+      rollback: hasRollbackField ? rollback : undefined,
+      sandboxSimulation: hasSandboxField ? sandboxSimulation : undefined,
+      verifyCommandPack: hasVerifyCommandPackField ? verifyCommandPack : undefined,
+    });
 
   return {
     success: Boolean(record.success),

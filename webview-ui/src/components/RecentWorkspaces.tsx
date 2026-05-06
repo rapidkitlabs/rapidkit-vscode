@@ -260,9 +260,9 @@ export function RecentWorkspaces({ workspaces, isRefreshing = false, onRefresh, 
                                             <X size={12} />
                                         </button>
                                     </div>
-                                    <div className="ws-row-bottom">
+                                    {/* <div className="ws-row-bottom">
                                         {workspace.path}
-                                    </div>
+                                    </div> */}
                                 </div>
                             );
                         })}

@@ -5,7 +5,7 @@ import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { openWorkspace, openWorkspaceFolder, copyWorkspacePath } from './workspaceContextMenu';
 
 type WorkspaceLike = { path: string; name?: string };
-type ProjectLike = { path: string; name: string; type: string };
+type ProjectLike = { path: string; name: string; type: string; workspacePath?: string };
 
 type WorkspaceExplorerLike = {
   refresh: () => void;
@@ -54,7 +54,19 @@ export function registerWorkspaceSelectionCommands(options: {
       if (WelcomePanel.currentPanel) {
         const selectedProject = projectExplorer?.getSelectedProject?.();
         if (selectedProject) {
-          WelcomePanel.updateWithProject(selectedProject.path, selectedProject.name);
+          const selectedWorkspace = getWorkspaceExplorer()?.getSelectedWorkspace?.();
+          const workspacePath =
+            (typeof selectedProject.workspacePath === 'string' && selectedProject.workspacePath) ||
+            selectedWorkspace?.path;
+          const workspaceName =
+            (workspacePath
+              ? getWorkspaceExplorer()?.getWorkspaceByPath(workspacePath)?.name
+              : undefined) || selectedWorkspace?.name;
+
+          WelcomePanel.updateWithProject(selectedProject.path, selectedProject.name, {
+            workspacePath,
+            workspaceName,
+          });
         }
       }
     }),
@@ -145,13 +157,27 @@ export function registerWorkspaceSelectionCommands(options: {
     vscode.commands.registerCommand('workspai.selectProject', async (item: any) => {
       const projectExplorer = getProjectExplorer();
       const moduleExplorer = getModuleExplorer();
+      const workspaceExplorer = getWorkspaceExplorer();
+      const project = item?.project ?? item;
 
-      if (item?.project && projectExplorer) {
-        projectExplorer.setSelectedProject(item.project);
-        logger.info('Project selected:', item.project.name);
+      if (project?.path && projectExplorer) {
+        projectExplorer.setSelectedProject(project);
+        logger.info('Project selected:', project.name);
 
-        WelcomePanel.updateWithProject(item.project.path, item.project.name);
-        moduleExplorer?.setProjectPath(item.project.path, item.project.type);
+        const workspacePathFromProject =
+          typeof project?.workspacePath === 'string' ? project.workspacePath : undefined;
+        const selectedWorkspace = workspaceExplorer?.getSelectedWorkspace?.();
+        const resolvedWorkspacePath = workspacePathFromProject || selectedWorkspace?.path;
+        const resolvedWorkspaceName =
+          (resolvedWorkspacePath
+            ? workspaceExplorer?.getWorkspaceByPath(resolvedWorkspacePath)?.name
+            : undefined) || selectedWorkspace?.name;
+
+        WelcomePanel.updateWithProject(project.path, project.name, {
+          workspacePath: resolvedWorkspacePath,
+          workspaceName: resolvedWorkspaceName,
+        });
+        moduleExplorer?.setProjectPath(project.path, project.type);
       }
     }),
 

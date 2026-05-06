@@ -104,7 +104,7 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
         }
 
         if (isActive) {
-          descParts.push('🟢 Active');
+          descParts.push('Active');
         } else {
           const lastOpened = this.getLastOpenedTime(ws);
           if (lastOpened) {

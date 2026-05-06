@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye } from 'lucide-react';
+import { LayoutDashboard, Wrench, Sparkles } from 'lucide-react';
 import { vscode } from '@/vscode';
 import type {
     ModuleData,
@@ -12,7 +12,6 @@ import type {
     WorkspaceToolStatus,
 } from '@/types';
 import { Header } from '@/components/Header';
-import { SetupCard } from '@/components/SetupCard';
 import { HeroAction } from '@/components/HeroAction';
 import { QuickLinks } from '@/components/QuickLinks';
 import { Features } from '@/components/Features';
@@ -311,7 +310,6 @@ export function App() {
     /** true once extension has sent at least one installStatusUpdate — before that, initial false values must not be trusted */
     const [installStatusChecked, setInstallStatusChecked] = useState(false);
     const [isRefreshingWorkspaces, setIsRefreshingWorkspaces] = useState(false);
-    const [isSetupCardHidden, setIsSetupCardHidden] = useState(false);
     const [activeView, setActiveView] = useState<'dashboard' | 'incident-studio'>('dashboard');
     const [importedWorkspaceShare, setImportedWorkspaceShare] =
         useState<ImportedWorkspaceShareSummary | null>(null);
@@ -344,6 +342,25 @@ export function App() {
     const hasActiveWorkspace = Boolean(workspaceStatus.hasWorkspace && workspaceStatus.workspacePath);
     const activeWorkspaceProfile = activeWorkspace?.bootstrapProfile;
     const activeWorkspaceName = selectedWorkspaceForAnalysisObj?.name || workspaceStatus.workspaceName || activeWorkspace?.name;
+    const analysisScopeType: 'workspace' | 'project' = selectedProjectForAnalysis?.path
+        ? 'project'
+        : 'workspace';
+    const analysisScopeLabel =
+        (analysisScopeType === 'project'
+            ? [selectedProjectForAnalysis?.name, activeWorkspaceName]
+                .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+                .join(' @ ')
+            : activeWorkspaceName) ||
+        (analysisScopeType === 'project'
+            ? selectedProjectForAnalysis?.path
+            : selectedWorkspaceForAnalysis || workspaceStatus.workspacePath) ||
+        'No active scope';
+    const analysisScopePath =
+        (analysisScopeType === 'project'
+            ? selectedProjectForAnalysis?.path
+            : selectedWorkspaceForAnalysis || workspaceStatus.workspacePath) || null;
+    const analysisWorkspacePath = selectedWorkspaceForAnalysis || workspaceStatus.workspacePath || null;
+    const analysisProjectPath = selectedProjectForAnalysis?.path || null;
     const incidentPrimaryCtaMode = resolveIncidentPrimaryCtaMode(
         incidentUserMode,
         incidentPrimaryCtaExperimentVariant
@@ -351,14 +368,6 @@ export function App() {
     const incidentRefreshLabel = lastIncidentRefreshedAt
         ? new Date(lastIncidentRefreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : null;
-
-    const updateSetupCardHidden = (hidden: boolean) => {
-        setIsSetupCardHidden(hidden);
-        vscode.postMessage('setUiPreference', {
-            key: 'setupStatusCardHidden',
-            value: hidden,
-        });
-    };
 
     const updateIncidentUserMode = (mode: IncidentUserMode) => {
         const normalizedMode = normalizeIncidentUserMode(mode);
@@ -408,6 +417,40 @@ export function App() {
                 case 'updateWorkspaceStatus':
                     console.log('[React Webview] Updating workspace status:', message.data);
                     setWorkspaceStatus(message.data);
+
+                    if (typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim().length > 0) {
+                        setSelectedWorkspaceForAnalysis(message.data.workspacePath.trim());
+                    }
+
+                    if (
+                        message.data?.hasProjectSelected === true &&
+                        typeof message.data?.projectPath === 'string' &&
+                        message.data.projectPath.trim().length > 0
+                    ) {
+                        const rawProjectType =
+                            typeof message.data?.projectType === 'string'
+                                ? message.data.projectType
+                                : undefined;
+                        const normalizedProjectType =
+                            rawProjectType === 'fastapi' ||
+                                rawProjectType === 'nestjs' ||
+                                rawProjectType === 'go' ||
+                                rawProjectType === 'springboot'
+                                ? rawProjectType
+                                : undefined;
+
+                        setSelectedProjectForAnalysis({
+                            path: message.data.projectPath.trim(),
+                            name:
+                                typeof message.data?.projectName === 'string' &&
+                                    message.data.projectName.trim().length > 0
+                                    ? message.data.projectName.trim()
+                                    : undefined,
+                            type: normalizedProjectType,
+                        });
+                    } else if (message.data?.hasProjectSelected === false) {
+                        setSelectedProjectForAnalysis(null);
+                    }
                     break;
                 case 'updateRecentWorkspaces':
                     console.log('[React Webview] Updating workspaces:', message.data);
@@ -598,6 +641,11 @@ export function App() {
                     break;
                 case 'workspaceToolStatus':
                     setWorkspaceToolStatus(message.data);
+                    break;
+                case 'setActiveView':
+                    if (message.data?.view === 'dashboard' || message.data?.view === 'incident-studio') {
+                        setActiveView(message.data.view);
+                    }
                     break;
                 case 'openIncidentStudio': {
                     const normalizedOpen = normalizeIncomingIncidentStudioOpen(message.data);
@@ -962,9 +1010,6 @@ export function App() {
                     console.log('[InlineCommand] Completed:', message.data);
                     break;
                 case 'uiPreferences':
-                    if (typeof message.data?.setupStatusCardHidden === 'boolean') {
-                        setIsSetupCardHidden(message.data.setupStatusCardHidden);
-                    }
                     setIncidentUserMode(normalizeIncidentUserMode(message.data?.incidentUserMode));
                     if (!incidentStudioDisplayModeOverrideRef.current) {
                         setIncidentStudioDisplayMode(
@@ -1000,6 +1045,9 @@ export function App() {
     useEffect(() => {
         if (showProjectModal) {
             vscode.postMessage('requestWorkspaceToolStatus');
+            // On-demand refresh: prevents first-open race where project modal appears
+            // before initial kits payload has arrived.
+            vscode.postMessage('requestAvailableKits');
         }
     }, [showProjectModal]);
 
@@ -1107,21 +1155,19 @@ export function App() {
 
         setIsIncidentRefreshing(true);
 
-        vscode.postMessage('requestIncidentStudioTelemetry', {
-            workspacePath,
-            forceRefresh: true,
-        });
+        const workspaceName =
+            selectedWorkspaceForAnalysisObj?.name ||
+            workspaceStatus.workspaceName ||
+            workspacePath;
 
-        if (chatBrainConversationId) {
-            vscode.postMessage(
-                'aiChatSyncWorkspace',
-                buildIncidentChatSyncWorkspacePayload({
-                    workspacePath,
-                    requestId: `sync-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                    forceRefresh: true,
-                })
-            );
-        }
+        // Refresh = restart analysis loop from the current scope (workspace/project)
+        bootstrapIncidentStudioForWorkspace(
+            workspacePath,
+            workspaceName,
+            true,
+            undefined,
+            selectedProjectForAnalysis
+        );
     };
 
     const runIncidentInlineCommand = (command: string) => {
@@ -1444,18 +1490,54 @@ export function App() {
                     role="tab"
                     aria-selected={activeView === 'dashboard'}
                     className={`workspai-view-tab ${activeView === 'dashboard' ? 'is-active' : ''}`}
-                    onClick={() => setActiveView('dashboard')}
+                    onClick={() => {
+                        if (activeView === 'incident-studio') {
+                            vscode.postMessage('openDashboardTab');
+                            return;
+                        }
+                        setActiveView('dashboard');
+                    }}
                 >
-                    Dashboard
+                    <span className="workspai-view-tab-content">
+                        <LayoutDashboard size={13} aria-hidden="true" />
+                        <span>Dashboard</span>
+                    </span>
+                </button>
+                <button
+                    type="button"
+                    className="workspai-view-tab"
+                    onClick={() => vscode.postMessage('openSetup')}
+                >
+                    <span className="workspai-view-tab-content">
+                        <Wrench size={13} aria-hidden="true" />
+                        <span>Setup & Installation</span>
+                    </span>
                 </button>
                 <button
                     type="button"
                     role="tab"
                     aria-selected={activeView === 'incident-studio'}
                     className={`workspai-view-tab ${activeView === 'incident-studio' ? 'is-active' : ''}`}
-                    onClick={() => setActiveView('incident-studio')}
+                    onClick={() => {
+                        if (activeView === 'dashboard') {
+                            vscode.postMessage('openIncidentStudioTab', {
+                                workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
+                                workspaceName: activeWorkspaceName,
+                                projectPath: selectedProjectForAnalysis?.path,
+                                projectName: selectedProjectForAnalysis?.name,
+                                projectType: selectedProjectForAnalysis?.type,
+                                preferredDisplayMode: incidentStudioDisplayMode,
+                                preferredArchitectureLensView: incidentArchitectureLensViewOverride || undefined,
+                            });
+                            return;
+                        }
+                        setActiveView('incident-studio');
+                    }}
                 >
-                    WorkspAi Incident Studio
+                    <span className="workspai-view-tab-content">
+                        <Sparkles size={13} aria-hidden="true" />
+                        <span>WorkspAi Incident Studio</span>
+                    </span>
                 </button>
             </div>
 
@@ -1505,37 +1587,6 @@ export function App() {
                             </p>
                         </section>
                     ) : null}
-                    {!isSetupCardHidden ? (
-                        <SetupCard
-                            onClick={() => vscode.postMessage('openSetup')}
-                            onHide={() => updateSetupCardHidden(true)}
-                        />
-                    ) : (
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
-                            <button
-                                type="button"
-                                onClick={() => updateSetupCardHidden(false)}
-                                title="Show Setup Status"
-                                aria-label="Show Setup Status"
-                                style={{
-                                    border: '1px solid var(--vscode-panel-border)',
-                                    background: 'var(--vscode-editor-inactiveSelectionBackground)',
-                                    color: 'var(--vscode-foreground)',
-                                    borderRadius: '8px',
-                                    padding: '6px 10px',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    cursor: 'pointer',
-                                    fontSize: '11px',
-                                    fontWeight: 600,
-                                }}
-                            >
-                                <Eye size={14} />
-                                Show Setup Status
-                            </button>
-                        </div>
-                    )}
 
                     <div className="mb-8">
                         <HeroAction
@@ -1549,6 +1600,15 @@ export function App() {
                         onRunFixPreview={() => runIncidentAction('aiFixPreviewLite')}
                         onRunChangeImpact={() => runIncidentAction('aiChangeImpactLite')}
                         onRunTerminalBridge={() => runIncidentAction('aiTerminalBridge')}
+                        onOpenIncidentStudio={() => {
+                            vscode.postMessage('openIncidentStudioTab', {
+                                workspacePath: workspaceStatus.workspacePath,
+                                workspaceName: activeWorkspaceName,
+                                projectPath: selectedProjectForAnalysis?.path,
+                                projectName: selectedProjectForAnalysis?.name,
+                                projectType: selectedProjectForAnalysis?.type,
+                            });
+                        }}
                     />
 
                     <RecentWorkspaces
@@ -1596,96 +1656,22 @@ export function App() {
                 </>
             ) : (
                 <>
-                    <div className="incident-tab-intro">
-                        <h2>WorkspAi Incident Studio</h2>
-                        <p>AI-first incident command center for diagnose, fix strategy, verification, and learning.</p>
-                        <div className="incident-mode-switch" role="group" aria-label="Incident Studio mode">
-                            <div className="incident-mode-group" role="group" aria-label="Diagnosis mode">
-                                <span className="incident-mode-group-label">Mode</span>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip ${incidentUserMode === 'guided' ? 'is-active' : ''}`}
-                                    onClick={() => updateIncidentUserMode('guided')}
-                                >
-                                    Guided
-                                </button>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip ${incidentUserMode === 'standard' ? 'is-active' : ''}`}
-                                    onClick={() => updateIncidentUserMode('standard')}
-                                >
-                                    Standard
-                                </button>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip ${incidentUserMode === 'expert' ? 'is-active' : ''}`}
-                                    onClick={() => updateIncidentUserMode('expert')}
-                                >
-                                    Expert
-                                </button>
-                            </div>
-                            <div className="incident-mode-group" role="group" aria-label="Studio display mode">
-                                <span className="incident-mode-group-label">Studio View</span>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip ${incidentStudioDisplayMode === 'lite' ? 'is-active' : ''}`}
-                                    onClick={() => updateIncidentStudioDisplayMode('lite')}
-                                >
-                                    Lite
-                                </button>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip ${incidentStudioDisplayMode === 'full' ? 'is-active' : ''}`}
-                                    onClick={() => updateIncidentStudioDisplayMode('full')}
-                                >
-                                    Full
-                                </button>
-                            </div>
-                            <div className="incident-mode-group" role="group" aria-label="Automation controls">
-                                <span className="incident-mode-group-label">Automation</span>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip incident-mode-toggle ${incidentAutoLearningPrompt ? 'is-active' : ''}`}
-                                    onClick={() => updateIncidentAutoLearningPrompt(!incidentAutoLearningPrompt)}
-                                >
-                                    Auto Learn {incidentAutoLearningPrompt ? 'On' : 'Off'}
-                                </button>
-                                <button
-                                    type="button"
-                                    className={`incident-mode-chip incident-mode-refresh ${isIncidentRefreshing ? 'is-loading' : ''}`}
-                                    onClick={refreshIncidentStudio}
-                                    disabled={isIncidentRefreshing}
-                                >
-                                    {isIncidentRefreshing ? 'Refreshing...' : 'Refresh'}
-                                </button>
-                            </div>
-                            <div className="incident-mode-group" role="group" aria-label="Model controls">
-                                <span className="incident-mode-group-label">Model</span>
-                                <select
-                                    className="incident-model-select"
-                                    value={incidentSelectedModelId ?? ''}
-                                    onChange={(event) => setIncidentSelectedModelId(event.target.value || null)}
-                                >
-                                    <option value="">Auto</option>
-                                    {aiAvailableModels.map((model) => (
-                                        <option key={model.id} value={model.id}>
-                                            {model.name} ({model.vendor})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-                        <p className="incident-mode-help">
-                            Auto Learn: after <strong>verify_passed</strong>, Studio auto-injects a learning action board
-                            plus memory-capture prompts for reusable fixes.
-                        </p>
-                        <p className="incident-refresh-meta">
-                            Last refreshed: {incidentRefreshLabel || 'not yet'}
-                        </p>
-                    </div>
                     <AIIncidentStudio
                         workspaceName={activeWorkspaceName}
+                        analysisScopeType={analysisScopeType}
+                        analysisScopeLabel={analysisScopeLabel}
+                        analysisScopePath={analysisScopePath}
+                        analysisWorkspacePath={analysisWorkspacePath}
+                        analysisProjectPath={analysisProjectPath}
                         modelId={incidentModelId || incidentSelectedModelId}
+                        availableModels={aiAvailableModels}
+                        selectedModelId={incidentSelectedModelId}
+                        onModelChange={setIncidentSelectedModelId}
+                        autoLearningEnabled={incidentAutoLearningPrompt}
+                        onToggleAutoLearning={updateIncidentAutoLearningPrompt}
+                        isRefreshing={isIncidentRefreshing}
+                        onRefreshData={refreshIncidentStudio}
+                        refreshLabel={incidentRefreshLabel}
                         isAnalyzing={aiIsStreaming || chatBrainIsStreaming}
                         lastError={chatBrainError || aiStreamError}
                         conversationTurns={chatBrainHistory.length}
@@ -1726,6 +1712,7 @@ export function App() {
                         preferredArchitectureLensView={incidentArchitectureLensViewOverride}
                         userMode={incidentUserMode}
                         onUserModeChange={updateIncidentUserMode}
+                        onStudioDisplayModeChange={updateIncidentStudioDisplayMode}
                         hasProjectSelected={Boolean(
                             selectedProjectForAnalysis?.path || workspaceStatus.hasProjectSelected
                         )}

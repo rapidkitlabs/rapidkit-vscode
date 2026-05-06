@@ -8,6 +8,8 @@ import {
     ChevronDown,
     ChevronRight,
     Clock3,
+    Maximize2,
+    Minimize2,
     Package,
     RotateCw,
     ShieldCheck,
@@ -183,7 +185,20 @@ interface IncidentTelemetrySnapshot {
 
 interface AIIncidentStudioProps {
     workspaceName?: string;
+    analysisScopeType?: 'workspace' | 'project';
+    analysisScopeLabel?: string;
+    analysisScopePath?: string | null;
+    analysisWorkspacePath?: string | null;
+    analysisProjectPath?: string | null;
     modelId?: string | null;
+    availableModels?: Array<{ id: string; name: string; vendor: string }>;
+    selectedModelId?: string | null;
+    onModelChange?: (modelId: string | null) => void;
+    autoLearningEnabled?: boolean;
+    onToggleAutoLearning?: (enabled: boolean) => void;
+    isRefreshing?: boolean;
+    onRefreshData?: () => void;
+    refreshLabel?: string | null;
     isAnalyzing: boolean;
     lastError?: string | null;
     conversationTurns: number;
@@ -270,6 +285,8 @@ interface AIIncidentStudioProps {
     hasProjectSelected?: boolean;
     userMode?: IncidentUserMode;
     onUserModeChange?: (mode: IncidentUserMode) => void;
+    /** Callback to persist a lite/full display-mode preference change. */
+    onStudioDisplayModeChange?: (mode: 'lite' | 'full') => void;
 }
 
 type StructuredIncidentResponse = {
@@ -637,7 +654,20 @@ function intentFromBoardAction(action: { id: string; label: string; actionType: 
 
 export function AIIncidentStudio({
     workspaceName,
+    analysisScopeType = 'workspace',
+    analysisScopeLabel,
+    analysisScopePath = null,
+    analysisWorkspacePath = null,
+    analysisProjectPath = null,
     modelId,
+    availableModels = [],
+    selectedModelId = null,
+    onModelChange,
+    autoLearningEnabled = true,
+    onToggleAutoLearning,
+    isRefreshing = false,
+    onRefreshData,
+    refreshLabel = null,
     isAnalyzing,
     lastError,
     conversationTurns,
@@ -677,11 +707,13 @@ export function AIIncidentStudio({
     hasProjectSelected = false,
     userMode = 'standard',
     onUserModeChange,
+    onStudioDisplayModeChange,
 }: AIIncidentStudioProps) {
     const [commandInput, setCommandInput] = useState('');
     const [lastCopiedCommand, setLastCopiedCommand] = useState<string | null>(null);
     const [lastUserQuery, setLastUserQuery] = useState<string | null>(null);
     const [expandedConversationIds, setExpandedConversationIds] = useState<Record<string, boolean>>({});
+    const [isMaximized, setIsMaximized] = useState(false);
     const [showAllSidebarIssues, setShowAllSidebarIssues] = useState(false);
     const [shouldAutoScrollThread, setShouldAutoScrollThread] = useState(true);
     const [architectureLensViewMode, setArchitectureLensViewMode] = useState<ArchitectureLensViewMode>('tree');
@@ -692,14 +724,6 @@ export function AIIncidentStudio({
 
     // Auto-scroll to bottom whenever history grows or streaming is active
     const [activeUserMode, setActiveUserMode] = useState<IncidentUserMode>(userMode);
-    const cycleUserMode = () =>
-        setActiveUserMode((currentMode) => {
-            const nextMode =
-                currentMode === 'guided' ? 'standard' : currentMode === 'standard' ? 'expert' : 'guided';
-            onUserModeChange?.(nextMode);
-            return nextMode;
-        });
-
     // Keep local mode in sync when parent (tab header controls) changes userMode
     useEffect(() => {
         setActiveUserMode(userMode);
@@ -741,8 +765,6 @@ export function AIIncidentStudio({
     ]);
 
     const aiUnavailable = isNetworkFailure(lastError);
-    const analysisDepth = Math.min(100, 45 + conversationTurns * 8);
-    const confidence = aiUnavailable ? 42 : Math.min(94, 68 + conversationTurns * 5);
     const commandSummary = telemetry?.commandSummary ?? null;
     const onboardingSummary = telemetry?.onboardingSummary ?? null;
     const ctaVariantBreakdown = telemetry?.ctaVariantBreakdown ?? null;
@@ -751,17 +773,17 @@ export function AIIncidentStudio({
     const studioReproPackKpiStatus = telemetry?.studioReproPackKpiStatus ?? null;
     const doctorSummary = telemetry?.doctorSummary ?? null;
     const hasDoctorSnapshot = Boolean(doctorSummary);
-    const snapshotHealthPercent = hasDoctorSnapshot ? doctorSummary!.health.percent : confidence;
+    // null = no real data yet; shown as 'N/A' rather than fabricated numbers.
+    const snapshotHealthPercent = hasDoctorSnapshot ? doctorSummary!.health.percent : null;
     const projectsWithIssuesRatio =
         hasDoctorSnapshot && doctorSummary!.projectCount > 0
             ? Math.round((doctorSummary!.projectsWithIssues / doctorSummary!.projectCount) * 100)
-            : analysisDepth;
-    const incidentCount = Math.max(
-        3,
-        commandSummary?.totalEvents
-            ? Math.min(99, Math.ceil(commandSummary.totalEvents / 3))
-            : 1 + Math.floor(conversationTurns / 2)
-    );
+            : null;
+    const incidentCount = commandSummary?.totalEvents
+        ? Math.min(99, Math.ceil(commandSummary.totalEvents / 3))
+        : conversationTurns > 0
+            ? 1 + Math.floor(conversationTurns / 2)
+            : null;
     const hardGateVerifyReach = studioHardGateStatus?.metrics.verifyPhaseReach ?? null;
     const hardGateBridgeCompletion = studioHardGateStatus?.metrics.bridgeRouteCompletionRate ?? null;
     const hardGateVerifyMeter = Math.max(0, Math.min(100, hardGateVerifyReach ?? 0));
@@ -805,11 +827,35 @@ export function AIIncidentStudio({
             command: item.command,
         }));
 
+    const verifyPackReady = Boolean(
+        chatBrainActionResult?.verifyCommandPack &&
+        chatBrainActionResult.verifyCommandPack.readiness === 'ready' &&
+        (chatBrainActionResult.verifyCommandPack.blockedReasons.length ?? 0) === 0 &&
+        chatBrainActionResult.verifyCommandPack.commands.some((entry) => entry.required)
+    );
+
     const verifySteps = [
-        { label: 'Context packet prepared', done: true },
+        {
+            label: 'Context packet prepared',
+            // Mirror the workspaceReady condition from phaseContext (props available here)
+            done: Boolean(
+                workspaceName ||
+                chatBrainSystemGraphSnapshot?.workspacePath ||
+                doctorSummary?.workspaceName ||
+                commandSummary?.totalEvents
+            ),
+        },
         { label: 'Patch candidate scored', done: !aiUnavailable && (isAnalyzing || conversationTurns > 0) },
         { label: 'Risk and blast-radius check', done: !aiUnavailable && conversationTurns > 1 },
-        { label: 'Deterministic validation ready', done: true },
+        {
+            label: 'Deterministic validation ready',
+            // Mirror the verifyReady condition from phaseContext (no latestStructuredResponse yet
+            // at this point, so use actionResult and verifyCommandPack as the signal sources)
+            done: Boolean(
+                chatBrainActionResult?.success ||
+                verifyPackReady
+            ),
+        },
     ];
 
     const sortedBoardActions = useMemo(() => {
@@ -918,7 +964,7 @@ export function AIIncidentStudio({
             verifyReady: Boolean(
                 chatBrainActionResult?.success ||
                 latestStructuredResponse?.verifyCommand ||
-                (chatBrainActionResult?.verifyCommandPack?.commands.length || 0) > 0
+                verifyPackReady
             ),
             priorResolutionAvailable: Boolean(incidentResume?.resolved || onboardingSummary?.followupClicked),
         }),
@@ -930,6 +976,8 @@ export function AIIncidentStudio({
             chatBrainActionResult?.diagnosis,
             chatBrainActionResult?.success,
             chatBrainActionResult?.verifyCommandPack?.commands.length,
+            chatBrainActionResult?.verifyCommandPack?.readiness,
+            chatBrainActionResult?.verifyCommandPack?.blockedReasons.length,
             chatBrainImpactAssessment,
             chatBrainHistory,
             sortedBoardActions.length,
@@ -940,7 +988,7 @@ export function AIIncidentStudio({
     );
 
     const phaseProgress = useMemo(() => {
-        const steps = [
+        const rawSteps = [
             {
                 key: 'detect',
                 label: 'Detect',
@@ -976,15 +1024,18 @@ export function AIIncidentStudio({
                 cue: getPhaseNextAction('learn', phaseContext).primaryAction,
             },
         ];
-        // Enforce sequential progression: a step is only done if all prior steps are done
-        let priorAllDone = true;
-        for (const step of steps) {
-            if (!priorAllDone) {
-                step.done = false;
-            } else if (!step.done) {
-                priorAllDone = false;
+        // Enforce sequential progression immutably: a step is only done when all
+        // prior steps are also done. Spread to avoid mutating rawStep objects.
+        let allPriorDone = true;
+        const steps = rawSteps.map((step) => {
+            if (!allPriorDone) {
+                return { ...step, done: false };
             }
-        }
+            if (!step.done) {
+                allPriorDone = false;
+            }
+            return step;
+        });
 
         const activeIndex = Math.max(0, steps.findIndex((step) => !step.done));
         return { steps, activeIndex: activeIndex === -1 ? steps.length - 1 : activeIndex };
@@ -1588,63 +1639,1910 @@ export function AIIncidentStudio({
     };
 
     return (
-        <section className="incident-studio" aria-label="AI Incident Studio">
+        <section className={`incident-studio${isMaximized ? ' incident-studio--maximized' : ''}`} aria-label="AI Incident Studio">
             <div className="incident-studio-header">
                 <div className="incident-studio-title-wrap">
                     <Sparkles size={14} style={{ color: '#00b894' }} />
-                    <span className="incident-studio-title">AI Incident Studio</span>
-                    <span className="incident-studio-subtitle">
-                        {workspaceName ? workspaceName : 'No active workspace'}
+                    <div className="incident-studio-title-stack">
+                        <span className="incident-studio-title">AI Incident Studio</span>
+                        <span className="incident-studio-subtitle">
+                            {workspaceName ? workspaceName : 'No active workspace'}
+                        </span>
+                    </div>
+                    <span
+                        className={`incident-scope-pill ${analysisScopeType === 'project' ? 'is-project' : 'is-workspace'}`}
+                        title={analysisScopePath || analysisScopeLabel || undefined}
+                    >
+                        {analysisScopeType === 'project' ? 'Project' : 'Workspace'}: {analysisScopeLabel || 'No active scope'}
                     </span>
                 </div>
                 <div className="incident-studio-status-wrap">
-                    <span className={`incident-studio-badge ${aiUnavailable ? 'is-risk' : 'is-ok'}`}>
-                        {aiUnavailable ? 'Needs fallback' : isAnalyzing ? 'Analyzing now' : 'Ready'}
-                    </span>
-                    {modelId ? <span className="incident-studio-model">{modelId}</span> : null}
-                    <button
-                        type="button"
-                        className={`incident-mode-toggle incident-mode-toggle--${activeUserMode}`}
-                        onClick={cycleUserMode}
-                        title="Switch mode: Guided → Standard → Expert"
-                    >
-                        {activeUserMode === 'guided' ? '🧭 Guided' : activeUserMode === 'expert' ? '⚡ Expert' : '⚙ Standard'}
-                    </button>
+                    <div className="incident-header-group" role="group" aria-label="Studio status">
+                        <span className="incident-header-group-label">Status</span>
+                        <div className="incident-header-group-controls">
+                            <span className={`incident-studio-badge ${aiUnavailable ? 'is-risk' : 'is-ok'}`}>
+                                {aiUnavailable ? 'Needs fallback' : isAnalyzing ? 'Analyzing now' : 'Ready'}
+                            </span>
+                            {modelId ? <span className="incident-studio-model">{modelId}</span> : null}
+                        </div>
+                    </div>
+
+                    <div className="incident-header-group incident-header-group--mode" role="group" aria-label="Studio interaction mode">
+                        <span className="incident-header-group-label">Mode</span>
+                        <div className="incident-header-group-controls">
+                            {/* Mode segmented control: Guided / Standard / Expert */}
+                            <div className="incident-mode-segmented" role="group" aria-label="Studio interaction mode">
+                                {(['guided', 'standard', 'expert'] as const).map((m) => (
+                                    <button
+                                        key={m}
+                                        type="button"
+                                        className={`incident-mode-chip${activeUserMode === m ? ' is-active' : ''}`}
+                                        onClick={() => {
+                                            setActiveUserMode(m);
+                                            onUserModeChange?.(m);
+                                        }}
+                                        aria-label={
+                                            m === 'guided' ? 'Guided mode' : m === 'expert' ? 'Expert mode' : 'Standard mode'
+                                        }
+                                        title={
+                                            m === 'guided'
+                                                ? 'Guided — one best next action, minimal cognitive load'
+                                                : m === 'expert'
+                                                    ? 'Expert — full action surface and evidence breakdown'
+                                                    : 'Standard — balanced guidance and execution options'
+                                        }
+                                    >
+                                        {m === 'guided' ? '🧭 Guided' : m === 'expert' ? '⚡ Expert' : '⚙ Standard'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="incident-header-group incident-header-group--view" role="group" aria-label="Studio view controls">
+                        <span className="incident-header-group-label">View</span>
+                        <div className="incident-header-group-controls">
+                            {/* Maximize / Restore toggle */}
+                            <button
+                                type="button"
+                                className="incident-mode-chip"
+                                onClick={() => setIsMaximized((v) => !v)}
+                                aria-label={isMaximized ? 'Restore Studio to normal size' : 'Maximize Studio to full view'}
+                                title={isMaximized ? 'Restore normal size' : 'Maximize — full view'}
+                            >
+                                {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                            </button>
+                            {/* Lite ↔ Full toggle — always visible so features are never hidden by default */}
+                            <button
+                                type="button"
+                                className={`incident-mode-chip${isFullDisplay ? ' is-active' : ''}`}
+                                onClick={() => onStudioDisplayModeChange?.(isLiteDisplay ? 'full' : 'lite')}
+                                aria-label={isLiteDisplay ? 'Switch to full Studio view' : 'Switch to compact Lite view'}
+                                title={isLiteDisplay ? 'Switch to full Studio view' : 'Switch to compact Lite view'}
+                            >
+                                {isLiteDisplay ? '▢ Full' : '⊠ Lite'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="incident-header-group incident-header-group--automation" role="group" aria-label="Studio automation controls">
+                        <span className="incident-header-group-label">Automation</span>
+                        <div className="incident-header-group-controls">
+                            <button
+                                type="button"
+                                className={`incident-mode-chip${autoLearningEnabled ? ' is-active' : ''}`}
+                                onClick={() => onToggleAutoLearning?.(!autoLearningEnabled)}
+                                title="Save reusable fix pattern after verify_passed"
+                            >
+                                Learning: {autoLearningEnabled ? 'On' : 'Off'}
+                            </button>
+                            <button
+                                type="button"
+                                className={`incident-mode-chip incident-mode-refresh${isRefreshing ? ' is-loading' : ''}`}
+                                onClick={() => onRefreshData?.()}
+                                disabled={isRefreshing}
+                                title="Restart analysis for the selected workspace/project"
+                            >
+                                {isRefreshing ? 'Re-analyzing...' : 'Re-analyze'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="incident-header-group incident-header-group--model" role="group" aria-label="Studio model controls">
+                        <span className="incident-header-group-label">Model</span>
+                        <div className="incident-header-group-controls">
+                            <select
+                                className="incident-model-select"
+                                value={selectedModelId ?? ''}
+                                onChange={(event) => onModelChange?.(event.target.value || null)}
+                            >
+                                <option value="">Auto</option>
+                                {availableModels.map((model) => (
+                                    <option key={model.id} value={model.id}>
+                                        {model.name} ({model.vendor})
+                                    </option>
+                                ))}
+                            </select>
+                            <span className="incident-header-meta">Updated: {refreshLabel || 'not yet'}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             {isFullDisplay ? (
-                <ol className="incident-phase-rail" aria-label="Incident lifecycle">
-                    {activeUserMode === 'guided' && (
-                        <div className="incident-guided-banner">
-                            <strong>Step {phaseProgress.activeIndex + 1} of {phaseProgress.steps.length} — {activePhase}</strong>
-                            <span>{guidedStepHint}</span>
-                        </div>
-                    )}
+                <div className="incident-studio-body">
+                    <ol className="incident-phase-rail incident-phase-rail--compact" aria-label="Incident lifecycle">
+                        {activeUserMode === 'guided' && (
+                            <div className="incident-guided-banner">
+                                <strong>Step {phaseProgress.activeIndex + 1} of {phaseProgress.steps.length} — {activePhase}</strong>
+                                <span>{guidedStepHint}</span>
+                            </div>
+                        )}
 
-                    {phaseProgress.steps.map((step, index) => {
-                        const isActive = index === phaseProgress.activeIndex;
-                        const isDone = step.done;
+                        {phaseProgress.steps.map((step, index) => {
+                            const isActive = index === phaseProgress.activeIndex;
+                            const isDone = step.done;
 
-                        return (
-                            <li
-                                key={step.key}
-                                className={`incident-phase-step ${isDone ? 'is-done' : ''} ${isActive ? 'is-active' : ''}`}
-                                aria-current={isActive ? 'step' : undefined}
-                            >
-                                {index < phaseProgress.steps.length - 1 ? <span className="incident-phase-line" aria-hidden="true" /> : null}
-                                <span className="incident-phase-node-wrap">
-                                    <span className="incident-phase-node">{index + 1}</span>
-                                    <span className="incident-phase-copy">
-                                        <strong>{step.label}</strong>
-                                        <small>{isDone ? 'Completed' : isActive ? 'In progress' : 'Queued'}</small>
-                                        <em>{step.cue}</em>
+                            return (
+                                <li
+                                    key={`compact-${step.key}`}
+                                    className={`incident-phase-step ${isDone ? 'is-done' : ''} ${isActive ? 'is-active' : ''}`}
+                                    aria-current={isActive ? 'step' : undefined}
+                                >
+                                    {index < phaseProgress.steps.length - 1 ? <span className="incident-phase-line" aria-hidden="true" /> : null}
+                                    <span className="incident-phase-node-wrap">
+                                        <span className="incident-phase-node">{index + 1}</span>
+                                        <span className="incident-phase-copy">
+                                            <strong>{step.label}</strong>
+                                            <small>{isDone ? 'Completed' : isActive ? 'In progress' : 'Queued'}</small>
+                                            <em>{step.cue}</em>
+                                        </span>
                                     </span>
+                                </li>
+                            );
+                        })}
+                    </ol>
+
+                    <div className="incident-studio-grid">
+                        <main className="incident-analysis-panel">
+                            <ol className="incident-phase-rail incident-phase-rail--desktop" aria-label="Incident lifecycle">
+                                {activeUserMode === 'guided' && (
+                                    <div className="incident-guided-banner">
+                                        <strong>Step {phaseProgress.activeIndex + 1} of {phaseProgress.steps.length} — {activePhase}</strong>
+                                        <span>{guidedStepHint}</span>
+                                    </div>
+                                )}
+
+                                {phaseProgress.steps.map((step, index) => {
+                                    const isActive = index === phaseProgress.activeIndex;
+                                    const isDone = step.done;
+
+                                    return (
+                                        <li
+                                            key={step.key}
+                                            className={`incident-phase-step ${isDone ? 'is-done' : ''} ${isActive ? 'is-active' : ''}`}
+                                            aria-current={isActive ? 'step' : undefined}
+                                        >
+                                            {index < phaseProgress.steps.length - 1 ? <span className="incident-phase-line" aria-hidden="true" /> : null}
+                                            <span className="incident-phase-node-wrap">
+                                                <span className="incident-phase-node">{index + 1}</span>
+                                                <span className="incident-phase-copy">
+                                                    <strong>{step.label}</strong>
+                                                    <small>{isDone ? 'Completed' : isActive ? 'In progress' : 'Queued'}</small>
+                                                    <em>{step.cue}</em>
+                                                </span>
+                                            </span>
+                                        </li>
+                                    );
+                                })}
+                            </ol>
+
+                            <div className="incident-panel-heading incident-panel-heading--brand">
+                                <Activity size={13} />
+                                <span>Live Diagnosis</span>
+                                <span className="incident-analysis-status">
+                                    {isAnalyzing ? '● Analyzing…' : chatBrainHistory?.length ? `${chatBrainHistory.length} messages` : 'Ready'}
                                 </span>
-                            </li>
-                        );
-                    })}
-                </ol>
+                            </div>
+
+                            <div className="incident-focus-surface">
+                                <div className="incident-focus-main">
+                                    {incidentResume ? (
+                                        <div className="incident-resume-card">
+                                            <div className="incident-resume-head">
+                                                <span>Session recap</span>
+                                                <small>
+                                                    {resumeTimestamp || 'Recent'}
+                                                    {' · '}
+                                                    {incidentResume.turnCount} turn{incidentResume.turnCount === 1 ? '' : 's'}
+                                                </small>
+                                            </div>
+                                            <p>{incidentResume.recap}</p>
+                                            <div className="incident-resume-meta">
+                                                <span>Phase: {incidentResume.phase}</span>
+                                                <span>Actions: {incidentResume.actionCount}</span>
+                                                <span>{incidentResume.resolved ? 'Resolved' : 'Open loop'}</span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="incident-btn primary"
+                                                onClick={() => {
+                                                    setLastUserQuery(incidentResume.nextActionQuery);
+                                                    onChatBrainQuery?.(incidentResume.nextActionQuery);
+                                                }}
+                                            >
+                                                {incidentResume.nextActionLabel}
+                                            </button>
+                                        </div>
+                                    ) : null}
+
+                                    <details className="incident-collapse incident-focus-diagnosis">
+                                        <summary>
+                                            <span className="incident-focus-kicker">
+                                                <span className="incident-focus-kicker-dot" />
+                                                <span>{focusHeadline}</span>
+                                            </span>
+                                            <small>{focusTimestamp}</small>
+                                        </summary>
+                                        <div className="incident-focus-copy">
+                                            <h3>{latestAssistantEntry ? 'Current diagnosis' : 'Workspace ready for incident analysis'}</h3>
+                                            <p>{focusNarrative}</p>
+                                            <small className="incident-mode-hint">{modeHint}</small>
+                                            {modePresentation?.rationale ? (
+                                                <small className="incident-mode-hint">Mode rationale: {modePresentation.rationale}</small>
+                                            ) : null}
+                                        </div>
+                                        {focusReason ? (
+                                            <div className="incident-focus-reason">
+                                                <strong>Why this is likely</strong>
+                                                <p>{focusReason}</p>
+                                            </div>
+                                        ) : null}
+                                    </details>
+                                    {isFullDisplay && architectureLens ? (
+                                        <section className={`incident-architecture-lens risk-${architectureLens.riskTone}${architectureLens.blocked ? ' is-blocked' : ''}`}>
+                                            <div className="incident-architecture-lens-head">
+                                                <div>
+                                                    <span className="incident-architecture-lens-kicker">Architecture lens</span>
+                                                    <h4>{architectureLens.title}</h4>
+                                                </div>
+                                                <div className="incident-architecture-lens-status">
+                                                    <strong>{architectureLens.statusLabel}</strong>
+                                                    <small>{architectureLens.graphSummary}</small>
+                                                </div>
+                                            </div>
+                                            <p className="incident-architecture-lens-summary">{architectureLens.headline}</p>
+                                            <div className="incident-architecture-lens-view-switch" role="group" aria-label="Graph lens view">
+                                                <button
+                                                    type="button"
+                                                    className={`incident-mode-chip ${architectureLensViewMode === 'tree' ? 'is-active' : ''}`}
+                                                    onClick={() => setArchitectureLensViewMode('tree')}
+                                                >
+                                                    Tree
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`incident-mode-chip ${architectureLensViewMode === 'dependency' ? 'is-active' : ''}`}
+                                                    onClick={() => setArchitectureLensViewMode('dependency')}
+                                                >
+                                                    Dependency
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`incident-mode-chip ${architectureLensViewMode === 'runtime' ? 'is-active' : ''}`}
+                                                    onClick={() => setArchitectureLensViewMode('runtime')}
+                                                >
+                                                    Runtime Flow
+                                                </button>
+                                            </div>
+                                            <div className="incident-architecture-lens-view-panel">
+                                                {architectureLensViewMode === 'tree' ? (
+                                                    <div className="incident-architecture-lens-tree">
+                                                        {graphNodeGroups.length > 0 ? (
+                                                            graphNodeGroups.slice(0, 5).map((group) => (
+                                                                <div key={`tree-${group.nodeType}`} className="incident-architecture-lens-tree-group">
+                                                                    <small className="incident-architecture-lens-tree-title">
+                                                                        {group.nodeType} ({group.nodes.length})
+                                                                    </small>
+                                                                    <div className="incident-architecture-lens-tree-items">
+                                                                        {group.nodes.slice(0, 6).map((node) => (
+                                                                            <button
+                                                                                key={node.id}
+                                                                                type="button"
+                                                                                className={`incident-architecture-lens-node-link${node.filePath ? '' : ' is-readonly'}`}
+                                                                                onClick={() => revealGraphNodeTarget(node)}
+                                                                                disabled={!node.filePath}
+                                                                                title={node.filePath || node.label}
+                                                                            >
+                                                                                <strong>{node.label}</strong>
+                                                                                <small>{node.type} · {node.confidence}% confidence</small>
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            ))
+                                                        ) : architectureLens.focusNodes.length > 0 ? (
+                                                            <div className="incident-architecture-lens-tree-items">
+                                                                {architectureLens.focusNodes.map((node) => (
+                                                                    <button
+                                                                        key={`focus-${node.id}`}
+                                                                        type="button"
+                                                                        className={`incident-architecture-lens-node-link${node.filePath ? '' : ' is-readonly'}`}
+                                                                        onClick={() =>
+                                                                            revealGraphNodeTarget(
+                                                                                graphNodeById.get(node.id),
+                                                                                'node'
+                                                                            )
+                                                                        }
+                                                                        disabled={!node.filePath}
+                                                                        title={node.filePath || node.label}
+                                                                    >
+                                                                        <strong>{node.label}</strong>
+                                                                        <small>{node.type} · {node.confidence}% confidence</small>
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <small className="incident-architecture-lens-empty">
+                                                                Tree view will populate as soon as graph nodes arrive from the incident scan.
+                                                            </small>
+                                                        )}
+                                                    </div>
+                                                ) : null}
+
+                                                {architectureLensViewMode === 'dependency' ? (
+                                                    <div className="incident-architecture-lens-dependency">
+                                                        {graphDependencyEdges.length > 0 ? (
+                                                            <div className="incident-architecture-lens-edge-list">
+                                                                {graphDependencyEdges.slice(0, 12).map((edge) => (
+                                                                    <div key={edge.id} className="incident-architecture-lens-edge-row">
+                                                                        <div className="incident-architecture-lens-edge-main">
+                                                                            <button
+                                                                                type="button"
+                                                                                className={`incident-architecture-lens-edge-link${edge.sourceNode?.filePath ? '' : ' is-readonly'}`}
+                                                                                onClick={() => revealGraphNodeTarget(edge.sourceNode)}
+                                                                                disabled={!edge.sourceNode?.filePath}
+                                                                            >
+                                                                                {edge.sourceLabel}
+                                                                            </button>
+                                                                            <span className="incident-architecture-lens-edge-arrow">-&gt;</span>
+                                                                            <button
+                                                                                type="button"
+                                                                                className={`incident-architecture-lens-edge-link${edge.targetNode?.filePath ? '' : ' is-readonly'}`}
+                                                                                onClick={() => revealGraphNodeTarget(edge.targetNode)}
+                                                                                disabled={!edge.targetNode?.filePath}
+                                                                            >
+                                                                                {edge.targetLabel}
+                                                                            </button>
+                                                                        </div>
+                                                                        <div className="incident-architecture-lens-edge-meta">
+                                                                            <small>{edge.relation}</small>
+                                                                            <span className={`incident-architecture-lens-risk-chip risk-${architectureLens.riskTone}`}>
+                                                                                {architectureLens.riskTone} risk
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <small className="incident-architecture-lens-empty">
+                                                                No dependency edges yet. Run change-impact again to enrich structural links.
+                                                            </small>
+                                                        )}
+                                                        {graphUnresolvedEdges.length > 0 ? (
+                                                            <div className="incident-architecture-lens-unresolved">
+                                                                <span>Unresolved edges</span>
+                                                                {graphUnresolvedEdges.slice(0, 5).map((edge) => (
+                                                                    <small key={`unresolved-${edge.id}`}>
+                                                                        {edge.sourceLabel} -&gt; {edge.targetLabel} ({edge.relation})
+                                                                    </small>
+                                                                ))}
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
+                                                ) : null}
+
+                                                {architectureLensViewMode === 'runtime' ? (
+                                                    <div className="incident-architecture-lens-runtime">
+                                                        {graphRuntimeEdges.length > 0 ? (
+                                                            <div className="incident-architecture-runtime-lane">
+                                                                {graphRuntimeEdges.slice(0, 12).map((edge) => (
+                                                                    <div key={`runtime-${edge.id}`} className="incident-architecture-runtime-step">
+                                                                        <button
+                                                                            type="button"
+                                                                            className={`incident-architecture-lens-edge-link${edge.sourceNode?.filePath ? '' : ' is-readonly'}`}
+                                                                            onClick={() => revealGraphNodeTarget(edge.sourceNode)}
+                                                                            disabled={!edge.sourceNode?.filePath}
+                                                                        >
+                                                                            {edge.sourceLabel}
+                                                                        </button>
+                                                                        <span className="incident-architecture-lens-edge-arrow">-&gt;</span>
+                                                                        <button
+                                                                            type="button"
+                                                                            className={`incident-architecture-lens-edge-link${edge.targetNode?.filePath ? '' : ' is-readonly'}`}
+                                                                            onClick={() => revealGraphNodeTarget(edge.targetNode)}
+                                                                            disabled={!edge.targetNode?.filePath}
+                                                                        >
+                                                                            {edge.targetLabel}
+                                                                        </button>
+                                                                        <small>{edge.relation}</small>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <small className="incident-architecture-lens-empty">
+                                                                Runtime lane is waiting for route/service/datastore edges from graph telemetry.
+                                                            </small>
+                                                        )}
+                                                        {graphUnresolvedEdges.length > 0 ? (
+                                                            <div className="incident-architecture-lens-unresolved">
+                                                                <span>Unresolved runtime links</span>
+                                                                {graphUnresolvedEdges.slice(0, 5).map((edge) => (
+                                                                    <small key={`runtime-unresolved-${edge.id}`}>
+                                                                        {edge.sourceLabel} -&gt; {edge.targetLabel}
+                                                                    </small>
+                                                                ))}
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                            <div className="incident-architecture-lens-grid">
+                                                <div className="incident-architecture-lens-section">
+                                                    <span>Why Workspai thinks so</span>
+                                                    {architectureLens.reasons.length > 0 ? (
+                                                        architectureLens.reasons.map((reason, index) => (
+                                                            <small key={`lens-reason-${index}`}>{reason}</small>
+                                                        ))
+                                                    ) : (
+                                                        <small>Evidence is still being assembled from the system graph and verification layer.</small>
+                                                    )}
+                                                </div>
+                                                <div className="incident-architecture-lens-section">
+                                                    <span>What is affected</span>
+                                                    <small>
+                                                        Modules: {architectureLens.affectedModules.length > 0
+                                                            ? architectureLens.affectedModules.join(', ')
+                                                            : 'unknown'}
+                                                    </small>
+                                                    <small>
+                                                        Files: {architectureLens.affectedFiles.length > 0
+                                                            ? architectureLens.affectedFiles.join(', ')
+                                                            : 'unknown'}
+                                                    </small>
+                                                    <small>
+                                                        Tests: {architectureLens.affectedTests.length > 0
+                                                            ? architectureLens.affectedTests.join(', ')
+                                                            : 'none suggested yet'}
+                                                    </small>
+                                                </div>
+                                                <div className="incident-architecture-lens-section">
+                                                    <span>How to verify safely</span>
+                                                    {architectureLens.verifyChecklist.length > 0 ? (
+                                                        architectureLens.verifyChecklist.map((item, index) => (
+                                                            <small key={`lens-verify-${index}`}>{item}</small>
+                                                        ))
+                                                    ) : (
+                                                        <small>Run deterministic verification before any completion claim.</small>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {architectureNavigator.length > 0 ? (
+                                                <div className="incident-architecture-lens-navigator">
+                                                    <span>Impact navigator</span>
+                                                    <div className="incident-architecture-lens-nav-groups">
+                                                        {architectureNavigator.map((section) => (
+                                                            <div key={section.id} className="incident-architecture-lens-nav-group">
+                                                                <small className="incident-architecture-lens-nav-title">{section.title}</small>
+                                                                <div className="incident-architecture-lens-nav-items">
+                                                                    {section.items.map((item) => (
+                                                                        <button
+                                                                            key={item.id}
+                                                                            type="button"
+                                                                            className={`incident-architecture-lens-nav-item is-${item.kind}`}
+                                                                            onClick={() => handleArchitectureNavigatorSelect(item)}
+                                                                            title={item.detail}
+                                                                        >
+                                                                            <strong>{item.label}</strong>
+                                                                            <small>{item.detail}</small>
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                            {architectureLens.focusNodes.length > 0 ? (
+                                                <div className="incident-architecture-lens-focus">
+                                                    <span>Top graph signals</span>
+                                                    <div className="incident-architecture-lens-node-list">
+                                                        {architectureLens.focusNodes.map((node) => (
+                                                            <div key={node.id} className="incident-architecture-lens-node">
+                                                                <strong>{node.label}</strong>
+                                                                <small>{node.type} · {node.confidence}% confidence</small>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                            {architectureLens.blockedReasons.length > 0 ? (
+                                                <div className="incident-architecture-lens-blockers">
+                                                    <span>Blocked until</span>
+                                                    {architectureLens.blockedReasons.map((reason, index) => (
+                                                        <small key={`lens-blocked-${index}`}>{reason}</small>
+                                                    ))}
+                                                </div>
+                                            ) : null}
+                                            {architectureLens.nextSafeAction ? (
+                                                <div className="incident-architecture-lens-actions">
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn primary"
+                                                        onClick={runPredictiveSafeAction}
+                                                    >
+                                                        Use safe next action
+                                                    </button>
+                                                    <small>{architectureLens.nextSafeAction}</small>
+                                                </div>
+                                            ) : null}
+                                        </section>
+                                    ) : null}
+                                    {intentChips.length > 0 ? (
+                                        <div className="incident-intent-section">
+                                            <div className="incident-intent-section-head">
+                                                <span>Do this next</span>
+                                            </div>
+                                            <div className="incident-intent-grid">
+                                                {intentChips.map((chip) => (
+                                                    <button
+                                                        key={chip.id}
+                                                        type="button"
+                                                        className={`incident-intent-chip${chip.isPrimary ? ' is-primary' : ''}`}
+                                                        onClick={() => handleIntentChipSelect(chip)}
+                                                        title={chip.detail}
+                                                    >
+                                                        <strong>{chip.label}</strong>
+                                                        <span>{chip.detail}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                </div>
+
+                                <aside className="incident-focus-sidecar">
+                                    <div className="incident-focus-metrics">
+                                        {compactStats.map((stat) => (
+                                            <div key={stat.label} className="incident-focus-metric">
+                                                <span>{stat.label}</span>
+                                                <strong>{stat.value}</strong>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {latestStructuredResponse?.nextCommand ? (
+                                        <div className="incident-focus-command-card">
+                                            <div className="incident-focus-command-head">Next command</div>
+                                            <code>{normalizeCommandText(latestStructuredResponse.nextCommand)}</code>
+                                            <div
+                                                className={`incident-command-scope incident-command-scope--${inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.nextCommand), hasProjectSelected)}`}
+                                            >
+                                                {commandScopeLabel(inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.nextCommand), hasProjectSelected))}
+                                            </div>
+                                            <div className="incident-command-actions">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn primary"
+                                                    onClick={() => runCommand(latestStructuredResponse.nextCommand!)}
+                                                >
+                                                    Run
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn"
+                                                    onClick={() => copyCommand(latestStructuredResponse.nextCommand!)}
+                                                >
+                                                    {lastCopiedCommand === normalizeCommandText(latestStructuredResponse.nextCommand) ? 'Copied' : 'Copy'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+
+                                    {latestStructuredResponse?.verifyCommand ? (
+                                        <div className="incident-focus-command-card incident-focus-command-card--proof">
+                                            <div className="incident-focus-command-head">Proof this worked</div>
+                                            <code>{normalizeCommandText(latestStructuredResponse.verifyCommand)}</code>
+                                            <div
+                                                className={`incident-command-scope incident-command-scope--${inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.verifyCommand), hasProjectSelected)}`}
+                                            >
+                                                {commandScopeLabel(inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.verifyCommand), hasProjectSelected))}
+                                            </div>
+                                            <div className="incident-command-actions">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn primary"
+                                                    onClick={() => runCommand(latestStructuredResponse.verifyCommand!)}
+                                                >
+                                                    Run
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn"
+                                                    onClick={() => copyCommand(latestStructuredResponse.verifyCommand!)}
+                                                >
+                                                    {lastCopiedCommand === normalizeCommandText(latestStructuredResponse.verifyCommand) ? 'Copied' : 'Copy'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+
+                                    {architectureLens ? (
+                                        <div className="incident-focus-command-card incident-focus-command-card--impact">
+                                            <div className="incident-focus-command-head">System graph</div>
+                                            <div className="incident-focus-graph-meta">
+                                                <span>{architectureLens.graphSummary}</span>
+                                                <strong>{architectureLens.focusNodes.length > 0 ? architectureLens.focusNodes[0].label : 'Awaiting graph focus nodes'}</strong>
+                                            </div>
+                                        </div>
+                                    ) : null}
+                                </aside>
+                                {chatBrainActionResult && actionResultPresentation ? (
+                                    <div className={`incident-verify-inline-badge is-${actionResultPresentation.tone === 'success' ? 'pass' : actionResultPresentation.tone === 'warning' ? 'warning' : 'fail'}`}>
+                                        {actionResultPresentation.tone === 'success'
+                                            ? <CheckCircle2 size={11} />
+                                            : <AlertTriangle size={11} />}
+                                        <span>{actionResultPresentation.title}</span>
+                                        {chatBrainActionResult.outputSummary
+                                            ? <em>{chatBrainActionResult.outputSummary}</em>
+                                            : null}
+                                    </div>
+                                ) : null}
+                            </div>
+
+                            {isFullDisplay ? (
+                                <div className="incident-health-snapshot">
+                                    <div className="incident-panel-heading">
+                                        <BarChart3 size={13} />
+                                        <span>Workspace Health Snapshot</span>
+                                    </div>
+                                    <details className="incident-collapse incident-collapse--snapshot incident-collapse--issues incident-health-section">
+                                        <summary>
+                                            <span>Open Issues</span>
+                                            <small>{sortedBoardActions.length > 0 ? `${sortedBoardActions.length} active` : isAnalyzing ? 'Scanning' : 'Clear'}</small>
+                                        </summary>
+                                        {sortedBoardActions.length > 0 ? (
+                                            <div className="incident-issues-grid">
+                                                {visibleSidebarIssues.map((action) => {
+                                                    const tone = riskTone(action.riskLevel);
+                                                    const isUrgent = tone === 'critical' || tone === 'high';
+                                                    return (
+                                                        <button
+                                                            key={action.id}
+                                                            type="button"
+                                                            className={`incident-issue-card${isUrgent ? ' active' : ''}`}
+                                                            onClick={() => onChatBrainExecuteAction?.(action.actionType, action.id)}
+                                                        >
+                                                            <span className={`incident-feed-severity ${tone}`} />
+                                                            <div className="incident-issue-copy">
+                                                                <strong>{action.label}</strong>
+                                                                <small>{action.riskLevel ?? 'unknown risk'}</small>
+                                                            </div>
+                                                            <span className={`incident-feed-status${isUrgent ? '' : ' muted'}`}>
+                                                                {isUrgent ? 'Needs attention' : 'Ready'}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div className="incident-issues-empty">
+                                                {isAnalyzing
+                                                    ? 'Scanning workspace for issues…'
+                                                    : 'No incidents yet. Start an analysis to populate this strip.'}
+                                            </div>
+                                        )}
+                                        {showSidebarIssuesToggle ? (
+                                            <button
+                                                type="button"
+                                                className="incident-sidebar-toggle-link"
+                                                onClick={() => setShowAllSidebarIssues((prev) => !prev)}
+                                            >
+                                                {showAllSidebarIssues ? 'Show less' : `Show all (${sortedBoardActions.length})`}
+                                            </button>
+                                        ) : null}
+                                    </details>
+                                    <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                        <summary>
+                                            <span>Snapshot numbers</span>
+                                            <small>{snapshotHealthPercent === null ? 'No data' : `${snapshotHealthPercent}%`}</small>
+                                        </summary>
+                                        <div className="incident-metric-card">
+                                            <span>Workspace health</span>
+                                            <strong>
+                                                {snapshotHealthPercent === null
+                                                    ? 'N/A — run doctor checks'
+                                                    : `${snapshotHealthPercent}%`}
+                                            </strong>
+                                            <div className="incident-meter">
+                                                <span style={{ width: `${snapshotHealthPercent ?? 0}%` }} />
+                                            </div>
+                                        </div>
+                                        {hasDoctorSnapshot ? (
+                                            <div className="incident-metric-card">
+                                                <span>Projects with issues</span>
+                                                <strong>
+                                                    {doctorSummary!.projectsWithIssues}/{doctorSummary!.projectCount}
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${projectsWithIssuesRatio ?? 0}%` }} />
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                        <div className="incident-stats-row">
+                                            <div>
+                                                <Clock3 size={12} />
+                                                <span>
+                                                    {doctorSummary?.generatedAt
+                                                        ? `Doctor updated ${new Date(doctorSummary.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                                        : commandSummary?.lastCommandAt
+                                                            ? `Updated ${new Date(commandSummary.lastCommandAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                                            : 'No activity yet'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <CheckCircle2 size={12} />
+                                                <span>
+                                                    {hasDoctorSnapshot
+                                                        ? `${doctorSummary!.issueCount} issue(s) detected`
+                                                        : incidentCount !== null
+                                                            ? `${incidentCount} items tracked`
+                                                            : 'No activity yet'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <RotateCw size={12} />
+                                                <span>
+                                                    {isAnalyzing
+                                                        ? 'AI is updating this view'
+                                                        : hasDoctorSnapshot
+                                                            ? 'Doctor evidence loaded from workspace'
+                                                            : 'Waiting for your next action'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </details>
+
+                                    {ctaVariantBreakdown?.variants?.length ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>CTA Variant Breakdown</span>
+                                                <small>{ctaVariantBreakdown.variants.length} variant(s)</small>
+                                            </summary>
+                                            <div className="incident-cta-variant-grid">
+                                                {ctaVariantBreakdown.variants.map((item) => {
+                                                    const lowConfidence =
+                                                        item.loopStarted < CTA_VARIANT_MIN_LOOP_SAMPLES ||
+                                                        item.actionExecuted < CTA_VARIANT_MIN_ACTION_SAMPLES;
+
+                                                    return (
+                                                        <div key={item.variant} className="incident-cta-variant-card">
+                                                            <div className="incident-cta-variant-head">
+                                                                <strong>{item.variant.toUpperCase()}</strong>
+                                                                <small>{item.loopStarted} loop starts</small>
+                                                            </div>
+                                                            {lowConfidence ? (
+                                                                <div className="incident-cta-variant-confidence">Low confidence sample</div>
+                                                            ) : null}
+                                                            <div className="incident-cta-variant-metrics">
+                                                                <span>
+                                                                    verify completion
+                                                                    <b>{item.verifyCompletionRate === null ? 'N/A' : `${item.verifyCompletionRate}%`}</b>
+                                                                </span>
+                                                                <span>
+                                                                    action vs ask
+                                                                    <b>{item.actionVsAskShare === null ? 'N/A' : `${item.actionVsAskShare}%`}</b>
+                                                                </span>
+                                                            </div>
+                                                            <div className="incident-cta-variant-foot">
+                                                                <small>
+                                                                    actions {item.actionExecuted} · verify ✓ {item.verifyPassed} / ✗ {item.verifyFailed}
+                                                                </small>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            <div className="incident-cta-variant-legend">
+                                                verify completion = (verify passed + verify failed) / action executed. action vs ask = action executed / (action executed + next_action_clicked). UNKNOWN = events collected without ctaVariant tag.
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {studioHardGateStatus ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Studio hard-gate</span>
+                                                <small>{studioHardGateStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
+                                            </summary>
+                                            <div className="incident-metric-card">
+                                                <span>Verify-phase reach</span>
+                                                <strong>
+                                                    {hardGateVerifyReach === null ? 'N/A' : `${hardGateVerifyReach}%`} / min{' '}
+                                                    {studioHardGateStatus.thresholds.verifyPhaseReachMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${hardGateVerifyMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>Bridge route completion</span>
+                                                <strong>
+                                                    {hardGateBridgeCompletion === null ? 'N/A' : `${hardGateBridgeCompletion}%`} / min{' '}
+                                                    {studioHardGateStatus.thresholds.bridgeRouteCompletionMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${hardGateBridgeMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-stats-row">
+                                                <div>
+                                                    <ShieldCheck size={12} />
+                                                    <span>
+                                                        verify gate: {studioHardGateStatus.gates.verifyPhaseReachPass ? 'pass' : 'fail'}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <BarChart3 size={12} />
+                                                    <span>
+                                                        bridge gate: {studioHardGateStatus.gates.bridgeRouteCompletionPass ? 'pass' : 'fail'}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <Activity size={12} />
+                                                    <span>
+                                                        telemetry evidence: {studioHardGateStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {studioRollbackKpiStatus ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Rollback KPI gate</span>
+                                                <small>{studioRollbackKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
+                                            </summary>
+                                            <div className="incident-metric-card">
+                                                <span>Auto-rollback success rate</span>
+                                                <strong>
+                                                    {rollbackAutoSuccessRate === null ? 'N/A' : `${rollbackAutoSuccessRate}%`} / min{' '}
+                                                    {studioRollbackKpiStatus.thresholds.verifyAutoRollbackSuccessRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${rollbackSuccessMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>False-confidence rate</span>
+                                                <strong>
+                                                    {rollbackFalseConfidenceRate === null ? 'N/A' : `${rollbackFalseConfidenceRate}%`} / max{' '}
+                                                    {studioRollbackKpiStatus.thresholds.falseConfidenceRateMax}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${rollbackFalseConfidenceMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-stats-row">
+                                                <div>
+                                                    <RotateCw size={12} />
+                                                    <span>
+                                                        attempts: {studioRollbackKpiStatus.metrics.rollbackAttempted} / verify failed{' '}
+                                                        {studioRollbackKpiStatus.metrics.verifyFailed}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <CheckCircle2 size={12} />
+                                                    <span>succeeded: {studioRollbackKpiStatus.metrics.rollbackSucceeded}</span>
+                                                </div>
+                                                <div>
+                                                    <Activity size={12} />
+                                                    <span>
+                                                        evidence: {studioRollbackKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {studioReproPackKpiStatus ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Repro Pack KPI gate</span>
+                                                <small>{studioReproPackKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
+                                            </summary>
+                                            <div className="incident-metric-card">
+                                                <span>Repro pack share rate</span>
+                                                <strong>
+                                                    {studioReproPackKpiStatus.metrics.reproPackShareRate === null
+                                                        ? 'N/A'
+                                                        : `${studioReproPackKpiStatus.metrics.reproPackShareRate}%`}{' '}
+                                                    / min {studioReproPackKpiStatus.thresholds.reproPackShareRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span
+                                                        style={{
+                                                            width: `${Math.min(
+                                                                studioReproPackKpiStatus.metrics.reproPackShareRate ?? 0,
+                                                                100
+                                                            )}%`,
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>Replay-to-resolution rate</span>
+                                                <strong>
+                                                    {studioReproPackKpiStatus.metrics.replayToResolutionRate === null
+                                                        ? 'N/A'
+                                                        : `${studioReproPackKpiStatus.metrics.replayToResolutionRate}%`}{' '}
+                                                    / min {studioReproPackKpiStatus.thresholds.replayToResolutionRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span
+                                                        style={{
+                                                            width: `${Math.min(
+                                                                studioReproPackKpiStatus.metrics.replayToResolutionRate ?? 0,
+                                                                100
+                                                            )}%`,
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="incident-stats-row">
+                                                <div>
+                                                    <Package size={12} />
+                                                    <span>
+                                                        captured: {studioReproPackKpiStatus.metrics.reproPackCaptured} / exported:{' '}
+                                                        {studioReproPackKpiStatus.metrics.reproPackExported}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <RotateCw size={12} />
+                                                    <span>
+                                                        imported: {studioReproPackKpiStatus.metrics.reproPackImported} / enriched:{' '}
+                                                        {studioReproPackKpiStatus.metrics.incidentReplayMemoryEnriched}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <Activity size={12} />
+                                                    <span>
+                                                        evidence: {studioReproPackKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {hasDoctorSnapshot ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Doctor Overview</span>
+                                                <small>{doctorSummary!.issueCount} issue(s)</small>
+                                            </summary>
+                                            <div className="incident-doctor-snapshot">
+                                                <div className="incident-doctor-scoreline">
+                                                    <span>Health checks</span>
+                                                    <strong>
+                                                        ✅ {doctorSummary!.health.passed} · ⚠️ {doctorSummary!.health.warnings} · ❌ {doctorSummary!.health.errors}
+                                                    </strong>
+                                                </div>
+                                                {doctorSummary!.frameworks.length > 0 ? (
+                                                    <div className="incident-doctor-frameworks">
+                                                        {doctorSummary!.frameworks.slice(0, 4).map((fw) => (
+                                                            <span key={fw.name} className="incident-doctor-chip">
+                                                                {fw.name} ({fw.count})
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                ) : null}
+                                                {doctorSummary!.projects.length > 0 ? (
+                                                    <div className="incident-doctor-projects">
+                                                        {doctorSummary!.projects.slice(0, 4).map((project) => (
+                                                            <div
+                                                                key={project.name}
+                                                                className={`incident-doctor-project-item incident-doctor-project-item--${doctorProjectSeverity(project)}`}
+                                                            >
+                                                                <strong>{project.name}</strong>
+                                                                <span>
+                                                                    {project.framework || 'unknown framework'} · {project.issues} issue(s)
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : null}
+                                                {doctorSummary!.fixCommands.length > 0 ? (
+                                                    <div className="incident-doctor-fixes">
+                                                        <div className="incident-doctor-fixes-head">Recommended quick fixes</div>
+                                                        {doctorSummary!.fixCommands.slice(0, 3).map((fixCommand, idx) => {
+                                                            const normalized = normalizeCommandText(fixCommand);
+                                                            const isExecutingFix = !!(
+                                                                executingCommand && normalizeCommandText(executingCommand) === normalized
+                                                            );
+                                                            return (
+                                                                <div key={`${fixCommand}-${idx}`} className="incident-doctor-fix-item">
+                                                                    <code>{normalized}</code>
+                                                                    <div className="incident-command-actions">
+                                                                        <button
+                                                                            type="button"
+                                                                            className="incident-btn"
+                                                                            onClick={() => copyCommand(normalized)}
+                                                                            disabled={isExecutingFix}
+                                                                        >
+                                                                            {lastCopiedCommand === normalized ? 'Copied' : 'Copy'}
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="incident-btn primary"
+                                                                            onClick={() => runCommand(normalized)}
+                                                                            disabled={isExecutingFix}
+                                                                        >
+                                                                            {isExecutingFix ? 'Running' : 'Run'}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                        <summary>
+                                            <span>Proof this worked</span>
+                                            <small>{verifySteps.filter((step) => step.done).length}/{verifySteps.length} ready</small>
+                                        </summary>
+                                        <div className="incident-verify-panel incident-verify-panel--embedded">
+                                            <div className="incident-verify-steps">
+                                                {verifySteps.map((step) => (
+                                                    <div key={step.label} className="incident-verify-step">
+                                                        <span className={`incident-verify-dot ${step.done ? 'is-done' : 'is-pending'}`} />
+                                                        <span>{step.label}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button type="button" className="incident-btn primary" onClick={onRunDoctorChecks}>
+                                                Run workspace checks
+                                            </button>
+                                        </div>
+                                    </details>
+
+                                    {onboardingSummary?.followupShown ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Guidance</span>
+                                                <small>{onboardingSummary.followupClicked}/{onboardingSummary.followupShown} used</small>
+                                            </summary>
+                                            <div className="incident-onboarding-note incident-onboarding-note--embedded">
+                                                Suggested follow-ups used {onboardingSummary.followupClicked} of {onboardingSummary.followupShown} times.
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {(studioActivityItems.length > 0 || timelineItems.length > 0) ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Usage</span>
+                                                <small>{studioActivityItems.length + timelineItems.length} signals</small>
+                                            </summary>
+                                            <div className="incident-usage-compact incident-usage-compact--embedded">
+                                                <div className="incident-usage-pills">
+                                                    {studioActivityItems.map((item) => (
+                                                        <span key={item.command} className="incident-usage-pill">
+                                                            <em>{item.count}</em>{item.label}
+                                                        </span>
+                                                    ))}
+                                                    {timelineItems.map((item) => (
+                                                        <span key={item.command} className="incident-usage-pill incident-usage-pill--tool">
+                                                            <em>{item.count}</em>{item.label}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </details>
+                                    ) : null}
+                                </div>
+                            ) : null}
+                        </main>
+
+                        <aside className="incident-insights-panel">
+                            <div className="incident-panel-heading incident-panel-heading--brand">
+                                <Send size={13} />
+                                <span>Conversation</span>
+                                <span className="incident-analysis-status">
+                                    {isAnalyzing ? '● Analyzing…' : chatBrainHistory?.length ? `${chatBrainHistory.length} messages` : 'Ready'}
+                                </span>
+                            </div>
+
+                            <div className="incident-chat-toolbar" role="toolbar" aria-label="Conversation tools">
+                                <button
+                                    type="button"
+                                    className="incident-chat-toolbar-btn"
+                                    onClick={onRunDoctorChecks}
+                                    title="Run deterministic doctor checks — scans workspace health issues"
+                                >
+                                    <ShieldCheck size={12} />
+                                    <span>Doctor</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className="incident-chat-toolbar-btn"
+                                    onClick={() => runStudioAction('terminal-bridge', onRunTerminalBridge)}
+                                    title="Inspect logs and runtime signals"
+                                >
+                                    <Activity size={12} />
+                                    <span>Logs</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className="incident-chat-toolbar-btn"
+                                    onClick={() => runStudioAction('fix-preview-lite', _onRunFixPreview)}
+                                    title="Preview a safe patch before editing"
+                                >
+                                    <Wrench size={12} />
+                                    <span>Fix</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className="incident-chat-toolbar-btn"
+                                    onClick={() => runStudioAction('change-impact-lite', _onRunChangeImpact)}
+                                    title="Estimate blast radius and rollout risk"
+                                >
+                                    <BarChart3 size={12} />
+                                    <span>Impact</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className="incident-chat-toolbar-btn"
+                                    onClick={() => runStudioAction('verify-pack-autopilot')}
+                                    title="Generate an AI-built deterministic verify command pack (distinct from Doctor)"
+                                >
+                                    <ShieldCheck size={12} />
+                                    <span>Verify Pack</span>
+                                </button>
+                            </div>
+
+                            <div className="incident-history-shell">
+                                {/* Scrollable conversation thread */}
+                                <div className="incident-chat-thread" ref={threadRef} onScroll={handleThreadScroll}>
+                                    {aiUnavailable ? (
+                                        <div className="incident-fallback-card">
+                                            <div className="incident-fallback-title">
+                                                <AlertTriangle size={13} />
+                                                <span>AI provider currently unreachable</span>
+                                            </div>
+                                            <p>
+                                                Network-level failure detected. Switch to deterministic flow now, keep context intact,
+                                                and retry AI once connection recovers.
+                                            </p>
+                                            <code className="incident-error-code">{lastError}</code>
+                                            <div className="incident-fallback-actions">
+                                                <button type="button" className="incident-btn primary" onClick={onRunDoctorChecks}>
+                                                    Run deterministic checks
+                                                </button>
+                                                <button type="button" className="incident-btn" onClick={onRunTerminalBridge}>
+                                                    Retry bridge
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+
+                                    {!chatBrainHistory?.length && !chatBrainStreamText && !isAnalyzing && !aiUnavailable ? (
+                                        <div className="incident-chat-empty">
+                                            <Sparkles size={22} style={{ opacity: 0.3 }} />
+                                            <p>Nothing yet. Ask AI to inspect the workspace, debug an error, or plan your next change.</p>
+                                        </div>
+                                    ) : null}
+
+                                    {recentConversationEntries.length > 0 ? (
+                                        <div className="incident-chat-messages">
+                                            {recentConversationEntries.map((entry, index) => {
+                                                const isExpanded = !!expandedConversationIds[entry.id];
+                                                const isLatest = index === recentConversationEntries.length - 1;
+                                                return (
+                                                    <div
+                                                        key={entry.id}
+                                                        className={`incident-msg ${entry.role === 'user' ? 'incident-msg--user' : 'incident-msg--assistant'}${isExpanded ? ' is-expanded' : ' is-collapsed'}`}
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            className="incident-msg-meta incident-msg-toggle"
+                                                            onClick={() => toggleConversationEntry(entry.id)}
+                                                            aria-expanded={isExpanded}
+                                                        >
+                                                            {entry.role === 'user' ? (
+                                                                <>
+                                                                    <span className="incident-msg-avatar incident-msg-avatar--user">You</span>
+                                                                    <span className="incident-msg-label">asked</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <span className="incident-msg-avatar incident-msg-avatar--ai">AI</span>
+                                                                    <span className="incident-msg-label">answered</span>
+                                                                </>
+                                                            )}
+                                                            <span className="incident-msg-time">
+                                                                {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                            {isLatest ? <span className="incident-msg-state">Latest</span> : null}
+                                                            <span className="incident-msg-chevron">
+                                                                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                                            </span>
+                                                        </button>
+                                                        {isExpanded ? (
+                                                            <div className="incident-msg-body">
+                                                                {entry.role === 'assistant' ? renderAssistantText(entry.text) : <p>{entry.text}</p>}
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : null}
+
+                                    {chatBrainStreamText ? (
+                                        <div className="incident-msg incident-msg--assistant incident-msg--streaming">
+                                            <div className="incident-msg-meta">
+                                                <span className="incident-msg-avatar incident-msg-avatar--ai">AI</span>
+                                                <span className="incident-msg-label">is writing</span>
+                                                <span className="incident-msg-typing-dots">
+                                                    <span />
+                                                    <span />
+                                                    <span />
+                                                </span>
+                                            </div>
+                                            <div className="incident-msg-body">
+                                                {renderAssistantText(chatBrainStreamText)}
+                                            </div>
+                                        </div>
+                                    ) : null}
+
+                                    {chatBrainActionProgress ? (
+                                        <div className="incident-onboarding-note">
+                                            <RotateCw size={11} />
+                                            {chatBrainActionProgress.stage} ({chatBrainActionProgress.progress}%)
+                                            {chatBrainActionProgress.note ? ` — ${chatBrainActionProgress.note}` : ''}
+                                        </div>
+                                    ) : null}
+
+                                    {chatBrainActionResult && actionResultPresentation ? (
+                                        <div className={`incident-verify-result ${actionResultPresentation.tone === 'success' ? 'is-success' : actionResultPresentation.tone === 'warning' ? 'is-warning' : 'is-fail'}`}>
+                                            <div className="incident-verify-result-title">
+                                                {actionResultPresentation.tone === 'success' ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                                                <span>{actionResultPresentation.title}</span>
+                                            </div>
+                                            <p>{actionResultPresentation.description}</p>
+                                            {chatBrainActionResult.evidence?.healthScoreText ? (
+                                                <div className="incident-verify-evidence">
+                                                    <strong>Evidence (doctor report)</strong>
+                                                    <p>Health score: {chatBrainActionResult.evidence.healthScoreText}</p>
+                                                    {chatBrainActionResult.evidence.generatedAt ? (
+                                                        <p>
+                                                            Generated: {new Date(chatBrainActionResult.evidence.generatedAt).toLocaleString()}
+                                                        </p>
+                                                    ) : null}
+                                                </div>
+                                            ) : null}
+                                            {chatBrainActionResult.diagnosis ? (
+                                                <div className="incident-verify-evidence">
+                                                    {(() => {
+                                                        const diagnosisCriteria = evaluateArtifactSuccessCriteria({
+                                                            kind: 'diagnosis',
+                                                            confidence:
+                                                                chatBrainActionResult.diagnosis!.confidence > 1
+                                                                    ? chatBrainActionResult.diagnosis!.confidence / 100
+                                                                    : chatBrainActionResult.diagnosis!.confidence,
+                                                            confidenceBand: chatBrainActionResult.diagnosis!.confidenceBand,
+                                                            relatedFilesCount: chatBrainActionResult.diagnosis!.relatedFiles.length,
+                                                            signalSourcesCount: chatBrainActionResult.diagnosis!.signalSources.length,
+                                                        });
+                                                        return (
+                                                            <div className={`incident-rollback-evidence is-${diagnosisCriteria.overallStatus === 'pass' ? 'passed' : diagnosisCriteria.overallStatus === 'partial' ? 'warning' : 'failed'}`}>
+                                                                <strong>{diagnosisCriteria.summaryLabel}</strong>
+                                                                {diagnosisCriteria.criteria.map((c) => (
+                                                                    <p key={c.label}>
+                                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                                    </p>
+                                                                ))}
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                    <p>
+                                                        Confidence: {chatBrainActionResult.diagnosis.confidence}% ({chatBrainActionResult.diagnosis.confidenceBand})
+                                                    </p>
+                                                    {chatBrainActionResult.diagnosis.signalSources.length > 0 ? (
+                                                        <p>
+                                                            Signals: {chatBrainActionResult.diagnosis.signalSources.slice(0, 5).join(', ')}
+                                                        </p>
+                                                    ) : null}
+                                                    {chatBrainActionResult.diagnosis.relatedFiles.length > 0 ? (
+                                                        <p>
+                                                            Related files ({chatBrainActionResult.diagnosis.relatedFiles.length}):{' '}
+                                                            {chatBrainActionResult.diagnosis.relatedFiles.slice(0, 5).join(', ')}
+                                                        </p>
+                                                    ) : null}
+                                                    {chatBrainActionResult.diagnosis.recommendedFocus ? (
+                                                        <p>Focus: {chatBrainActionResult.diagnosis.recommendedFocus}</p>
+                                                    ) : null}
+                                                </div>
+                                            ) : null}
+                                            {chatBrainActionResult.decisionClarity ? (() => {
+                                                const wordingPolicy = getDecisionClarityWordingPolicy({
+                                                    mutationReady: chatBrainActionResult.decisionClarity.mutationReady,
+                                                    requiredMissingFields: chatBrainActionResult.decisionClarity.requiredMissingFields,
+                                                    verificationRequired: chatBrainActionResult.verificationRequired ?? false,
+                                                });
+                                                return (
+                                                    <div className={`incident-rollback-evidence is-${wordingPolicy.cardState === 'complete' ? 'passed' : 'warning'}`}>
+                                                        <strong>{wordingPolicy.cardHeading}</strong>
+                                                        <p>
+                                                            Situation: {chatBrainActionResult.decisionClarity.situation || 'unknown'}
+                                                        </p>
+                                                        <p>
+                                                            Why: {chatBrainActionResult.decisionClarity.reason || 'unknown'}
+                                                        </p>
+                                                        <p>
+                                                            Impact scope: {chatBrainActionResult.decisionClarity.impactScope.length > 0
+                                                                ? chatBrainActionResult.decisionClarity.impactScope.slice(0, 4).join(', ')
+                                                                : 'unknown'}
+                                                        </p>
+                                                        <p>
+                                                            Risk: {chatBrainActionResult.decisionClarity.risk.confidenceBand}
+                                                            {' · '}
+                                                            {chatBrainActionResult.decisionClarity.risk.confidence}%
+                                                            {' · '}
+                                                            {chatBrainActionResult.decisionClarity.risk.mutating ? 'mutating' : 'non-mutating'}
+                                                        </p>
+                                                        <p>
+                                                            Next: {chatBrainActionResult.decisionClarity.nextStep || 'unknown'}
+                                                        </p>
+                                                        <p>
+                                                            Verify: {chatBrainActionResult.decisionClarity.verifyPlan.length > 0
+                                                                ? chatBrainActionResult.decisionClarity.verifyPlan.slice(0, 3).join(' | ')
+                                                                : 'unknown'}
+                                                        </p>
+                                                        <p>
+                                                            Rollback: {chatBrainActionResult.decisionClarity.rollbackPlan || 'unknown'}
+                                                        </p>
+                                                        {chatBrainActionResult.decisionClarity.requiredMissingFields.length > 0 ? (
+                                                            <p>
+                                                                Missing required fields: {chatBrainActionResult.decisionClarity.requiredMissingFields
+                                                                    .map(f => ({
+                                                                        situation: 'Incident description',
+                                                                        nextStep: 'Next action command',
+                                                                        verifyPlan: 'Verify plan',
+                                                                        impactScope: 'Impact scope',
+                                                                        rollbackPlan: 'Rollback plan',
+                                                                    }[f] ?? f))
+                                                                    .join(', ')}
+                                                            </p>
+                                                        ) : wordingPolicy.mutationReadyLabel !== null ? (
+                                                            <p>Mutation ready: {wordingPolicy.mutationReadyLabel}</p>
+                                                        ) : null}
+                                                    </div>
+                                                );
+                                            })() : null}
+                                            {chatBrainActionResult.verifyCommandPack ? (
+                                                <div className={`incident-rollback-evidence is-${chatBrainActionResult.verifyCommandPack.readiness === 'ready' ? 'passed' : 'warning'}`}>
+                                                    {(() => {
+                                                        const verifyCriteria = evaluateArtifactSuccessCriteria({
+                                                            kind: 'verify',
+                                                            runCompleted: true,
+                                                            errors:
+                                                                chatBrainActionResult.evidence?.errors ??
+                                                                (chatBrainActionResult.success ? 0 : 1),
+                                                            warnings: chatBrainActionResult.evidence?.warnings ?? 0,
+                                                            passed:
+                                                                chatBrainActionResult.evidence?.passed ??
+                                                                (chatBrainActionResult.success ? 1 : 0),
+                                                        });
+                                                        return (
+                                                            <>
+                                                                <strong>{verifyCriteria.summaryLabel}</strong>
+                                                                {verifyCriteria.criteria.map((c) => (
+                                                                    <p key={c.label}>
+                                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                                    </p>
+                                                                ))}
+                                                            </>
+                                                        );
+                                                    })()}
+                                                    <strong>Deterministic verify command pack</strong>
+                                                    <p>
+                                                        Quality score: {chatBrainActionResult.verifyCommandPack.qualityScore}%
+                                                        {' · Readiness: '}
+                                                        {chatBrainActionResult.verifyCommandPack.readiness}
+                                                    </p>
+                                                    <p>{chatBrainActionResult.verifyCommandPack.rationale}</p>
+                                                    {chatBrainActionResult.verifyCommandPack.commands.length > 0 ? (
+                                                        <div className="incident-doctor-fixes">
+                                                            {chatBrainActionResult.verifyCommandPack.commands.slice(0, 4).map((entry, index) => {
+                                                                const normalized = normalizeCommandText(entry.command);
+                                                                const isExecutingVerify = !!(
+                                                                    executingCommand && normalizeCommandText(executingCommand) === normalized
+                                                                );
+                                                                return (
+                                                                    <div key={`${entry.command}-${index}`} className="incident-doctor-fix-item">
+                                                                        <code>{normalized}</code>
+                                                                        <div className={`incident-command-scope incident-command-scope--${entry.scope}`}>
+                                                                            {entry.scope === 'project' ? 'Run in project root' : 'Run in workspace root'}
+                                                                            {entry.required ? ' · required' : ' · optional'}
+                                                                        </div>
+                                                                        <div className="incident-command-actions">
+                                                                            <button
+                                                                                type="button"
+                                                                                className="incident-btn"
+                                                                                onClick={() => copyCommand(normalized)}
+                                                                                disabled={isExecutingVerify}
+                                                                            >
+                                                                                {lastCopiedCommand === normalized ? 'Copied' : 'Copy'}
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                className="incident-btn primary"
+                                                                                onClick={() => runCommand(normalized)}
+                                                                                disabled={isExecutingVerify}
+                                                                            >
+                                                                                {isExecutingVerify ? 'Running' : 'Run'}
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    ) : null}
+                                                    {chatBrainActionResult.verifyCommandPack.blockedReasons.length > 0 ? (
+                                                        <p>
+                                                            Blocked reasons: {chatBrainActionResult.verifyCommandPack.blockedReasons.slice(0, 3).join(' | ')}
+                                                        </p>
+                                                    ) : null}
+                                                    <div className="incident-command-actions">
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn primary"
+                                                            onClick={() => runVerifyCommandPack(chatBrainActionResult.verifyCommandPack!)}
+                                                        >
+                                                            Run required verify commands
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                            {chatBrainActionResult.contractRuntimeEvidence ? (
+                                                <div className={`incident-rollback-evidence is-${chatBrainActionResult.contractRuntimeEvidence.errors.length > 0 ? 'failed' : chatBrainActionResult.contractRuntimeEvidence.warnings.length > 0 ? 'warning' : 'passed'}`}>
+                                                    <strong>C06 contract runtime evidence</strong>
+                                                    <p>
+                                                        Source: {chatBrainActionResult.contractRuntimeEvidence.source}
+                                                        {' · '}Loaded: {chatBrainActionResult.contractRuntimeEvidence.availableKinds.length}
+                                                        {' · '}Missing: {chatBrainActionResult.contractRuntimeEvidence.missingKinds.length}
+                                                    </p>
+                                                    <p>
+                                                        Errors: {chatBrainActionResult.contractRuntimeEvidence.errors.length}
+                                                        {' · '}Warnings: {chatBrainActionResult.contractRuntimeEvidence.warnings.length}
+                                                    </p>
+                                                    {chatBrainActionResult.contractRuntimeEvidence.summary ? (
+                                                        <p>{chatBrainActionResult.contractRuntimeEvidence.summary}</p>
+                                                    ) : null}
+                                                    {chatBrainActionResult.contractRuntimeEvidence.availableKinds.length > 0 ? (
+                                                        <p>
+                                                            Available kinds: {chatBrainActionResult.contractRuntimeEvidence.availableKinds.slice(0, 3).join(', ')}
+                                                        </p>
+                                                    ) : null}
+                                                    {chatBrainActionResult.contractRuntimeEvidence.missingKinds.length > 0 ? (
+                                                        <p>
+                                                            Missing kinds: {chatBrainActionResult.contractRuntimeEvidence.missingKinds.slice(0, 3).join(', ')}
+                                                        </p>
+                                                    ) : null}
+                                                    {chatBrainActionResult.contractRuntimeEvidence.errors.length > 0 ? (
+                                                        <p>
+                                                            Contract errors: {chatBrainActionResult.contractRuntimeEvidence.errors.slice(0, 2).join(' | ')}
+                                                        </p>
+                                                    ) : null}
+                                                    {chatBrainActionResult.contractRuntimeEvidence.warnings.length > 0 ? (
+                                                        <p>
+                                                            Contract warnings: {chatBrainActionResult.contractRuntimeEvidence.warnings.slice(0, 2).join(' | ')}
+                                                        </p>
+                                                    ) : null}
+                                                </div>
+                                            ) : null}
+                                            {chatBrainActionResult.rollback ? (() => {
+                                                const rollbackCriteria = evaluateArtifactSuccessCriteria({
+                                                    kind: 'rollback',
+                                                    status: chatBrainActionResult.rollback.status,
+                                                    restoredFilesCount: chatBrainActionResult.rollback.restoredFiles.length,
+                                                    failedFilesCount: chatBrainActionResult.rollback.failedFiles.length,
+                                                });
+                                                return (
+                                                    <div className={`incident-rollback-evidence is-${rollbackCriteria.overallStatus === 'pass' ? 'passed' : rollbackCriteria.overallStatus === 'partial' ? 'warning' : chatBrainActionResult.rollback!.status}`}>
+                                                        <strong>{rollbackCriteria.summaryLabel}</strong>
+                                                        {rollbackCriteria.criteria.map((c) => (
+                                                            <p key={c.label}>
+                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                            </p>
+                                                        ))}
+                                                        {chatBrainActionResult.rollback!.reason ? (
+                                                            <p>{chatBrainActionResult.rollback!.reason}</p>
+                                                        ) : null}
+                                                        {chatBrainActionResult.rollback!.suggestedNextStep ? (
+                                                            <p>{chatBrainActionResult.rollback!.suggestedNextStep}</p>
+                                                        ) : null}
+                                                    </div>
+                                                );
+                                            })() : null}
+                                            {chatBrainActionResult.sandboxSimulation ? (() => {
+                                                const sim = chatBrainActionResult.sandboxSimulation!;
+                                                const sandboxCriteria = evaluateArtifactSuccessCriteria({
+                                                    kind: 'sandbox',
+                                                    status: sim.status,
+                                                    safeToApply: sim.safeToApply,
+                                                    commandCount: sim.commandResults.length,
+                                                    failedCommandCount: sim.commandResults.filter((r) => r.exitCode !== 0).length,
+                                                });
+                                                return (
+                                                    <div className={`incident-rollback-evidence is-${sandboxCriteria.overallStatus === 'pass' ? 'passed' : sandboxCriteria.overallStatus === 'partial' ? 'warning' : sim.status}`}>
+                                                        <strong>{sandboxCriteria.summaryLabel}</strong>
+                                                        {sandboxCriteria.criteria.map((c) => (
+                                                            <p key={c.label}>
+                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                            </p>
+                                                        ))}
+                                                        <p>Risk class: {sim.riskClass}</p>
+                                                        {sim.reason ? <p>{sim.reason}</p> : null}
+                                                        {sim.recommendedRollbackPath ? <p>{sim.recommendedRollbackPath}</p> : null}
+                                                        <div className="incident-command-actions">
+                                                            <button
+                                                                type="button"
+                                                                className="incident-btn"
+                                                                onClick={() => {
+                                                                    const sandboxSimulation = chatBrainActionResult.sandboxSimulation;
+                                                                    if (sandboxSimulation) {
+                                                                        onExportSandboxSimulationEvidence?.(sandboxSimulation);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                Export simulation evidence
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })() : null}
+                                            {chatBrainActionResult.incidentReproPack ? (() => {
+                                                const reproPack = chatBrainActionResult.incidentReproPack!;
+                                                const reproCriteria = evaluateArtifactSuccessCriteria({
+                                                    kind: 'repro',
+                                                    status: reproPack.status,
+                                                    redactionApplied: reproPack.redaction.applied,
+                                                    secretsLeakCount: 0,
+                                                });
+                                                return (
+                                                    <div className={`incident-rollback-evidence is-${reproCriteria.overallStatus === 'pass' ? 'passed' : reproCriteria.overallStatus === 'partial' ? 'warning' : reproPack.status === 'captured' ? 'passed' : reproPack.status}`}>
+                                                        <strong>{reproCriteria.summaryLabel}</strong>
+                                                        {reproCriteria.criteria.map((c) => (
+                                                            <p key={c.label}>
+                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
+                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
+                                                            </p>
+                                                        ))}
+                                                        <p>Pack ID: {reproPack.packId}</p>
+                                                        <p>
+                                                            Replay payload: {reproPack.replayPayload.verifyChecklist.length} verify checks
+                                                            {' · '}
+                                                            {reproPack.replayPayload.blockedReasons.length} blocked reasons
+                                                        </p>
+                                                        {reproPack.exportHint ? (
+                                                            <p>{reproPack.exportHint}</p>
+                                                        ) : null}
+                                                        <div className="incident-command-actions">
+                                                            <button
+                                                                type="button"
+                                                                className="incident-btn"
+                                                                onClick={() => {
+                                                                    if (reproPack) {
+                                                                        onExportIncidentReproPack?.(reproPack);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                Export redacted bundle
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="incident-btn"
+                                                                onClick={() => onImportIncidentReproPack?.()}
+                                                            >
+                                                                Import bundle and replay
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="incident-btn primary"
+                                                                onClick={() => {
+                                                                    if (reproPack) {
+                                                                        const replayQuery = buildReplayQueryFromIncidentReproPack(
+                                                                            reproPack
+                                                                        );
+                                                                        setLastUserQuery(replayQuery);
+                                                                        onChatBrainQuery?.(replayQuery);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                Replay in Incident Studio
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })() : null}
+                                            {chatBrainActionResult.releaseReadinessCommander ? (
+                                                <div
+                                                    className={`incident-rollback-evidence is-${chatBrainActionResult.releaseReadinessCommander.decision === 'go' ? 'passed' : 'failed'}`}
+                                                >
+                                                    <strong>Release readiness commander</strong>
+                                                    <p>
+                                                        Decision: {chatBrainActionResult.releaseReadinessCommander.decision.toUpperCase()}
+                                                        {' · Confidence: '}
+                                                        {chatBrainActionResult.releaseReadinessCommander.confidence}%
+                                                    </p>
+                                                    <p>
+                                                        Verify contract: {chatBrainActionResult.releaseReadinessCommander.evidence.verifyPackContractStatus}
+                                                        {' · Sandbox: '}
+                                                        {chatBrainActionResult.releaseReadinessCommander.evidence.sandboxStatus}
+                                                    </p>
+                                                    <p>
+                                                        Scope known: {chatBrainActionResult.releaseReadinessCommander.evidence.scopeKnown ? 'yes' : 'no'}
+                                                        {' · Verify path: '}
+                                                        {chatBrainActionResult.releaseReadinessCommander.evidence.verifyPathPresent ? 'yes' : 'no'}
+                                                        {' · Rollback path: '}
+                                                        {chatBrainActionResult.releaseReadinessCommander.evidence.rollbackPathPresent ? 'yes' : 'no'}
+                                                    </p>
+                                                    {chatBrainActionResult.releaseReadinessCommander.blockingReasons.length > 0 ? (
+                                                        <p>
+                                                            Blocking reasons:{' '}
+                                                            {chatBrainActionResult.releaseReadinessCommander.blockingReasons
+                                                                .slice(0, 4)
+                                                                .join(', ')}
+                                                        </p>
+                                                    ) : null}
+                                                    <p>{chatBrainActionResult.releaseReadinessCommander.summary.goNoGoRationale}</p>
+                                                    <p>{chatBrainActionResult.releaseReadinessCommander.summary.recommendedNextStep}</p>
+                                                    <div className="incident-command-actions">
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn"
+                                                            onClick={() => {
+                                                                const artifact = chatBrainActionResult.releaseReadinessCommander;
+                                                                if (artifact) {
+                                                                    onExportReleaseReadinessCommander?.(artifact);
+                                                                }
+                                                            }}
+                                                        >
+                                                            Export Go/No-Go artifact
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                            {chatBrainActionResult.multiFilePatch ? (
+                                                <MultiFilePatchCard
+                                                    patchResult={chatBrainActionResult.multiFilePatch}
+                                                    onApplyPatch={onApplyPatch}
+                                                />
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+
+                                    {chatBrainError ? (
+                                        <div className="incident-fallback-card">
+                                            <div className="incident-fallback-title">
+                                                <AlertTriangle size={13} />
+                                                <span>Chat Brain error</span>
+                                            </div>
+                                            <p>{chatBrainError}</p>
+                                            {lastUserQuery && chatBrainErrorRetryable ? (
+                                                <button
+                                                    type="button"
+                                                    className="incident-retry-btn"
+                                                    onClick={() => onChatBrainQuery?.(lastUserQuery)}
+                                                >
+                                                    ↻ Retry last query
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+
+                                    {!shouldAutoScrollThread && (recentConversationEntries.length > 0 || !!chatBrainStreamText) ? (
+                                        <button
+                                            type="button"
+                                            className="incident-jump-latest"
+                                            onClick={jumpToLatest}
+                                        >
+                                            <ChevronDown size={12} />
+                                            <span>Jump to latest</span>
+                                        </button>
+                                    ) : null}
+
+                                </div>
+                            </div>
+
+                            <div className="incident-chat-dock">
+                                <div className="incident-chat-actions-panel">
+                                    <div className="incident-panel-heading incident-panel-heading--chat-actions">
+                                        <Wrench size={13} />
+                                        <span>Do this next</span>
+                                    </div>
+                                    <div className="incident-chat-actions-grid">
+                                        {intentChips.length > 0 ? (
+                                            <div className="incident-chat-quick-actions" role="group" aria-label="Suggested next actions">
+                                                {intentChips.slice(0, activeUserMode === 'guided' ? 3 : 4).map((chip) => (
+                                                    <button
+                                                        key={chip.id}
+                                                        type="button"
+                                                        className={`incident-chat-quick-action${chip.isPrimary ? ' is-primary' : ''}`}
+                                                        onClick={() => handleIntentChipSelect(chip)}
+                                                        title={chip.detail}
+                                                    >
+                                                        <strong>{chip.label}</strong>
+                                                        <small>{chip.detail}</small>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        ) : null}
+
+                                        {chatBrainBoard ? (
+                                            <div className="incident-patch-option incident-patch-option--chat" role="group" aria-label="Chat Brain action board">
+                                                <strong>{chatBrainBoard.title}</strong>
+                                                <span>{chatBrainBoard.summary || 'Pick one action to continue in this Studio.'}</span>
+                                                {primaryBoardAction && primaryCtaMode === 'single' ? (
+                                                    <div className="incident-primary-action-card incident-primary-action-card--chat" role="group" aria-label="Primary next action">
+                                                        <div className="incident-primary-action-head">Do This Next</div>
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn primary incident-action-btn"
+                                                            onClick={() => onChatBrainExecuteAction?.(primaryBoardAction.actionType, primaryBoardAction.id)}
+                                                        >
+                                                            <span>{primaryBoardAction.label}</span>
+                                                            {primaryBoardAction.riskLevel ? (
+                                                                <span className={`incident-risk-badge incident-risk-badge--${riskTone(primaryBoardAction.riskLevel)}`}>
+                                                                    <span>{primaryBoardAction.riskLevel}</span>
+                                                                </span>
+                                                            ) : null}
+                                                        </button>
+                                                        <p className="incident-primary-action-hint">
+                                                            {actionExecutionHint(primaryBoardAction.actionType)}
+                                                            {primaryBoardGuardHint ? ` ${primaryBoardGuardHint}` : ''}
+                                                        </p>
+                                                    </div>
+                                                ) : null}
+                                                {boardGuardHint ? (
+                                                    <div className="incident-onboarding-note">
+                                                        <ShieldCheck size={11} />
+                                                        {boardGuardHint}
+                                                    </div>
+                                                ) : null}
+                                                {(primaryCtaMode === 'single' ? secondaryBoardActions : modeVisibleBoardActions).length > 0 ? (
+                                                    <div className="incident-board-actions incident-board-actions--chat">
+                                                        {(primaryCtaMode === 'single' ? secondaryBoardActions : modeVisibleBoardActions).map((action) => {
+                                                            const tone = riskTone(action.riskLevel);
+                                                            return (
+                                                                <button
+                                                                    key={action.id}
+                                                                    type="button"
+                                                                    className={`incident-btn incident-action-btn incident-action-btn--chat${primaryCtaMode === 'multi' ? ' primary' : ''}`}
+                                                                    onClick={() => onChatBrainExecuteAction?.(action.actionType, action.id)}
+                                                                >
+                                                                    <span>{action.label}</span>
+                                                                    {action.riskLevel ? (
+                                                                        <span className={`incident-risk-badge incident-risk-badge--${tone}`}>
+                                                                            {tone === 'critical' || tone === 'high' ? <AlertTriangle size={10} /> : null}
+                                                                            {tone === 'medium' ? <BarChart3 size={10} /> : null}
+                                                                            {tone === 'low' ? <ShieldCheck size={10} /> : null}
+                                                                            {tone === 'unknown' ? <Activity size={10} /> : null}
+                                                                            <span>{action.riskLevel}</span>
+                                                                        </span>
+                                                                    ) : null}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        ) : latestStructuredResponse?.nextCommand || latestStructuredResponse?.verifyCommand ? (
+                                            <div className="incident-patch-option incident-patch-option--chat" role="group" aria-label="Actions derived from latest answer">
+                                                <strong>Derived from latest answer</strong>
+                                                <span>The assistant already named the next step. You can run it from here.</span>
+                                                <div className="incident-board-actions incident-board-actions--chat">
+                                                    {latestStructuredResponse?.nextCommand ? (
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn primary incident-action-btn incident-action-btn--chat"
+                                                            onClick={() => runCommand(latestStructuredResponse.nextCommand!)}
+                                                        >
+                                                            <span>Run next command</span>
+                                                        </button>
+                                                    ) : null}
+                                                    {latestStructuredResponse?.verifyCommand ? (
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn incident-action-btn incident-action-btn--chat"
+                                                            onClick={() => runCommand(latestStructuredResponse.verifyCommand!)}
+                                                        >
+                                                            <span>Run verify command</span>
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="incident-fallback-action-grid incident-fallback-action-grid--chat">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn primary incident-action-btn incident-action-btn--chat"
+                                                    onClick={() => runStudioAction('terminal-bridge', onRunTerminalBridge)}
+                                                >
+                                                    Inspect logs and runtime
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn incident-action-btn incident-action-btn--chat"
+                                                    onClick={() => runStudioAction('fix-preview-lite', _onRunFixPreview)}
+                                                >
+                                                    Preview a safe fix
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn incident-action-btn incident-action-btn--chat"
+                                                    onClick={() => runStudioAction('change-impact-lite', _onRunChangeImpact)}
+                                                >
+                                                    Check blast radius
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn incident-action-btn incident-action-btn--chat"
+                                                    onClick={() => runStudioAction('workspace-memory-wizard', _onRunMemoryWizard)}
+                                                >
+                                                    Save this pattern
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="incident-input-area incident-input-area--sidebar">
+                                    <form className="incident-command-input-form" onSubmit={handleChatSubmit}>
+                                        <input
+                                            type="text"
+                                            className="incident-command-input"
+                                            placeholder="Describe the problem or next change…"
+                                            value={commandInput}
+                                            onChange={(e) => setCommandInput(e.target.value)}
+                                            autoComplete="off"
+                                            disabled={isAnalyzing}
+                                        />
+                                        <button
+                                            type="submit"
+                                            className="incident-command-submit"
+                                            disabled={!commandInput.trim() || isAnalyzing}
+                                            aria-label="Send"
+                                        >
+                                            <Send size={12} />
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </aside>
+                    </div>
+                </div>
             ) : null}
 
             {isLiteDisplay ? (
@@ -1724,1700 +3622,6 @@ export function AIIncidentStudio({
                     </article>
                 </section>
             ) : null}
-
-            {isFullDisplay ? <div className="incident-studio-grid">
-                <main className="incident-analysis-panel">
-                    <div className="incident-panel-heading incident-panel-heading--brand">
-                        <Activity size={13} />
-                        <span>Live Diagnosis</span>
-                        <span className="incident-analysis-status">
-                            {isAnalyzing ? '● Analyzing…' : chatBrainHistory?.length ? `${chatBrainHistory.length} messages` : 'Ready'}
-                        </span>
-                    </div>
-
-                    <div className="incident-focus-surface">
-                        <div className="incident-focus-main">
-                            {incidentResume ? (
-                                <div className="incident-resume-card">
-                                    <div className="incident-resume-head">
-                                        <span>Session recap</span>
-                                        <small>
-                                            {resumeTimestamp || 'Recent'}
-                                            {' · '}
-                                            {incidentResume.turnCount} turn{incidentResume.turnCount === 1 ? '' : 's'}
-                                        </small>
-                                    </div>
-                                    <p>{incidentResume.recap}</p>
-                                    <div className="incident-resume-meta">
-                                        <span>Phase: {incidentResume.phase}</span>
-                                        <span>Actions: {incidentResume.actionCount}</span>
-                                        <span>{incidentResume.resolved ? 'Resolved' : 'Open loop'}</span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        className="incident-btn primary"
-                                        onClick={() => {
-                                            setLastUserQuery(incidentResume.nextActionQuery);
-                                            onChatBrainQuery?.(incidentResume.nextActionQuery);
-                                        }}
-                                    >
-                                        {incidentResume.nextActionLabel}
-                                    </button>
-                                </div>
-                            ) : null}
-
-                            <details className="incident-collapse incident-focus-diagnosis">
-                                <summary>
-                                    <span className="incident-focus-kicker">
-                                        <span className="incident-focus-kicker-dot" />
-                                        <span>{focusHeadline}</span>
-                                    </span>
-                                    <small>{focusTimestamp}</small>
-                                </summary>
-                                <div className="incident-focus-copy">
-                                    <h3>{latestAssistantEntry ? 'Current diagnosis' : 'Workspace ready for incident analysis'}</h3>
-                                    <p>{focusNarrative}</p>
-                                    <small className="incident-mode-hint">{modeHint}</small>
-                                    {modePresentation?.rationale ? (
-                                        <small className="incident-mode-hint">Mode rationale: {modePresentation.rationale}</small>
-                                    ) : null}
-                                </div>
-                                {focusReason ? (
-                                    <div className="incident-focus-reason">
-                                        <strong>Why this is likely</strong>
-                                        <p>{focusReason}</p>
-                                    </div>
-                                ) : null}
-                            </details>
-                            {isFullDisplay && architectureLens ? (
-                                <section className={`incident-architecture-lens risk-${architectureLens.riskTone}${architectureLens.blocked ? ' is-blocked' : ''}`}>
-                                    <div className="incident-architecture-lens-head">
-                                        <div>
-                                            <span className="incident-architecture-lens-kicker">Architecture lens</span>
-                                            <h4>{architectureLens.title}</h4>
-                                        </div>
-                                        <div className="incident-architecture-lens-status">
-                                            <strong>{architectureLens.statusLabel}</strong>
-                                            <small>{architectureLens.graphSummary}</small>
-                                        </div>
-                                    </div>
-                                    <p className="incident-architecture-lens-summary">{architectureLens.headline}</p>
-                                    <div className="incident-architecture-lens-view-switch" role="group" aria-label="Graph lens view">
-                                        <button
-                                            type="button"
-                                            className={`incident-mode-chip ${architectureLensViewMode === 'tree' ? 'is-active' : ''}`}
-                                            onClick={() => setArchitectureLensViewMode('tree')}
-                                        >
-                                            Tree
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className={`incident-mode-chip ${architectureLensViewMode === 'dependency' ? 'is-active' : ''}`}
-                                            onClick={() => setArchitectureLensViewMode('dependency')}
-                                        >
-                                            Dependency
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className={`incident-mode-chip ${architectureLensViewMode === 'runtime' ? 'is-active' : ''}`}
-                                            onClick={() => setArchitectureLensViewMode('runtime')}
-                                        >
-                                            Runtime Flow
-                                        </button>
-                                    </div>
-                                    <div className="incident-architecture-lens-view-panel">
-                                        {architectureLensViewMode === 'tree' ? (
-                                            <div className="incident-architecture-lens-tree">
-                                                {graphNodeGroups.length > 0 ? (
-                                                    graphNodeGroups.slice(0, 5).map((group) => (
-                                                        <div key={`tree-${group.nodeType}`} className="incident-architecture-lens-tree-group">
-                                                            <small className="incident-architecture-lens-tree-title">
-                                                                {group.nodeType} ({group.nodes.length})
-                                                            </small>
-                                                            <div className="incident-architecture-lens-tree-items">
-                                                                {group.nodes.slice(0, 6).map((node) => (
-                                                                    <button
-                                                                        key={node.id}
-                                                                        type="button"
-                                                                        className={`incident-architecture-lens-node-link${node.filePath ? '' : ' is-readonly'}`}
-                                                                        onClick={() => revealGraphNodeTarget(node)}
-                                                                        disabled={!node.filePath}
-                                                                        title={node.filePath || node.label}
-                                                                    >
-                                                                        <strong>{node.label}</strong>
-                                                                        <small>{node.type} · {node.confidence}% confidence</small>
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    ))
-                                                ) : architectureLens.focusNodes.length > 0 ? (
-                                                    <div className="incident-architecture-lens-tree-items">
-                                                        {architectureLens.focusNodes.map((node) => (
-                                                            <button
-                                                                key={`focus-${node.id}`}
-                                                                type="button"
-                                                                className={`incident-architecture-lens-node-link${node.filePath ? '' : ' is-readonly'}`}
-                                                                onClick={() =>
-                                                                    revealGraphNodeTarget(
-                                                                        graphNodeById.get(node.id),
-                                                                        'node'
-                                                                    )
-                                                                }
-                                                                disabled={!node.filePath}
-                                                                title={node.filePath || node.label}
-                                                            >
-                                                                <strong>{node.label}</strong>
-                                                                <small>{node.type} · {node.confidence}% confidence</small>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <small className="incident-architecture-lens-empty">
-                                                        Tree view will populate as soon as graph nodes arrive from the incident scan.
-                                                    </small>
-                                                )}
-                                            </div>
-                                        ) : null}
-
-                                        {architectureLensViewMode === 'dependency' ? (
-                                            <div className="incident-architecture-lens-dependency">
-                                                {graphDependencyEdges.length > 0 ? (
-                                                    <div className="incident-architecture-lens-edge-list">
-                                                        {graphDependencyEdges.slice(0, 12).map((edge) => (
-                                                            <div key={edge.id} className="incident-architecture-lens-edge-row">
-                                                                <div className="incident-architecture-lens-edge-main">
-                                                                    <button
-                                                                        type="button"
-                                                                        className={`incident-architecture-lens-edge-link${edge.sourceNode?.filePath ? '' : ' is-readonly'}`}
-                                                                        onClick={() => revealGraphNodeTarget(edge.sourceNode)}
-                                                                        disabled={!edge.sourceNode?.filePath}
-                                                                    >
-                                                                        {edge.sourceLabel}
-                                                                    </button>
-                                                                    <span className="incident-architecture-lens-edge-arrow">-&gt;</span>
-                                                                    <button
-                                                                        type="button"
-                                                                        className={`incident-architecture-lens-edge-link${edge.targetNode?.filePath ? '' : ' is-readonly'}`}
-                                                                        onClick={() => revealGraphNodeTarget(edge.targetNode)}
-                                                                        disabled={!edge.targetNode?.filePath}
-                                                                    >
-                                                                        {edge.targetLabel}
-                                                                    </button>
-                                                                </div>
-                                                                <div className="incident-architecture-lens-edge-meta">
-                                                                    <small>{edge.relation}</small>
-                                                                    <span className={`incident-architecture-lens-risk-chip risk-${architectureLens.riskTone}`}>
-                                                                        {architectureLens.riskTone} risk
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <small className="incident-architecture-lens-empty">
-                                                        No dependency edges yet. Run change-impact again to enrich structural links.
-                                                    </small>
-                                                )}
-                                                {graphUnresolvedEdges.length > 0 ? (
-                                                    <div className="incident-architecture-lens-unresolved">
-                                                        <span>Unresolved edges</span>
-                                                        {graphUnresolvedEdges.slice(0, 5).map((edge) => (
-                                                            <small key={`unresolved-${edge.id}`}>
-                                                                {edge.sourceLabel} -&gt; {edge.targetLabel} ({edge.relation})
-                                                            </small>
-                                                        ))}
-                                                    </div>
-                                                ) : null}
-                                            </div>
-                                        ) : null}
-
-                                        {architectureLensViewMode === 'runtime' ? (
-                                            <div className="incident-architecture-lens-runtime">
-                                                {graphRuntimeEdges.length > 0 ? (
-                                                    <div className="incident-architecture-runtime-lane">
-                                                        {graphRuntimeEdges.slice(0, 12).map((edge) => (
-                                                            <div key={`runtime-${edge.id}`} className="incident-architecture-runtime-step">
-                                                                <button
-                                                                    type="button"
-                                                                    className={`incident-architecture-lens-edge-link${edge.sourceNode?.filePath ? '' : ' is-readonly'}`}
-                                                                    onClick={() => revealGraphNodeTarget(edge.sourceNode)}
-                                                                    disabled={!edge.sourceNode?.filePath}
-                                                                >
-                                                                    {edge.sourceLabel}
-                                                                </button>
-                                                                <span className="incident-architecture-lens-edge-arrow">-&gt;</span>
-                                                                <button
-                                                                    type="button"
-                                                                    className={`incident-architecture-lens-edge-link${edge.targetNode?.filePath ? '' : ' is-readonly'}`}
-                                                                    onClick={() => revealGraphNodeTarget(edge.targetNode)}
-                                                                    disabled={!edge.targetNode?.filePath}
-                                                                >
-                                                                    {edge.targetLabel}
-                                                                </button>
-                                                                <small>{edge.relation}</small>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <small className="incident-architecture-lens-empty">
-                                                        Runtime lane is waiting for route/service/datastore edges from graph telemetry.
-                                                    </small>
-                                                )}
-                                                {graphUnresolvedEdges.length > 0 ? (
-                                                    <div className="incident-architecture-lens-unresolved">
-                                                        <span>Unresolved runtime links</span>
-                                                        {graphUnresolvedEdges.slice(0, 5).map((edge) => (
-                                                            <small key={`runtime-unresolved-${edge.id}`}>
-                                                                {edge.sourceLabel} -&gt; {edge.targetLabel}
-                                                            </small>
-                                                        ))}
-                                                    </div>
-                                                ) : null}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                    <div className="incident-architecture-lens-grid">
-                                        <div className="incident-architecture-lens-section">
-                                            <span>Why Workspai thinks so</span>
-                                            {architectureLens.reasons.length > 0 ? (
-                                                architectureLens.reasons.map((reason, index) => (
-                                                    <small key={`lens-reason-${index}`}>{reason}</small>
-                                                ))
-                                            ) : (
-                                                <small>Evidence is still being assembled from the system graph and verification layer.</small>
-                                            )}
-                                        </div>
-                                        <div className="incident-architecture-lens-section">
-                                            <span>What is affected</span>
-                                            <small>
-                                                Modules: {architectureLens.affectedModules.length > 0
-                                                    ? architectureLens.affectedModules.join(', ')
-                                                    : 'unknown'}
-                                            </small>
-                                            <small>
-                                                Files: {architectureLens.affectedFiles.length > 0
-                                                    ? architectureLens.affectedFiles.join(', ')
-                                                    : 'unknown'}
-                                            </small>
-                                            <small>
-                                                Tests: {architectureLens.affectedTests.length > 0
-                                                    ? architectureLens.affectedTests.join(', ')
-                                                    : 'none suggested yet'}
-                                            </small>
-                                        </div>
-                                        <div className="incident-architecture-lens-section">
-                                            <span>How to verify safely</span>
-                                            {architectureLens.verifyChecklist.length > 0 ? (
-                                                architectureLens.verifyChecklist.map((item, index) => (
-                                                    <small key={`lens-verify-${index}`}>{item}</small>
-                                                ))
-                                            ) : (
-                                                <small>Run deterministic verification before any completion claim.</small>
-                                            )}
-                                        </div>
-                                    </div>
-                                    {architectureNavigator.length > 0 ? (
-                                        <div className="incident-architecture-lens-navigator">
-                                            <span>Impact navigator</span>
-                                            <div className="incident-architecture-lens-nav-groups">
-                                                {architectureNavigator.map((section) => (
-                                                    <div key={section.id} className="incident-architecture-lens-nav-group">
-                                                        <small className="incident-architecture-lens-nav-title">{section.title}</small>
-                                                        <div className="incident-architecture-lens-nav-items">
-                                                            {section.items.map((item) => (
-                                                                <button
-                                                                    key={item.id}
-                                                                    type="button"
-                                                                    className={`incident-architecture-lens-nav-item is-${item.kind}`}
-                                                                    onClick={() => handleArchitectureNavigatorSelect(item)}
-                                                                    title={item.detail}
-                                                                >
-                                                                    <strong>{item.label}</strong>
-                                                                    <small>{item.detail}</small>
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : null}
-                                    {architectureLens.focusNodes.length > 0 ? (
-                                        <div className="incident-architecture-lens-focus">
-                                            <span>Top graph signals</span>
-                                            <div className="incident-architecture-lens-node-list">
-                                                {architectureLens.focusNodes.map((node) => (
-                                                    <div key={node.id} className="incident-architecture-lens-node">
-                                                        <strong>{node.label}</strong>
-                                                        <small>{node.type} · {node.confidence}% confidence</small>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : null}
-                                    {architectureLens.blockedReasons.length > 0 ? (
-                                        <div className="incident-architecture-lens-blockers">
-                                            <span>Blocked until</span>
-                                            {architectureLens.blockedReasons.map((reason, index) => (
-                                                <small key={`lens-blocked-${index}`}>{reason}</small>
-                                            ))}
-                                        </div>
-                                    ) : null}
-                                    {architectureLens.nextSafeAction ? (
-                                        <div className="incident-architecture-lens-actions">
-                                            <button
-                                                type="button"
-                                                className="incident-btn primary"
-                                                onClick={runPredictiveSafeAction}
-                                            >
-                                                Use safe next action
-                                            </button>
-                                            <small>{architectureLens.nextSafeAction}</small>
-                                        </div>
-                                    ) : null}
-                                </section>
-                            ) : null}
-                            {intentChips.length > 0 ? (
-                                <div className="incident-intent-section">
-                                    <div className="incident-intent-section-head">
-                                        <span>Do this next</span>
-                                    </div>
-                                    <div className="incident-intent-grid">
-                                        {intentChips.map((chip) => (
-                                            <button
-                                                key={chip.id}
-                                                type="button"
-                                                className={`incident-intent-chip${chip.isPrimary ? ' is-primary' : ''}`}
-                                                onClick={() => handleIntentChipSelect(chip)}
-                                                title={chip.detail}
-                                            >
-                                                <strong>{chip.label}</strong>
-                                                <span>{chip.detail}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            ) : null}
-                        </div>
-
-                        <aside className="incident-focus-sidecar">
-                            <div className="incident-focus-metrics">
-                                {compactStats.map((stat) => (
-                                    <div key={stat.label} className="incident-focus-metric">
-                                        <span>{stat.label}</span>
-                                        <strong>{stat.value}</strong>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {latestStructuredResponse?.nextCommand ? (
-                                <div className="incident-focus-command-card">
-                                    <div className="incident-focus-command-head">Next command</div>
-                                    <code>{normalizeCommandText(latestStructuredResponse.nextCommand)}</code>
-                                    <div
-                                        className={`incident-command-scope incident-command-scope--${inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.nextCommand), hasProjectSelected)}`}
-                                    >
-                                        {commandScopeLabel(inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.nextCommand), hasProjectSelected))}
-                                    </div>
-                                    <div className="incident-command-actions">
-                                        <button
-                                            type="button"
-                                            className="incident-btn primary"
-                                            onClick={() => runCommand(latestStructuredResponse.nextCommand!)}
-                                        >
-                                            Run
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="incident-btn"
-                                            onClick={() => copyCommand(latestStructuredResponse.nextCommand!)}
-                                        >
-                                            {lastCopiedCommand === normalizeCommandText(latestStructuredResponse.nextCommand) ? 'Copied' : 'Copy'}
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : null}
-
-                            {latestStructuredResponse?.verifyCommand ? (
-                                <div className="incident-focus-command-card incident-focus-command-card--proof">
-                                    <div className="incident-focus-command-head">Proof this worked</div>
-                                    <code>{normalizeCommandText(latestStructuredResponse.verifyCommand)}</code>
-                                    <div
-                                        className={`incident-command-scope incident-command-scope--${inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.verifyCommand), hasProjectSelected)}`}
-                                    >
-                                        {commandScopeLabel(inferCommandExecutionScope(normalizeCommandText(latestStructuredResponse.verifyCommand), hasProjectSelected))}
-                                    </div>
-                                    <div className="incident-command-actions">
-                                        <button
-                                            type="button"
-                                            className="incident-btn primary"
-                                            onClick={() => runCommand(latestStructuredResponse.verifyCommand!)}
-                                        >
-                                            Run
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="incident-btn"
-                                            onClick={() => copyCommand(latestStructuredResponse.verifyCommand!)}
-                                        >
-                                            {lastCopiedCommand === normalizeCommandText(latestStructuredResponse.verifyCommand) ? 'Copied' : 'Copy'}
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : null}
-
-                            {architectureLens ? (
-                                <div className="incident-focus-command-card incident-focus-command-card--impact">
-                                    <div className="incident-focus-command-head">System graph</div>
-                                    <div className="incident-focus-graph-meta">
-                                        <span>{architectureLens.graphSummary}</span>
-                                        <strong>{architectureLens.focusNodes.length > 0 ? architectureLens.focusNodes[0].label : 'Awaiting graph focus nodes'}</strong>
-                                    </div>
-                                </div>
-                            ) : null}
-                        </aside>
-                        {chatBrainActionResult && actionResultPresentation ? (
-                            <div className={`incident-verify-inline-badge is-${actionResultPresentation.tone === 'success' ? 'pass' : actionResultPresentation.tone === 'warning' ? 'warning' : 'fail'}`}>
-                                {actionResultPresentation.tone === 'success'
-                                    ? <CheckCircle2 size={11} />
-                                    : <AlertTriangle size={11} />}
-                                <span>{actionResultPresentation.title}</span>
-                                {chatBrainActionResult.outputSummary
-                                    ? <em>{chatBrainActionResult.outputSummary}</em>
-                                    : null}
-                            </div>
-                        ) : null}
-                    </div>
-
-                    {isFullDisplay ? (
-                        <div className="incident-health-snapshot">
-                            <div className="incident-panel-heading">
-                                <BarChart3 size={13} />
-                                <span>Workspace Health Snapshot</span>
-                            </div>
-                            <details className="incident-collapse incident-collapse--snapshot incident-collapse--issues incident-health-section">
-                                <summary>
-                                    <span>Open Issues</span>
-                                    <small>{sortedBoardActions.length > 0 ? `${sortedBoardActions.length} active` : isAnalyzing ? 'Scanning' : 'Clear'}</small>
-                                </summary>
-                                {sortedBoardActions.length > 0 ? (
-                                    <div className="incident-issues-grid">
-                                        {visibleSidebarIssues.map((action) => {
-                                            const tone = riskTone(action.riskLevel);
-                                            const isUrgent = tone === 'critical' || tone === 'high';
-                                            return (
-                                                <button
-                                                    key={action.id}
-                                                    type="button"
-                                                    className={`incident-issue-card${isUrgent ? ' active' : ''}`}
-                                                    onClick={() => onChatBrainExecuteAction?.(action.actionType, action.id)}
-                                                >
-                                                    <span className={`incident-feed-severity ${tone}`} />
-                                                    <div className="incident-issue-copy">
-                                                        <strong>{action.label}</strong>
-                                                        <small>{action.riskLevel ?? 'unknown risk'}</small>
-                                                    </div>
-                                                    <span className={`incident-feed-status${isUrgent ? '' : ' muted'}`}>
-                                                        {isUrgent ? 'Needs attention' : 'Ready'}
-                                                    </span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                ) : (
-                                    <div className="incident-issues-empty">
-                                        {isAnalyzing
-                                            ? 'Scanning workspace for issues…'
-                                            : 'No incidents yet. Start an analysis to populate this strip.'}
-                                    </div>
-                                )}
-                                {showSidebarIssuesToggle ? (
-                                    <button
-                                        type="button"
-                                        className="incident-sidebar-toggle-link"
-                                        onClick={() => setShowAllSidebarIssues((prev) => !prev)}
-                                    >
-                                        {showAllSidebarIssues ? 'Show less' : `Show all (${sortedBoardActions.length})`}
-                                    </button>
-                                ) : null}
-                            </details>
-                            <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                <summary>
-                                    <span>Snapshot numbers</span>
-                                    <small>{snapshotHealthPercent}%</small>
-                                </summary>
-                                <div className="incident-metric-card">
-                                    <span>{hasDoctorSnapshot ? 'Workspace health' : 'AI confidence'}</span>
-                                    <strong>{snapshotHealthPercent}%</strong>
-                                    <div className="incident-meter">
-                                        <span style={{ width: `${snapshotHealthPercent}%` }} />
-                                    </div>
-                                </div>
-                                <div className="incident-metric-card">
-                                    <span>{hasDoctorSnapshot ? 'Projects with issues' : 'Analysis progress'}</span>
-                                    <strong>
-                                        {hasDoctorSnapshot
-                                            ? `${doctorSummary!.projectsWithIssues}/${doctorSummary!.projectCount}`
-                                            : `${analysisDepth}%`}
-                                    </strong>
-                                    <div className="incident-meter">
-                                        <span style={{ width: `${projectsWithIssuesRatio}%` }} />
-                                    </div>
-                                </div>
-                                <div className="incident-stats-row">
-                                    <div>
-                                        <Clock3 size={12} />
-                                        <span>
-                                            {doctorSummary?.generatedAt
-                                                ? `Doctor updated ${new Date(doctorSummary.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                                                : commandSummary?.lastCommandAt
-                                                    ? `Updated ${new Date(commandSummary.lastCommandAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                                                    : 'No activity yet'}
-                                        </span>
-                                    </div>
-                                    <div>
-                                        <CheckCircle2 size={12} />
-                                        <span>
-                                            {hasDoctorSnapshot
-                                                ? `${doctorSummary!.issueCount} issue(s) detected`
-                                                : `${incidentCount} items tracked`}
-                                        </span>
-                                    </div>
-                                    <div>
-                                        <RotateCw size={12} />
-                                        <span>
-                                            {isAnalyzing
-                                                ? 'AI is updating this view'
-                                                : hasDoctorSnapshot
-                                                    ? 'Doctor evidence loaded from workspace'
-                                                    : 'Waiting for your next action'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </details>
-
-                            {ctaVariantBreakdown?.variants?.length ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>CTA Variant Breakdown</span>
-                                        <small>{ctaVariantBreakdown.variants.length} variant(s)</small>
-                                    </summary>
-                                    <div className="incident-cta-variant-grid">
-                                        {ctaVariantBreakdown.variants.map((item) => {
-                                            const lowConfidence =
-                                                item.loopStarted < CTA_VARIANT_MIN_LOOP_SAMPLES ||
-                                                item.actionExecuted < CTA_VARIANT_MIN_ACTION_SAMPLES;
-
-                                            return (
-                                                <div key={item.variant} className="incident-cta-variant-card">
-                                                    <div className="incident-cta-variant-head">
-                                                        <strong>{item.variant.toUpperCase()}</strong>
-                                                        <small>{item.loopStarted} loop starts</small>
-                                                    </div>
-                                                    {lowConfidence ? (
-                                                        <div className="incident-cta-variant-confidence">Low confidence sample</div>
-                                                    ) : null}
-                                                    <div className="incident-cta-variant-metrics">
-                                                        <span>
-                                                            verify completion
-                                                            <b>{item.verifyCompletionRate === null ? 'N/A' : `${item.verifyCompletionRate}%`}</b>
-                                                        </span>
-                                                        <span>
-                                                            action vs ask
-                                                            <b>{item.actionVsAskShare === null ? 'N/A' : `${item.actionVsAskShare}%`}</b>
-                                                        </span>
-                                                    </div>
-                                                    <div className="incident-cta-variant-foot">
-                                                        <small>
-                                                            actions {item.actionExecuted} · verify ✓ {item.verifyPassed} / ✗ {item.verifyFailed}
-                                                        </small>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                    <div className="incident-cta-variant-legend">
-                                        verify completion = (verify passed + verify failed) / action executed. action vs ask = action executed / (action executed + next_action_clicked). UNKNOWN = events collected without ctaVariant tag.
-                                    </div>
-                                </details>
-                            ) : null}
-
-                            {studioHardGateStatus ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>Studio hard-gate</span>
-                                        <small>{studioHardGateStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
-                                    </summary>
-                                    <div className="incident-metric-card">
-                                        <span>Verify-phase reach</span>
-                                        <strong>
-                                            {hardGateVerifyReach === null ? 'N/A' : `${hardGateVerifyReach}%`} / min{' '}
-                                            {studioHardGateStatus.thresholds.verifyPhaseReachMin}%
-                                        </strong>
-                                        <div className="incident-meter">
-                                            <span style={{ width: `${hardGateVerifyMeter}%` }} />
-                                        </div>
-                                    </div>
-                                    <div className="incident-metric-card">
-                                        <span>Bridge route completion</span>
-                                        <strong>
-                                            {hardGateBridgeCompletion === null ? 'N/A' : `${hardGateBridgeCompletion}%`} / min{' '}
-                                            {studioHardGateStatus.thresholds.bridgeRouteCompletionMin}%
-                                        </strong>
-                                        <div className="incident-meter">
-                                            <span style={{ width: `${hardGateBridgeMeter}%` }} />
-                                        </div>
-                                    </div>
-                                    <div className="incident-stats-row">
-                                        <div>
-                                            <ShieldCheck size={12} />
-                                            <span>
-                                                verify gate: {studioHardGateStatus.gates.verifyPhaseReachPass ? 'pass' : 'fail'}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <BarChart3 size={12} />
-                                            <span>
-                                                bridge gate: {studioHardGateStatus.gates.bridgeRouteCompletionPass ? 'pass' : 'fail'}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <Activity size={12} />
-                                            <span>
-                                                telemetry evidence: {studioHardGateStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </details>
-                            ) : null}
-
-                            {studioRollbackKpiStatus ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>Rollback KPI gate</span>
-                                        <small>{studioRollbackKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
-                                    </summary>
-                                    <div className="incident-metric-card">
-                                        <span>Auto-rollback success rate</span>
-                                        <strong>
-                                            {rollbackAutoSuccessRate === null ? 'N/A' : `${rollbackAutoSuccessRate}%`} / min{' '}
-                                            {studioRollbackKpiStatus.thresholds.verifyAutoRollbackSuccessRateMin}%
-                                        </strong>
-                                        <div className="incident-meter">
-                                            <span style={{ width: `${rollbackSuccessMeter}%` }} />
-                                        </div>
-                                    </div>
-                                    <div className="incident-metric-card">
-                                        <span>False-confidence rate</span>
-                                        <strong>
-                                            {rollbackFalseConfidenceRate === null ? 'N/A' : `${rollbackFalseConfidenceRate}%`} / max{' '}
-                                            {studioRollbackKpiStatus.thresholds.falseConfidenceRateMax}%
-                                        </strong>
-                                        <div className="incident-meter">
-                                            <span style={{ width: `${rollbackFalseConfidenceMeter}%` }} />
-                                        </div>
-                                    </div>
-                                    <div className="incident-stats-row">
-                                        <div>
-                                            <RotateCw size={12} />
-                                            <span>
-                                                attempts: {studioRollbackKpiStatus.metrics.rollbackAttempted} / verify failed{' '}
-                                                {studioRollbackKpiStatus.metrics.verifyFailed}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <CheckCircle2 size={12} />
-                                            <span>succeeded: {studioRollbackKpiStatus.metrics.rollbackSucceeded}</span>
-                                        </div>
-                                        <div>
-                                            <Activity size={12} />
-                                            <span>
-                                                evidence: {studioRollbackKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </details>
-                            ) : null}
-
-                            {studioReproPackKpiStatus ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>Repro Pack KPI gate</span>
-                                        <small>{studioReproPackKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
-                                    </summary>
-                                    <div className="incident-metric-card">
-                                        <span>Repro pack share rate</span>
-                                        <strong>
-                                            {studioReproPackKpiStatus.metrics.reproPackShareRate === null
-                                                ? 'N/A'
-                                                : `${studioReproPackKpiStatus.metrics.reproPackShareRate}%`}{' '}
-                                            / min {studioReproPackKpiStatus.thresholds.reproPackShareRateMin}%
-                                        </strong>
-                                        <div className="incident-meter">
-                                            <span
-                                                style={{
-                                                    width: `${Math.min(
-                                                        studioReproPackKpiStatus.metrics.reproPackShareRate ?? 0,
-                                                        100
-                                                    )}%`,
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="incident-metric-card">
-                                        <span>Replay-to-resolution rate</span>
-                                        <strong>
-                                            {studioReproPackKpiStatus.metrics.replayToResolutionRate === null
-                                                ? 'N/A'
-                                                : `${studioReproPackKpiStatus.metrics.replayToResolutionRate}%`}{' '}
-                                            / min {studioReproPackKpiStatus.thresholds.replayToResolutionRateMin}%
-                                        </strong>
-                                        <div className="incident-meter">
-                                            <span
-                                                style={{
-                                                    width: `${Math.min(
-                                                        studioReproPackKpiStatus.metrics.replayToResolutionRate ?? 0,
-                                                        100
-                                                    )}%`,
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="incident-stats-row">
-                                        <div>
-                                            <Package size={12} />
-                                            <span>
-                                                captured: {studioReproPackKpiStatus.metrics.reproPackCaptured} / exported:{' '}
-                                                {studioReproPackKpiStatus.metrics.reproPackExported}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <RotateCw size={12} />
-                                            <span>
-                                                imported: {studioReproPackKpiStatus.metrics.reproPackImported} / enriched:{' '}
-                                                {studioReproPackKpiStatus.metrics.incidentReplayMemoryEnriched}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <Activity size={12} />
-                                            <span>
-                                                evidence: {studioReproPackKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </details>
-                            ) : null}
-
-                            {hasDoctorSnapshot ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>Doctor Overview</span>
-                                        <small>{doctorSummary!.issueCount} issue(s)</small>
-                                    </summary>
-                                    <div className="incident-doctor-snapshot">
-                                        <div className="incident-doctor-scoreline">
-                                            <span>Health checks</span>
-                                            <strong>
-                                                ✅ {doctorSummary!.health.passed} · ⚠️ {doctorSummary!.health.warnings} · ❌ {doctorSummary!.health.errors}
-                                            </strong>
-                                        </div>
-                                        {doctorSummary!.frameworks.length > 0 ? (
-                                            <div className="incident-doctor-frameworks">
-                                                {doctorSummary!.frameworks.slice(0, 4).map((fw) => (
-                                                    <span key={fw.name} className="incident-doctor-chip">
-                                                        {fw.name} ({fw.count})
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        ) : null}
-                                        {doctorSummary!.projects.length > 0 ? (
-                                            <div className="incident-doctor-projects">
-                                                {doctorSummary!.projects.slice(0, 4).map((project) => (
-                                                    <div
-                                                        key={project.name}
-                                                        className={`incident-doctor-project-item incident-doctor-project-item--${doctorProjectSeverity(project)}`}
-                                                    >
-                                                        <strong>{project.name}</strong>
-                                                        <span>
-                                                            {project.framework || 'unknown framework'} · {project.issues} issue(s)
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : null}
-                                        {doctorSummary!.fixCommands.length > 0 ? (
-                                            <div className="incident-doctor-fixes">
-                                                <div className="incident-doctor-fixes-head">Recommended quick fixes</div>
-                                                {doctorSummary!.fixCommands.slice(0, 3).map((fixCommand, idx) => {
-                                                    const normalized = normalizeCommandText(fixCommand);
-                                                    const isExecutingFix = !!(
-                                                        executingCommand && normalizeCommandText(executingCommand) === normalized
-                                                    );
-                                                    return (
-                                                        <div key={`${fixCommand}-${idx}`} className="incident-doctor-fix-item">
-                                                            <code>{normalized}</code>
-                                                            <div className="incident-command-actions">
-                                                                <button
-                                                                    type="button"
-                                                                    className="incident-btn"
-                                                                    onClick={() => copyCommand(normalized)}
-                                                                    disabled={isExecutingFix}
-                                                                >
-                                                                    {lastCopiedCommand === normalized ? 'Copied' : 'Copy'}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="incident-btn primary"
-                                                                    onClick={() => runCommand(normalized)}
-                                                                    disabled={isExecutingFix}
-                                                                >
-                                                                    {isExecutingFix ? 'Running' : 'Run'}
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                </details>
-                            ) : null}
-
-                            <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                <summary>
-                                    <span>Proof this worked</span>
-                                    <small>{verifySteps.filter((step) => step.done).length}/{verifySteps.length} ready</small>
-                                </summary>
-                                <div className="incident-verify-panel incident-verify-panel--embedded">
-                                    <div className="incident-verify-steps">
-                                        {verifySteps.map((step) => (
-                                            <div key={step.label} className="incident-verify-step">
-                                                <span className={`incident-verify-dot ${step.done ? 'is-done' : 'is-pending'}`} />
-                                                <span>{step.label}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <button type="button" className="incident-btn primary" onClick={onRunDoctorChecks}>
-                                        Run workspace checks
-                                    </button>
-                                </div>
-                            </details>
-
-                            {onboardingSummary?.followupShown ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>Guidance</span>
-                                        <small>{onboardingSummary.followupClicked}/{onboardingSummary.followupShown} used</small>
-                                    </summary>
-                                    <div className="incident-onboarding-note incident-onboarding-note--embedded">
-                                        Suggested follow-ups used {onboardingSummary.followupClicked} of {onboardingSummary.followupShown} times.
-                                    </div>
-                                </details>
-                            ) : null}
-
-                            {(studioActivityItems.length > 0 || timelineItems.length > 0) ? (
-                                <details className="incident-collapse incident-collapse--snapshot incident-health-section">
-                                    <summary>
-                                        <span>Usage</span>
-                                        <small>{studioActivityItems.length + timelineItems.length} signals</small>
-                                    </summary>
-                                    <div className="incident-usage-compact incident-usage-compact--embedded">
-                                        <div className="incident-usage-pills">
-                                            {studioActivityItems.map((item) => (
-                                                <span key={item.command} className="incident-usage-pill">
-                                                    <em>{item.count}</em>{item.label}
-                                                </span>
-                                            ))}
-                                            {timelineItems.map((item) => (
-                                                <span key={item.command} className="incident-usage-pill incident-usage-pill--tool">
-                                                    <em>{item.count}</em>{item.label}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </details>
-                            ) : null}
-                        </div>
-                    ) : null}
-                </main>
-
-                <aside className="incident-insights-panel">
-                    <div className="incident-panel-heading incident-panel-heading--brand">
-                        <Send size={13} />
-                        <span>Conversation</span>
-                        <span className="incident-analysis-status">
-                            {isAnalyzing ? '● Analyzing…' : chatBrainHistory?.length ? `${chatBrainHistory.length} messages` : 'Ready'}
-                        </span>
-                    </div>
-
-                    <div className="incident-chat-toolbar" role="toolbar" aria-label="Conversation tools">
-                        <button
-                            type="button"
-                            className="incident-chat-toolbar-btn"
-                            onClick={onRunDoctorChecks}
-                            title="Run deterministic workspace checks"
-                        >
-                            <ShieldCheck size={12} />
-                            <span>Checks</span>
-                        </button>
-                        <button
-                            type="button"
-                            className="incident-chat-toolbar-btn"
-                            onClick={() => runStudioAction('terminal-bridge', onRunTerminalBridge)}
-                            title="Inspect logs and runtime signals"
-                        >
-                            <Activity size={12} />
-                            <span>Logs</span>
-                        </button>
-                        <button
-                            type="button"
-                            className="incident-chat-toolbar-btn"
-                            onClick={() => runStudioAction('fix-preview-lite', _onRunFixPreview)}
-                            title="Preview a safe patch before editing"
-                        >
-                            <Wrench size={12} />
-                            <span>Fix</span>
-                        </button>
-                        <button
-                            type="button"
-                            className="incident-chat-toolbar-btn"
-                            onClick={() => runStudioAction('change-impact-lite', _onRunChangeImpact)}
-                            title="Estimate blast radius and rollout risk"
-                        >
-                            <BarChart3 size={12} />
-                            <span>Impact</span>
-                        </button>
-                        <button
-                            type="button"
-                            className="incident-chat-toolbar-btn"
-                            onClick={() => runStudioAction('verify-pack-autopilot')}
-                            title="Generate deterministic verify command pack"
-                        >
-                            <ShieldCheck size={12} />
-                            <span>Verify</span>
-                        </button>
-                    </div>
-
-                    <div className="incident-history-shell">
-                        {/* Scrollable conversation thread */}
-                        <div className="incident-chat-thread" ref={threadRef} onScroll={handleThreadScroll}>
-                            {aiUnavailable ? (
-                                <div className="incident-fallback-card">
-                                    <div className="incident-fallback-title">
-                                        <AlertTriangle size={13} />
-                                        <span>AI provider currently unreachable</span>
-                                    </div>
-                                    <p>
-                                        Network-level failure detected. Switch to deterministic flow now, keep context intact,
-                                        and retry AI once connection recovers.
-                                    </p>
-                                    <code className="incident-error-code">{lastError}</code>
-                                    <div className="incident-fallback-actions">
-                                        <button type="button" className="incident-btn primary" onClick={onRunDoctorChecks}>
-                                            Run deterministic checks
-                                        </button>
-                                        <button type="button" className="incident-btn" onClick={onRunTerminalBridge}>
-                                            Retry bridge
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : null}
-
-                            {!chatBrainHistory?.length && !chatBrainStreamText && !isAnalyzing && !aiUnavailable ? (
-                                <div className="incident-chat-empty">
-                                    <Sparkles size={22} style={{ opacity: 0.3 }} />
-                                    <p>Nothing yet. Ask AI to inspect the workspace, debug an error, or plan your next change.</p>
-                                </div>
-                            ) : null}
-
-                            {recentConversationEntries.length > 0 ? (
-                                <div className="incident-chat-messages">
-                                    {recentConversationEntries.map((entry, index) => {
-                                        const isExpanded = !!expandedConversationIds[entry.id];
-                                        const isLatest = index === recentConversationEntries.length - 1;
-                                        return (
-                                            <div
-                                                key={entry.id}
-                                                className={`incident-msg ${entry.role === 'user' ? 'incident-msg--user' : 'incident-msg--assistant'}${isExpanded ? ' is-expanded' : ' is-collapsed'}`}
-                                            >
-                                                <button
-                                                    type="button"
-                                                    className="incident-msg-meta incident-msg-toggle"
-                                                    onClick={() => toggleConversationEntry(entry.id)}
-                                                    aria-expanded={isExpanded}
-                                                >
-                                                    {entry.role === 'user' ? (
-                                                        <>
-                                                            <span className="incident-msg-avatar incident-msg-avatar--user">You</span>
-                                                            <span className="incident-msg-label">asked</span>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <span className="incident-msg-avatar incident-msg-avatar--ai">AI</span>
-                                                            <span className="incident-msg-label">answered</span>
-                                                        </>
-                                                    )}
-                                                    <span className="incident-msg-time">
-                                                        {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                    </span>
-                                                    {isLatest ? <span className="incident-msg-state">Latest</span> : null}
-                                                    <span className="incident-msg-chevron">
-                                                        {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                                    </span>
-                                                </button>
-                                                {isExpanded ? (
-                                                    <div className="incident-msg-body">
-                                                        {entry.role === 'assistant' ? renderAssistantText(entry.text) : <p>{entry.text}</p>}
-                                                    </div>
-                                                ) : null}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ) : null}
-
-                            {chatBrainStreamText ? (
-                                <div className="incident-msg incident-msg--assistant incident-msg--streaming">
-                                    <div className="incident-msg-meta">
-                                        <span className="incident-msg-avatar incident-msg-avatar--ai">AI</span>
-                                        <span className="incident-msg-label">is writing</span>
-                                        <span className="incident-msg-typing-dots">
-                                            <span />
-                                            <span />
-                                            <span />
-                                        </span>
-                                    </div>
-                                    <div className="incident-msg-body">
-                                        {renderAssistantText(chatBrainStreamText)}
-                                    </div>
-                                </div>
-                            ) : null}
-
-                            {chatBrainActionProgress ? (
-                                <div className="incident-onboarding-note">
-                                    <RotateCw size={11} />
-                                    {chatBrainActionProgress.stage} ({chatBrainActionProgress.progress}%)
-                                    {chatBrainActionProgress.note ? ` — ${chatBrainActionProgress.note}` : ''}
-                                </div>
-                            ) : null}
-
-                            {chatBrainActionResult && actionResultPresentation ? (
-                                <div className={`incident-verify-result ${actionResultPresentation.tone === 'success' ? 'is-success' : actionResultPresentation.tone === 'warning' ? 'is-warning' : 'is-fail'}`}>
-                                    <div className="incident-verify-result-title">
-                                        {actionResultPresentation.tone === 'success' ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-                                        <span>{actionResultPresentation.title}</span>
-                                    </div>
-                                    <p>{actionResultPresentation.description}</p>
-                                    {chatBrainActionResult.evidence?.healthScoreText ? (
-                                        <div className="incident-verify-evidence">
-                                            <strong>Evidence (doctor report)</strong>
-                                            <p>Health score: {chatBrainActionResult.evidence.healthScoreText}</p>
-                                            {chatBrainActionResult.evidence.generatedAt ? (
-                                                <p>
-                                                    Generated: {new Date(chatBrainActionResult.evidence.generatedAt).toLocaleString()}
-                                                </p>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.diagnosis ? (
-                                        <div className="incident-verify-evidence">
-                                            {(() => {
-                                                const diagnosisCriteria = evaluateArtifactSuccessCriteria({
-                                                    kind: 'diagnosis',
-                                                    confidence:
-                                                        chatBrainActionResult.diagnosis!.confidence > 1
-                                                            ? chatBrainActionResult.diagnosis!.confidence / 100
-                                                            : chatBrainActionResult.diagnosis!.confidence,
-                                                    confidenceBand: chatBrainActionResult.diagnosis!.confidenceBand,
-                                                    relatedFilesCount: chatBrainActionResult.diagnosis!.relatedFiles.length,
-                                                    signalSourcesCount: chatBrainActionResult.diagnosis!.signalSources.length,
-                                                });
-                                                return (
-                                                    <div className={`incident-rollback-evidence is-${diagnosisCriteria.overallStatus === 'pass' ? 'passed' : diagnosisCriteria.overallStatus === 'partial' ? 'warning' : 'failed'}`}>
-                                                        <strong>{diagnosisCriteria.summaryLabel}</strong>
-                                                        {diagnosisCriteria.criteria.map((c) => (
-                                                            <p key={c.label}>
-                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
-                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
-                                                            </p>
-                                                        ))}
-                                                    </div>
-                                                );
-                                            })()}
-                                            <p>
-                                                Confidence: {chatBrainActionResult.diagnosis.confidence}% ({chatBrainActionResult.diagnosis.confidenceBand})
-                                            </p>
-                                            {chatBrainActionResult.diagnosis.signalSources.length > 0 ? (
-                                                <p>
-                                                    Signals: {chatBrainActionResult.diagnosis.signalSources.slice(0, 5).join(', ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.diagnosis.relatedFiles.length > 0 ? (
-                                                <p>
-                                                    Related files ({chatBrainActionResult.diagnosis.relatedFiles.length}):{' '}
-                                                    {chatBrainActionResult.diagnosis.relatedFiles.slice(0, 5).join(', ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.diagnosis.recommendedFocus ? (
-                                                <p>Focus: {chatBrainActionResult.diagnosis.recommendedFocus}</p>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.decisionClarity ? (() => {
-                                        const wordingPolicy = getDecisionClarityWordingPolicy({
-                                            mutationReady: chatBrainActionResult.decisionClarity.mutationReady,
-                                            requiredMissingFields: chatBrainActionResult.decisionClarity.requiredMissingFields,
-                                            verificationRequired: chatBrainActionResult.verificationRequired ?? false,
-                                        });
-                                        return (
-                                            <div className={`incident-rollback-evidence is-${wordingPolicy.cardState === 'complete' ? 'passed' : 'warning'}`}>
-                                                <strong>{wordingPolicy.cardHeading}</strong>
-                                                <p>
-                                                    Situation: {chatBrainActionResult.decisionClarity.situation || 'unknown'}
-                                                </p>
-                                                <p>
-                                                    Why: {chatBrainActionResult.decisionClarity.reason || 'unknown'}
-                                                </p>
-                                                <p>
-                                                    Impact scope: {chatBrainActionResult.decisionClarity.impactScope.length > 0
-                                                        ? chatBrainActionResult.decisionClarity.impactScope.slice(0, 4).join(', ')
-                                                        : 'unknown'}
-                                                </p>
-                                                <p>
-                                                    Risk: {chatBrainActionResult.decisionClarity.risk.confidenceBand}
-                                                    {' · '}
-                                                    {chatBrainActionResult.decisionClarity.risk.confidence}%
-                                                    {' · '}
-                                                    {chatBrainActionResult.decisionClarity.risk.mutating ? 'mutating' : 'non-mutating'}
-                                                </p>
-                                                <p>
-                                                    Next: {chatBrainActionResult.decisionClarity.nextStep || 'unknown'}
-                                                </p>
-                                                <p>
-                                                    Verify: {chatBrainActionResult.decisionClarity.verifyPlan.length > 0
-                                                        ? chatBrainActionResult.decisionClarity.verifyPlan.slice(0, 3).join(' | ')
-                                                        : 'unknown'}
-                                                </p>
-                                                <p>
-                                                    Rollback: {chatBrainActionResult.decisionClarity.rollbackPlan || 'unknown'}
-                                                </p>
-                                                {chatBrainActionResult.decisionClarity.requiredMissingFields.length > 0 ? (
-                                                    <p>
-                                                        Missing required fields: {chatBrainActionResult.decisionClarity.requiredMissingFields.join(', ')}
-                                                    </p>
-                                                ) : wordingPolicy.mutationReadyLabel !== null ? (
-                                                    <p>Mutation ready: {wordingPolicy.mutationReadyLabel}</p>
-                                                ) : null}
-                                            </div>
-                                        );
-                                    })() : null}
-                                    {chatBrainActionResult.verifyCommandPack ? (
-                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.verifyCommandPack.readiness === 'ready' ? 'passed' : 'warning'}`}>
-                                            {(() => {
-                                                const verifyCriteria = evaluateArtifactSuccessCriteria({
-                                                    kind: 'verify',
-                                                    runCompleted: true,
-                                                    errors:
-                                                        chatBrainActionResult.evidence?.errors ??
-                                                        (chatBrainActionResult.success ? 0 : 1),
-                                                    warnings: chatBrainActionResult.evidence?.warnings ?? 0,
-                                                    passed:
-                                                        chatBrainActionResult.evidence?.passed ??
-                                                        (chatBrainActionResult.success ? 1 : 0),
-                                                });
-                                                return (
-                                                    <>
-                                                        <strong>{verifyCriteria.summaryLabel}</strong>
-                                                        {verifyCriteria.criteria.map((c) => (
-                                                            <p key={c.label}>
-                                                                <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
-                                                                {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
-                                                            </p>
-                                                        ))}
-                                                    </>
-                                                );
-                                            })()}
-                                            <strong>Deterministic verify command pack</strong>
-                                            <p>
-                                                Quality score: {chatBrainActionResult.verifyCommandPack.qualityScore}%
-                                                {' · Readiness: '}
-                                                {chatBrainActionResult.verifyCommandPack.readiness}
-                                            </p>
-                                            <p>{chatBrainActionResult.verifyCommandPack.rationale}</p>
-                                            {chatBrainActionResult.verifyCommandPack.commands.length > 0 ? (
-                                                <div className="incident-doctor-fixes">
-                                                    {chatBrainActionResult.verifyCommandPack.commands.slice(0, 4).map((entry, index) => {
-                                                        const normalized = normalizeCommandText(entry.command);
-                                                        const isExecutingVerify = !!(
-                                                            executingCommand && normalizeCommandText(executingCommand) === normalized
-                                                        );
-                                                        return (
-                                                            <div key={`${entry.command}-${index}`} className="incident-doctor-fix-item">
-                                                                <code>{normalized}</code>
-                                                                <div className={`incident-command-scope incident-command-scope--${entry.scope}`}>
-                                                                    {entry.scope === 'project' ? 'Run in project root' : 'Run in workspace root'}
-                                                                    {entry.required ? ' · required' : ' · optional'}
-                                                                </div>
-                                                                <div className="incident-command-actions">
-                                                                    <button
-                                                                        type="button"
-                                                                        className="incident-btn"
-                                                                        onClick={() => copyCommand(normalized)}
-                                                                        disabled={isExecutingVerify}
-                                                                    >
-                                                                        {lastCopiedCommand === normalized ? 'Copied' : 'Copy'}
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        className="incident-btn primary"
-                                                                        onClick={() => runCommand(normalized)}
-                                                                        disabled={isExecutingVerify}
-                                                                    >
-                                                                        {isExecutingVerify ? 'Running' : 'Run'}
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            ) : null}
-                                            {chatBrainActionResult.verifyCommandPack.blockedReasons.length > 0 ? (
-                                                <p>
-                                                    Blocked reasons: {chatBrainActionResult.verifyCommandPack.blockedReasons.slice(0, 3).join(' | ')}
-                                                </p>
-                                            ) : null}
-                                            <div className="incident-command-actions">
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn primary"
-                                                    onClick={() => runVerifyCommandPack(chatBrainActionResult.verifyCommandPack!)}
-                                                >
-                                                    Run required verify commands
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.contractRuntimeEvidence ? (
-                                        <div className={`incident-rollback-evidence is-${chatBrainActionResult.contractRuntimeEvidence.errors.length > 0 ? 'failed' : chatBrainActionResult.contractRuntimeEvidence.warnings.length > 0 ? 'warning' : 'passed'}`}>
-                                            <strong>C06 contract runtime evidence</strong>
-                                            <p>
-                                                Source: {chatBrainActionResult.contractRuntimeEvidence.source}
-                                                {' · '}Loaded: {chatBrainActionResult.contractRuntimeEvidence.availableKinds.length}
-                                                {' · '}Missing: {chatBrainActionResult.contractRuntimeEvidence.missingKinds.length}
-                                            </p>
-                                            <p>
-                                                Errors: {chatBrainActionResult.contractRuntimeEvidence.errors.length}
-                                                {' · '}Warnings: {chatBrainActionResult.contractRuntimeEvidence.warnings.length}
-                                            </p>
-                                            {chatBrainActionResult.contractRuntimeEvidence.summary ? (
-                                                <p>{chatBrainActionResult.contractRuntimeEvidence.summary}</p>
-                                            ) : null}
-                                            {chatBrainActionResult.contractRuntimeEvidence.availableKinds.length > 0 ? (
-                                                <p>
-                                                    Available kinds: {chatBrainActionResult.contractRuntimeEvidence.availableKinds.slice(0, 3).join(', ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.contractRuntimeEvidence.missingKinds.length > 0 ? (
-                                                <p>
-                                                    Missing kinds: {chatBrainActionResult.contractRuntimeEvidence.missingKinds.slice(0, 3).join(', ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.contractRuntimeEvidence.errors.length > 0 ? (
-                                                <p>
-                                                    Contract errors: {chatBrainActionResult.contractRuntimeEvidence.errors.slice(0, 2).join(' | ')}
-                                                </p>
-                                            ) : null}
-                                            {chatBrainActionResult.contractRuntimeEvidence.warnings.length > 0 ? (
-                                                <p>
-                                                    Contract warnings: {chatBrainActionResult.contractRuntimeEvidence.warnings.slice(0, 2).join(' | ')}
-                                                </p>
-                                            ) : null}
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.rollback ? (() => {
-                                        const rollbackCriteria = evaluateArtifactSuccessCriteria({
-                                            kind: 'rollback',
-                                            status: chatBrainActionResult.rollback.status,
-                                            restoredFilesCount: chatBrainActionResult.rollback.restoredFiles.length,
-                                            failedFilesCount: chatBrainActionResult.rollback.failedFiles.length,
-                                        });
-                                        return (
-                                            <div className={`incident-rollback-evidence is-${rollbackCriteria.overallStatus === 'pass' ? 'passed' : rollbackCriteria.overallStatus === 'partial' ? 'warning' : chatBrainActionResult.rollback!.status}`}>
-                                                <strong>{rollbackCriteria.summaryLabel}</strong>
-                                                {rollbackCriteria.criteria.map((c) => (
-                                                    <p key={c.label}>
-                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
-                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
-                                                    </p>
-                                                ))}
-                                                {chatBrainActionResult.rollback!.reason ? (
-                                                    <p>{chatBrainActionResult.rollback!.reason}</p>
-                                                ) : null}
-                                                {chatBrainActionResult.rollback!.suggestedNextStep ? (
-                                                    <p>{chatBrainActionResult.rollback!.suggestedNextStep}</p>
-                                                ) : null}
-                                            </div>
-                                        );
-                                    })() : null}
-                                    {chatBrainActionResult.sandboxSimulation ? (() => {
-                                        const sim = chatBrainActionResult.sandboxSimulation!;
-                                        const sandboxCriteria = evaluateArtifactSuccessCriteria({
-                                            kind: 'sandbox',
-                                            status: sim.status,
-                                            safeToApply: sim.safeToApply,
-                                            commandCount: sim.commandResults.length,
-                                            failedCommandCount: sim.commandResults.filter((r) => r.exitCode !== 0).length,
-                                        });
-                                        return (
-                                            <div className={`incident-rollback-evidence is-${sandboxCriteria.overallStatus === 'pass' ? 'passed' : sandboxCriteria.overallStatus === 'partial' ? 'warning' : sim.status}`}>
-                                                <strong>{sandboxCriteria.summaryLabel}</strong>
-                                                {sandboxCriteria.criteria.map((c) => (
-                                                    <p key={c.label}>
-                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
-                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
-                                                    </p>
-                                                ))}
-                                                <p>Risk class: {sim.riskClass}</p>
-                                                {sim.reason ? <p>{sim.reason}</p> : null}
-                                                {sim.recommendedRollbackPath ? <p>{sim.recommendedRollbackPath}</p> : null}
-                                                <div className="incident-command-actions">
-                                                    <button
-                                                        type="button"
-                                                        className="incident-btn"
-                                                        onClick={() => {
-                                                            const sandboxSimulation = chatBrainActionResult.sandboxSimulation;
-                                                            if (sandboxSimulation) {
-                                                                onExportSandboxSimulationEvidence?.(sandboxSimulation);
-                                                            }
-                                                        }}
-                                                    >
-                                                        Export simulation evidence
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })() : null}
-                                    {chatBrainActionResult.incidentReproPack ? (() => {
-                                        const reproPack = chatBrainActionResult.incidentReproPack!;
-                                        const reproCriteria = evaluateArtifactSuccessCriteria({
-                                            kind: 'repro',
-                                            status: reproPack.status,
-                                            redactionApplied: reproPack.redaction.applied,
-                                            secretsLeakCount: 0,
-                                        });
-                                        return (
-                                            <div className={`incident-rollback-evidence is-${reproCriteria.overallStatus === 'pass' ? 'passed' : reproCriteria.overallStatus === 'partial' ? 'warning' : reproPack.status === 'captured' ? 'passed' : reproPack.status}`}>
-                                                <strong>{reproCriteria.summaryLabel}</strong>
-                                                {reproCriteria.criteria.map((c) => (
-                                                    <p key={c.label}>
-                                                        <span className={`incident-criteria-status is-${c.status}`}>{c.status.toUpperCase()}</span>
-                                                        {' '}{c.label}{c.detail ? ` — ${c.detail}` : ''}
-                                                    </p>
-                                                ))}
-                                                <p>Pack ID: {reproPack.packId}</p>
-                                                <p>
-                                                    Replay payload: {reproPack.replayPayload.verifyChecklist.length} verify checks
-                                                    {' · '}
-                                                    {reproPack.replayPayload.blockedReasons.length} blocked reasons
-                                                </p>
-                                                {reproPack.exportHint ? (
-                                                    <p>{reproPack.exportHint}</p>
-                                                ) : null}
-                                                <div className="incident-command-actions">
-                                                    <button
-                                                        type="button"
-                                                        className="incident-btn"
-                                                        onClick={() => {
-                                                            if (reproPack) {
-                                                                onExportIncidentReproPack?.(reproPack);
-                                                            }
-                                                        }}
-                                                    >
-                                                        Export redacted bundle
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="incident-btn"
-                                                        onClick={() => onImportIncidentReproPack?.()}
-                                                    >
-                                                        Import bundle and replay
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="incident-btn primary"
-                                                        onClick={() => {
-                                                            if (reproPack) {
-                                                                const replayQuery = buildReplayQueryFromIncidentReproPack(
-                                                                    reproPack
-                                                                );
-                                                                setLastUserQuery(replayQuery);
-                                                                onChatBrainQuery?.(replayQuery);
-                                                            }
-                                                        }}
-                                                    >
-                                                        Replay in Incident Studio
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })() : null}
-                                    {chatBrainActionResult.releaseReadinessCommander ? (
-                                        <div
-                                            className={`incident-rollback-evidence is-${chatBrainActionResult.releaseReadinessCommander.decision === 'go' ? 'passed' : 'failed'}`}
-                                        >
-                                            <strong>Release readiness commander</strong>
-                                            <p>
-                                                Decision: {chatBrainActionResult.releaseReadinessCommander.decision.toUpperCase()}
-                                                {' · Confidence: '}
-                                                {chatBrainActionResult.releaseReadinessCommander.confidence}%
-                                            </p>
-                                            <p>
-                                                Verify contract: {chatBrainActionResult.releaseReadinessCommander.evidence.verifyPackContractStatus}
-                                                {' · Sandbox: '}
-                                                {chatBrainActionResult.releaseReadinessCommander.evidence.sandboxStatus}
-                                            </p>
-                                            <p>
-                                                Scope known: {chatBrainActionResult.releaseReadinessCommander.evidence.scopeKnown ? 'yes' : 'no'}
-                                                {' · Verify path: '}
-                                                {chatBrainActionResult.releaseReadinessCommander.evidence.verifyPathPresent ? 'yes' : 'no'}
-                                                {' · Rollback path: '}
-                                                {chatBrainActionResult.releaseReadinessCommander.evidence.rollbackPathPresent ? 'yes' : 'no'}
-                                            </p>
-                                            {chatBrainActionResult.releaseReadinessCommander.blockingReasons.length > 0 ? (
-                                                <p>
-                                                    Blocking reasons:{' '}
-                                                    {chatBrainActionResult.releaseReadinessCommander.blockingReasons
-                                                        .slice(0, 4)
-                                                        .join(', ')}
-                                                </p>
-                                            ) : null}
-                                            <p>{chatBrainActionResult.releaseReadinessCommander.summary.goNoGoRationale}</p>
-                                            <p>{chatBrainActionResult.releaseReadinessCommander.summary.recommendedNextStep}</p>
-                                            <div className="incident-command-actions">
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn"
-                                                    onClick={() => {
-                                                        const artifact = chatBrainActionResult.releaseReadinessCommander;
-                                                        if (artifact) {
-                                                            onExportReleaseReadinessCommander?.(artifact);
-                                                        }
-                                                    }}
-                                                >
-                                                    Export Go/No-Go artifact
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ) : null}
-                                    {chatBrainActionResult.multiFilePatch ? (
-                                        <MultiFilePatchCard
-                                            patchResult={chatBrainActionResult.multiFilePatch}
-                                            onApplyPatch={onApplyPatch}
-                                        />
-                                    ) : null}
-                                </div>
-                            ) : null}
-
-                            {chatBrainError ? (
-                                <div className="incident-fallback-card">
-                                    <div className="incident-fallback-title">
-                                        <AlertTriangle size={13} />
-                                        <span>Chat Brain error</span>
-                                    </div>
-                                    <p>{chatBrainError}</p>
-                                    {lastUserQuery && chatBrainErrorRetryable ? (
-                                        <button
-                                            type="button"
-                                            className="incident-retry-btn"
-                                            onClick={() => onChatBrainQuery?.(lastUserQuery)}
-                                        >
-                                            ↻ Retry last query
-                                        </button>
-                                    ) : null}
-                                </div>
-                            ) : null}
-
-                            {!shouldAutoScrollThread && (recentConversationEntries.length > 0 || !!chatBrainStreamText) ? (
-                                <button
-                                    type="button"
-                                    className="incident-jump-latest"
-                                    onClick={jumpToLatest}
-                                >
-                                    <ChevronDown size={12} />
-                                    <span>Jump to latest</span>
-                                </button>
-                            ) : null}
-
-                        </div>
-                    </div>
-
-                    <div className="incident-chat-dock">
-                        <div className="incident-chat-actions-panel">
-                            <div className="incident-panel-heading incident-panel-heading--chat-actions">
-                                <Wrench size={13} />
-                                <span>Do this next</span>
-                            </div>
-                            <div className="incident-chat-actions-grid">
-                                {intentChips.length > 0 ? (
-                                    <div className="incident-chat-quick-actions" role="group" aria-label="Suggested next actions">
-                                        {intentChips.slice(0, activeUserMode === 'guided' ? 3 : 4).map((chip) => (
-                                            <button
-                                                key={chip.id}
-                                                type="button"
-                                                className={`incident-chat-quick-action${chip.isPrimary ? ' is-primary' : ''}`}
-                                                onClick={() => handleIntentChipSelect(chip)}
-                                                title={chip.detail}
-                                            >
-                                                <strong>{chip.label}</strong>
-                                                <small>{chip.detail}</small>
-                                            </button>
-                                        ))}
-                                    </div>
-                                ) : null}
-
-                                {chatBrainBoard ? (
-                                    <div className="incident-patch-option incident-patch-option--chat" role="group" aria-label="Chat Brain action board">
-                                        <strong>{chatBrainBoard.title}</strong>
-                                        <span>{chatBrainBoard.summary || 'Pick one action to continue in this Studio.'}</span>
-                                        {primaryBoardAction && primaryCtaMode === 'single' ? (
-                                            <div className="incident-primary-action-card incident-primary-action-card--chat" role="group" aria-label="Primary next action">
-                                                <div className="incident-primary-action-head">Do This Next</div>
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn primary incident-action-btn"
-                                                    onClick={() => onChatBrainExecuteAction?.(primaryBoardAction.actionType, primaryBoardAction.id)}
-                                                >
-                                                    <span>{primaryBoardAction.label}</span>
-                                                    {primaryBoardAction.riskLevel ? (
-                                                        <span className={`incident-risk-badge incident-risk-badge--${riskTone(primaryBoardAction.riskLevel)}`}>
-                                                            <span>{primaryBoardAction.riskLevel}</span>
-                                                        </span>
-                                                    ) : null}
-                                                </button>
-                                                <p className="incident-primary-action-hint">
-                                                    {actionExecutionHint(primaryBoardAction.actionType)}
-                                                    {primaryBoardGuardHint ? ` ${primaryBoardGuardHint}` : ''}
-                                                </p>
-                                            </div>
-                                        ) : null}
-                                        {boardGuardHint ? (
-                                            <div className="incident-onboarding-note">
-                                                <ShieldCheck size={11} />
-                                                {boardGuardHint}
-                                            </div>
-                                        ) : null}
-                                        {(primaryCtaMode === 'single' ? secondaryBoardActions : modeVisibleBoardActions).length > 0 ? (
-                                            <div className="incident-board-actions incident-board-actions--chat">
-                                                {(primaryCtaMode === 'single' ? secondaryBoardActions : modeVisibleBoardActions).map((action) => {
-                                                    const tone = riskTone(action.riskLevel);
-                                                    return (
-                                                        <button
-                                                            key={action.id}
-                                                            type="button"
-                                                            className={`incident-btn incident-action-btn incident-action-btn--chat${primaryCtaMode === 'multi' ? ' primary' : ''}`}
-                                                            onClick={() => onChatBrainExecuteAction?.(action.actionType, action.id)}
-                                                        >
-                                                            <span>{action.label}</span>
-                                                            {action.riskLevel ? (
-                                                                <span className={`incident-risk-badge incident-risk-badge--${tone}`}>
-                                                                    {tone === 'critical' || tone === 'high' ? <AlertTriangle size={10} /> : null}
-                                                                    {tone === 'medium' ? <BarChart3 size={10} /> : null}
-                                                                    {tone === 'low' ? <ShieldCheck size={10} /> : null}
-                                                                    {tone === 'unknown' ? <Activity size={10} /> : null}
-                                                                    <span>{action.riskLevel}</span>
-                                                                </span>
-                                                            ) : null}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                ) : latestStructuredResponse?.nextCommand || latestStructuredResponse?.verifyCommand ? (
-                                    <div className="incident-patch-option incident-patch-option--chat" role="group" aria-label="Actions derived from latest answer">
-                                        <strong>Derived from latest answer</strong>
-                                        <span>The assistant already named the next step. You can run it from here.</span>
-                                        <div className="incident-board-actions incident-board-actions--chat">
-                                            {latestStructuredResponse?.nextCommand ? (
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn primary incident-action-btn incident-action-btn--chat"
-                                                    onClick={() => runCommand(latestStructuredResponse.nextCommand!)}
-                                                >
-                                                    <span>Run next command</span>
-                                                </button>
-                                            ) : null}
-                                            {latestStructuredResponse?.verifyCommand ? (
-                                                <button
-                                                    type="button"
-                                                    className="incident-btn incident-action-btn incident-action-btn--chat"
-                                                    onClick={() => runCommand(latestStructuredResponse.verifyCommand!)}
-                                                >
-                                                    <span>Run verify command</span>
-                                                </button>
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="incident-fallback-action-grid incident-fallback-action-grid--chat">
-                                        <button
-                                            type="button"
-                                            className="incident-btn primary incident-action-btn incident-action-btn--chat"
-                                            onClick={() => runStudioAction('terminal-bridge', onRunTerminalBridge)}
-                                        >
-                                            Inspect logs and runtime
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="incident-btn incident-action-btn incident-action-btn--chat"
-                                            onClick={() => runStudioAction('fix-preview-lite', _onRunFixPreview)}
-                                        >
-                                            Preview a safe fix
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="incident-btn incident-action-btn incident-action-btn--chat"
-                                            onClick={() => runStudioAction('change-impact-lite', _onRunChangeImpact)}
-                                        >
-                                            Check blast radius
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="incident-btn incident-action-btn incident-action-btn--chat"
-                                            onClick={() => runStudioAction('workspace-memory-wizard', _onRunMemoryWizard)}
-                                        >
-                                            Save this pattern
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="incident-input-area incident-input-area--sidebar">
-                            <form className="incident-command-input-form" onSubmit={handleChatSubmit}>
-                                <input
-                                    type="text"
-                                    className="incident-command-input"
-                                    placeholder="Describe the problem or next change…"
-                                    value={commandInput}
-                                    onChange={(e) => setCommandInput(e.target.value)}
-                                    autoComplete="off"
-                                    disabled={isAnalyzing}
-                                />
-                                <button
-                                    type="submit"
-                                    className="incident-command-submit"
-                                    disabled={!commandInput.trim() || isAnalyzing}
-                                    aria-label="Send"
-                                >
-                                    <Send size={12} />
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                </aside>
-            </div> : null}
         </section>
     );
 }

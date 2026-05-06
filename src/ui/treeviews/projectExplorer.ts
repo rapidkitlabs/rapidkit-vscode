@@ -496,8 +496,8 @@ export class ProjectTreeItem extends vscode.TreeItem {
 
     // === Project Item (not running) ===
     if (contextValue === 'project' && project) {
-      this.tooltip = `${project.path}\n\n▶️ Click Play to start dev server${isSelected ? '\n\n✓ Currently selected for module operations' : ''}`;
-      this.description = `${projectBadgeLabel(project)} 🟡${isSelected ? ' ✓' : ''}`;
+      this.tooltip = `${project.path}\n\nClick Play to start dev server${isSelected ? '\n\nSelected for module operations' : ''}`;
+      this.description = `${projectBadgeLabel(project)} [Ready]${isSelected ? ' [Selected]' : ''}`;
 
       // Use custom framework icons
       if (extensionPath) {
@@ -545,14 +545,20 @@ export class ProjectTreeItem extends vscode.TreeItem {
       this.command = {
         command: 'workspai.selectProject',
         title: 'Select Project',
-        arguments: [this],
+        arguments: [
+          {
+            project: {
+              ...project,
+            },
+          },
+        ],
       };
     }
     // === Project Item (running) ===
     else if (contextValue === 'project-running' && project) {
       const portInfo = runningPort ? ` on port ${runningPort}` : '';
-      this.tooltip = `${project.path}\n\n🚀 Server running${portInfo}! Click Stop to terminate${isSelected ? '\n\n✓ Currently selected for module operations' : ''}`;
-      this.description = `${projectBadgeLabel(project)} 🟢${isSelected ? ' ✓' : ''}${runningPort ? ` :${runningPort}` : ''}`;
+      this.tooltip = `${project.path}\n\nServer running${portInfo}. Click Stop to terminate${isSelected ? '\n\nSelected for module operations' : ''}`;
+      this.description = `${projectBadgeLabel(project)} [Running]${isSelected ? ' [Selected]' : ''}${runningPort ? ` :${runningPort}` : ''}`;
 
       // Use custom framework icons with running indicator
       if (extensionPath) {
@@ -583,7 +589,13 @@ export class ProjectTreeItem extends vscode.TreeItem {
       this.command = {
         command: 'workspai.selectProject',
         title: 'Select Project',
-        arguments: [this],
+        arguments: [
+          {
+            project: {
+              ...project,
+            },
+          },
+        ],
       };
     }
     // === Folder Item ===

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-05-06
+
+### Added
+
+- **AI-first dashboard spotlighting** - added compact AI Features cards, a featured Incident Studio entry point, a Quick Links "build with AI" cue, and editor quick-fixes README coverage with screenshot 8.
+- **Project kit recovery affordance** - added an on-demand kit retry path when the project modal opens before available kits have loaded.
+
+### Changed
+
+- **Incident Studio control-surface polish** - reworked header controls, mode/view layout, maximize behavior, active-scope presentation, and removed the redundant project/workspace context bar.
+- **Navigation and setup affordances** - updated dashboard/Incident Studio tabs, setup entry points, and scope syncing between host and webview so users land in the right surface with the right context.
+- **README and product messaging refresh** - streamlined README copy, aligned screenshots 1-8, and reinforced backend AI workflow positioning including Spring Boot support.
+
+### Fixed
+
+- **Project Explorer add-module routing** - fixed right-click add-module payload serialization so project actions no longer fail on circular command arguments.
+- **Analyze/test visual ambiguity** - separated Analyze visuals from Run Tests with AI-themed icons and corrected tab/button alignment regressions.
+- **Incident Studio state and first-open races** - fixed stale scope synchronization, first-open kit loading gaps, and the header regression introduced during layout compaction.
+
 ## [0.24.0] - 2026-05-05
 
 ### Added
@@ -1674,7 +1693,9 @@ Thank you for using RapidKit! 🚀
 
 ---
 
-[Unreleased]: https://github.com/getrapidkit/rapidkit-vscode/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/getrapidkit/rapidkit-vscode/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.24.1
+[0.24.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.24.0
 [0.18.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.18.0
 [0.12.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.12.0
 [0.6.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.6.1

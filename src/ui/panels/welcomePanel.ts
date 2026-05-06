@@ -138,7 +138,10 @@ type IncidentWorkspaceGraphSnapshot = {
 export class WelcomePanel {
   private static readonly UI_PREFS_KEY = 'rapidkit.welcome.uiPreferences';
   public static currentPanel: WelcomePanel | undefined;
+  private static _dashboardPanel: WelcomePanel | undefined;
+  private static _incidentPanel: WelcomePanel | undefined;
   private readonly _panel: vscode.WebviewPanel;
+  private readonly _panelRole: 'dashboard' | 'incident';
   private _disposables: vscode.Disposable[] = [];
   private _aiQueryTokenSource?: vscode.CancellationTokenSource;
   private _activeAIQueryRequestId?: number;
@@ -195,9 +198,11 @@ export class WelcomePanel {
     context: vscode.ExtensionContext,
     framework: 'fastapi' | 'nestjs' | 'go' | 'springboot'
   ): void {
-    // If the panel is already open and ready, post immediately.
-    if (WelcomePanel.currentPanel?._isReady) {
-      WelcomePanel.currentPanel._panel.webview.postMessage({
+    // Dashboard-scoped modal: always target dashboard panel if available.
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
         command: 'openProjectModal',
         data: { framework },
       });
@@ -220,8 +225,10 @@ export class WelcomePanel {
     if (!context) {
       return;
     }
-    if (WelcomePanel.currentPanel?._isReady) {
-      WelcomePanel.currentPanel._panel.webview.postMessage({
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
         command: 'openModuleInstallModal',
         data: moduleData,
       });
@@ -239,8 +246,10 @@ export class WelcomePanel {
     aiContext: import('../../core/aiService').AIModalContext
   ): void {
     WelcomePanel._extensionContext = context;
-    if (WelcomePanel.currentPanel?._isReady) {
-      WelcomePanel.currentPanel._panel.webview.postMessage({
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
         command: 'openAIModal',
         data: aiContext,
       });
@@ -251,8 +260,10 @@ export class WelcomePanel {
   }
 
   public static openWorkspaceModal(context: vscode.ExtensionContext): void {
-    if (WelcomePanel.currentPanel?._isReady) {
-      WelcomePanel.currentPanel._panel.webview.postMessage({ command: 'openWorkspaceModal' });
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({ command: 'openWorkspaceModal' });
       return;
     }
     WelcomePanel._pendingModal = '__workspace__';
@@ -268,10 +279,12 @@ export class WelcomePanel {
     mode: 'workspace' | 'project' = 'workspace'
   ): void {
     WelcomePanel._pendingAICreateMode = mode;
-    if (WelcomePanel.currentPanel?._isReady) {
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
       const selectedWs =
         mode === 'project' ? WelcomePanel._workspaceExplorer?.getSelectedWorkspace() : undefined;
-      WelcomePanel.currentPanel._panel.webview.postMessage({
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
         command: 'openAICreateModal',
         data: {
           mode,
@@ -301,8 +314,20 @@ export class WelcomePanel {
       preferredArchitectureLensView?: 'tree' | 'dependency' | 'runtime';
     }
   ): void {
-    if (WelcomePanel.currentPanel?._isReady) {
-      WelcomePanel.currentPanel._panel.webview.postMessage({
+    if (WelcomePanel._incidentPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._incidentPanel;
+      WelcomePanel._incidentPanel._panel.reveal();
+      WelcomePanel._incidentPanel._panel.webview.postMessage({
+        command: 'openIncidentStudio',
+        data,
+      });
+      return;
+    }
+
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
         command: 'openIncidentStudio',
         data,
       });
@@ -310,6 +335,65 @@ export class WelcomePanel {
     }
     WelcomePanel._pendingIncidentStudioOpen = data;
     WelcomePanel.createOrShow(context);
+  }
+
+  /**
+   * Open Incident Studio in a dedicated tab, keeping the current dashboard tab available.
+   */
+  public static openIncidentStudioInNewTab(
+    context: vscode.ExtensionContext,
+    data: {
+      workspacePath: string;
+      workspaceName?: string;
+      projectPath?: string;
+      projectName?: string;
+      projectType?: string;
+      initialQuery?: string;
+      preferredDisplayMode?: 'lite' | 'full';
+      preferredArchitectureLensView?: 'tree' | 'dependency' | 'runtime';
+    }
+  ): void {
+    if (WelcomePanel._incidentPanel) {
+      WelcomePanel.currentPanel = WelcomePanel._incidentPanel;
+      WelcomePanel._incidentPanel._panel.reveal();
+
+      if (WelcomePanel._incidentPanel._isReady) {
+        WelcomePanel._incidentPanel._panel.webview.postMessage({
+          command: 'openIncidentStudio',
+          data,
+        });
+      } else {
+        WelcomePanel._pendingIncidentStudioOpen = data;
+      }
+      return;
+    }
+
+    WelcomePanel._pendingIncidentStudioOpen = data;
+    WelcomePanel.createOrShow(context, {
+      forceNew: true,
+      title: 'Workspai Incident Studio',
+      viewColumn: vscode.ViewColumn.Active,
+    });
+  }
+
+  /**
+   * Focus dashboard tab if already open; otherwise open a new dashboard tab.
+   */
+  public static openDashboardTab(context: vscode.ExtensionContext): void {
+    if (WelcomePanel._dashboardPanel) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
+        command: 'setActiveView',
+        data: { view: 'dashboard' },
+      });
+      return;
+    }
+
+    WelcomePanel.createOrShow(context, {
+      title: 'Workspai Dashboard',
+      viewColumn: vscode.ViewColumn.Active,
+    });
   }
 
   /**
@@ -335,8 +419,10 @@ export class WelcomePanel {
       };
     }
   ): void {
-    if (WelcomePanel.currentPanel?._isReady) {
-      WelcomePanel.currentPanel._panel.webview.postMessage({
+    if (WelcomePanel._dashboardPanel?._isReady) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      WelcomePanel._dashboardPanel._panel.webview.postMessage({
         command: 'openWorkspaceShareDashboard',
         data,
       });
@@ -360,7 +446,14 @@ export class WelcomePanel {
   /**
    * Called from extension.ts when user selects a project in the sidebar tree view
    */
-  public static async updateWithProject(projectPath: string, projectName: string) {
+  public static async updateWithProject(
+    projectPath: string,
+    projectName: string,
+    options?: {
+      workspacePath?: string;
+      workspaceName?: string;
+    }
+  ) {
     console.log('[WelcomePanel] updateWithProject called:', projectName, projectPath);
 
     const selectionVersion = WelcomePanel._projectSelectionSequence.begin();
@@ -375,6 +468,48 @@ export class WelcomePanel {
       path: projectPath,
       type: projectType ?? undefined,
     };
+
+    const selectedWorkspace = WelcomePanel._workspaceExplorer?.getSelectedWorkspace();
+    const explicitWorkspacePath =
+      typeof options?.workspacePath === 'string' && options.workspacePath.trim().length > 0
+        ? options.workspacePath.trim()
+        : undefined;
+    const explicitWorkspaceName =
+      typeof options?.workspaceName === 'string' && options.workspaceName.trim().length > 0
+        ? options.workspaceName.trim()
+        : undefined;
+
+    let resolvedWorkspacePath: string | undefined;
+    let resolvedWorkspaceName: string | undefined;
+
+    if (explicitWorkspacePath && isWorkspacePathAncestor(explicitWorkspacePath, projectPath)) {
+      resolvedWorkspacePath = explicitWorkspacePath;
+      resolvedWorkspaceName = explicitWorkspaceName;
+    }
+
+    if (
+      !resolvedWorkspacePath &&
+      selectedWorkspace?.path &&
+      isWorkspacePathAncestor(selectedWorkspace.path, projectPath)
+    ) {
+      resolvedWorkspacePath = selectedWorkspace.path;
+      resolvedWorkspaceName = selectedWorkspace.name;
+    }
+
+    if (!resolvedWorkspacePath) {
+      const parent = path.dirname(projectPath);
+      if (parent && parent !== projectPath) {
+        resolvedWorkspacePath = parent;
+        resolvedWorkspaceName = path.basename(parent);
+      }
+    }
+
+    if (!resolvedWorkspaceName && resolvedWorkspacePath) {
+      resolvedWorkspaceName =
+        (selectedWorkspace?.path === resolvedWorkspacePath ? selectedWorkspace.name : undefined) ||
+        explicitWorkspaceName ||
+        path.basename(resolvedWorkspacePath);
+    }
 
     if (WelcomePanel.currentPanel) {
       const currentPanel = WelcomePanel.currentPanel;
@@ -407,8 +542,8 @@ export class WelcomePanel {
         data: {
           hasWorkspace: true,
           hasProjectSelected: true,
-          workspaceName: projectName,
-          workspacePath: projectPath,
+          workspaceName: resolvedWorkspaceName,
+          workspacePath: resolvedWorkspacePath,
           projectName,
           projectPath,
           projectType: projectType ?? undefined,
@@ -569,8 +704,13 @@ export class WelcomePanel {
       this._sendIncidentStudioTelemetry(explicitWorkspacePath),
   });
 
-  private constructor(panel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
+  private constructor(
+    panel: vscode.WebviewPanel,
+    context: vscode.ExtensionContext,
+    panelRole: 'dashboard' | 'incident' = 'dashboard'
+  ) {
     this._panel = panel;
+    this._panelRole = panelRole;
     this._context = context;
 
     this._registerDoctorEvidenceWatcher();
@@ -716,6 +856,51 @@ export class WelcomePanel {
           case 'openSetup':
             await vscode.commands.executeCommand('workspai.openSetup');
             break;
+          case 'openDashboardTab':
+            WelcomePanel.openDashboardTab(this._context);
+            break;
+          case 'openIncidentStudioTab': {
+            const selectedWorkspace = WelcomePanel._workspaceExplorer?.getSelectedWorkspace();
+            const workspacePath =
+              (typeof message.data?.workspacePath === 'string' && message.data.workspacePath) ||
+              (typeof selectedWorkspace?.path === 'string' ? selectedWorkspace.path : undefined);
+
+            if (!workspacePath) {
+              vscode.window.showWarningMessage('Select or open a workspace first.');
+              break;
+            }
+
+            WelcomePanel.openIncidentStudioInNewTab(this._context, {
+              workspacePath,
+              workspaceName:
+                (typeof message.data?.workspaceName === 'string' && message.data.workspaceName) ||
+                (typeof selectedWorkspace?.name === 'string' ? selectedWorkspace.name : undefined),
+              projectPath:
+                typeof message.data?.projectPath === 'string'
+                  ? message.data.projectPath
+                  : undefined,
+              projectName:
+                typeof message.data?.projectName === 'string'
+                  ? message.data.projectName
+                  : undefined,
+              projectType:
+                typeof message.data?.projectType === 'string'
+                  ? message.data.projectType
+                  : undefined,
+              preferredDisplayMode:
+                message.data?.preferredDisplayMode === 'lite' ||
+                message.data?.preferredDisplayMode === 'full'
+                  ? message.data.preferredDisplayMode
+                  : 'full',
+              preferredArchitectureLensView:
+                message.data?.preferredArchitectureLensView === 'tree' ||
+                message.data?.preferredArchitectureLensView === 'dependency' ||
+                message.data?.preferredArchitectureLensView === 'runtime'
+                  ? message.data.preferredArchitectureLensView
+                  : undefined,
+            });
+            break;
+          }
           case 'debugWithAI':
             await vscode.commands.executeCommand('workspai.debugWithAI');
             break;
@@ -1271,6 +1456,9 @@ No markdown, no explanation outside the JSON.`;
             break;
           case 'requestWorkspaceToolStatus':
             await this._sendWorkspaceToolStatus();
+            break;
+          case 'requestAvailableKits':
+            await this._sendAvailableKits();
             break;
           case 'requestIncidentStudioTelemetry':
             await this._sendIncidentStudioTelemetry(
@@ -1867,18 +2055,33 @@ No markdown, no explanation outside the JSON.`;
     this._disposables.push(watcher);
   }
 
-  public static createOrShow(context: vscode.ExtensionContext) {
+  public static createOrShow(
+    context: vscode.ExtensionContext,
+    options?: {
+      forceNew?: boolean;
+      title?: string;
+      viewColumn?: vscode.ViewColumn;
+    }
+  ) {
+    const targetDashboard = !options?.forceNew;
+
     // If panel exists, show it
-    if (WelcomePanel.currentPanel) {
-      WelcomePanel.currentPanel._panel.reveal();
+    if (targetDashboard && WelcomePanel._dashboardPanel) {
+      WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      WelcomePanel._dashboardPanel._panel.reveal();
+      return;
+    }
+    if (!targetDashboard && WelcomePanel._incidentPanel) {
+      WelcomePanel.currentPanel = WelcomePanel._incidentPanel;
+      WelcomePanel._incidentPanel._panel.reveal();
       return;
     }
 
     // Create new panel
     const panel = vscode.window.createWebviewPanel(
       'rapidkitWelcomeReact',
-      'Workspai Dashboard',
-      vscode.ViewColumn.One,
+      options?.title ?? 'Workspai Dashboard',
+      options?.viewColumn ?? vscode.ViewColumn.One,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -1891,7 +2094,17 @@ No markdown, no explanation outside the JSON.`;
 
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icons', 'workspai.svg');
 
-    WelcomePanel.currentPanel = new WelcomePanel(panel, context);
+    const panelRole: 'dashboard' | 'incident' = options?.forceNew ? 'incident' : 'dashboard';
+    const createdPanel = new WelcomePanel(panel, context, panelRole);
+
+    if (panelRole === 'dashboard') {
+      WelcomePanel._dashboardPanel = createdPanel;
+      WelcomePanel.currentPanel = createdPanel;
+      return;
+    }
+
+    WelcomePanel._incidentPanel = createdPanel;
+    WelcomePanel.currentPanel = createdPanel;
   }
 
   private _sendInitialData() {
@@ -5624,9 +5837,22 @@ No markdown, no explanation outside the JSON.`;
       (entry) => entry.required
     ).length;
     const hasImpactScope = wave2Contracts.impactAssessment.affectedFiles.length > 0;
-    const hasRollbackPlan = Boolean(
-      rollbackEvidence?.suggestedNextStep || sandboxEvidence?.recommendedRollbackPath
-    );
+    // Derive rollback plan: prefer explicit post-execution evidence (rollback step or
+    // sandbox simulation), but fall back to a git-revert suggestion from the impact
+    // assessment so mutating actions are not blocked on the very first run when no
+    // rollback or sandbox has been executed yet.
+    const rollbackAffectedFiles = wave2Contracts.impactAssessment.affectedFiles;
+    const derivedRollbackPlan =
+      rollbackEvidence?.suggestedNextStep ||
+      sandboxEvidence?.recommendedRollbackPath ||
+      (rollbackAffectedFiles.length > 0
+        ? rollbackAffectedFiles.length <= 12
+          ? `git checkout -- ${rollbackAffectedFiles
+              .map((filePath) => `"${filePath.replace(/"/g, '\\"')}"`)
+              .join(' ')}`
+          : 'git checkout -- .'
+        : undefined);
+    const hasRollbackPlan = Boolean(derivedRollbackPlan);
     if (!decisionClaritySituation) {
       decisionClarityMissingFields.push('situation');
     }
@@ -5723,10 +5949,7 @@ No markdown, no explanation outside the JSON.`;
         decisionClarityVerifyPlan.length > 0
           ? decisionClarityVerifyPlan
           : wave2Contracts.impactAssessment.verifyChecklist,
-      rollbackPlan:
-        rollbackEvidence?.suggestedNextStep ||
-        sandboxEvidence?.recommendedRollbackPath ||
-        undefined,
+      rollbackPlan: derivedRollbackPlan,
       evidenceLinks: decisionClarityEvidenceLinks,
       requiredMissingFields: decisionClarityMissingFields,
       mutationReady:
@@ -7989,7 +8212,21 @@ No markdown, no explanation outside the JSON.`;
   }
 
   public dispose() {
-    WelcomePanel.currentPanel = undefined;
+    if (WelcomePanel.currentPanel === this) {
+      if (this._panelRole === 'incident' && WelcomePanel._dashboardPanel) {
+        WelcomePanel.currentPanel = WelcomePanel._dashboardPanel;
+      } else if (this._panelRole === 'dashboard' && WelcomePanel._incidentPanel) {
+        WelcomePanel.currentPanel = WelcomePanel._incidentPanel;
+      } else {
+        WelcomePanel.currentPanel = undefined;
+      }
+    }
+    if (this._panelRole === 'dashboard' && WelcomePanel._dashboardPanel === this) {
+      WelcomePanel._dashboardPanel = undefined;
+    }
+    if (this._panelRole === 'incident' && WelcomePanel._incidentPanel === this) {
+      WelcomePanel._incidentPanel = undefined;
+    }
 
     this._aiQueryTokenSource?.cancel();
     this._aiQueryTokenSource?.dispose();

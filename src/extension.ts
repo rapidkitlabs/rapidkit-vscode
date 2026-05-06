@@ -366,7 +366,7 @@ export async function activate(context: vscode.ExtensionContext) {
             ? `Analyze project ${projectFromItem.name} in this workspace. Treat this as a project-scoped launch/readiness task. First identify the current delivery stage, then the exact next command to reach a runnable service, then verification.`
             : undefined;
 
-        WelcomePanel.openIncidentStudio(context, {
+        WelcomePanel.openIncidentStudioInNewTab(context, {
           workspacePath,
           workspaceName,
           projectPath:

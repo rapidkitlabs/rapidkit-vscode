@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { MessageSquarePlus } from 'lucide-react';
+import { MessageSquarePlus, Sparkles } from 'lucide-react';
 
 interface QuickLinksProps {
     onOpenProjectModal: (framework: 'fastapi' | 'nestjs' | 'go' | 'springboot', kitName?: string) => void;
 }
 
-const POLL_OPTIONS = ['Django', 'Express'] as const;
+const POLL_OPTIONS = ['Django', 'Express', 'Ruby on Rails', 'Laravel'] as const;
 
 export function QuickLinks({ onOpenProjectModal }: QuickLinksProps) {
     const [voted, setVoted] = useState<string | null>(null);
@@ -57,6 +57,10 @@ export function QuickLinks({ onOpenProjectModal }: QuickLinksProps) {
             <div className="quick-links-header">
                 <span className="quick-links-label">Start a Project</span>
                 <span className="quick-links-hint">choose your framework</span>
+                <span className="quick-links-ai-hint">
+                    <Sparkles size={9} />
+                    build with AI
+                </span>
             </div>
             <div className="quick-links" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
                 {links.map((link) => (

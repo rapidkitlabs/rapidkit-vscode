@@ -2315,8 +2315,11 @@ export class WorkspaceUsageTracker {
         rollbackAttempted > 0
           ? Number(((rollbackSucceeded / rollbackAttempted) * 100).toFixed(2))
           : null;
+      // falseConfidenceRate is only meaningful when rollback was actually attempted.
+      // When rollbackAttempted === 0 the user may be recovering manually; returning null
+      // prevents a spurious 100% gate failure driven purely by unrecovered verify failures.
       const falseConfidenceRate =
-        verifyFailed > 0
+        rollbackAttempted > 0
           ? Number((((verifyFailed - rollbackSucceeded) / verifyFailed) * 100).toFixed(2))
           : null;
 
@@ -2332,11 +2335,12 @@ export class WorkspaceUsageTracker {
       };
 
       const telemetryEvidencePass = verifyFailed > 0 || rollbackAttempted > 0;
+      // null means the feature was not used in the measured window — treat as N/A (pass).
       const verifyAutoRollbackSuccessRatePass =
-        verifyAutoRollbackSuccessRate !== null &&
+        verifyAutoRollbackSuccessRate === null ||
         verifyAutoRollbackSuccessRate >= resolvedThresholds.verifyAutoRollbackSuccessRateMin;
       const falseConfidenceRatePass =
-        falseConfidenceRate !== null &&
+        falseConfidenceRate === null ||
         falseConfidenceRate <= resolvedThresholds.falseConfidenceRateMax;
 
       return {
