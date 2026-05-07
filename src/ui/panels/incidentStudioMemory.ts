@@ -306,3 +306,48 @@ export function buildIncidentMemoryEnrichmentSuggestion(
     primaryActionLabel: 'Capture workspace memory now',
   };
 }
+
+// ---------------------------------------------------------------------------
+// Repeated incident detection — fires when similarity score exceeds threshold
+// ---------------------------------------------------------------------------
+
+export type IncidentRepeatSignal = {
+  isRepeated: boolean;
+  repeatScore: number;
+  matchedDecision: string | null;
+  recommendMemoryReuse: boolean;
+};
+
+const REPEAT_SCORE_THRESHOLD = 65;
+
+export function detectRepeatedIncident(input: {
+  decisions?: string[];
+  queryText?: string;
+  actionType?: string;
+}): IncidentRepeatSignal {
+  const ranked = rankSimilarIncidentDecisions({
+    decisions: input.decisions,
+    queryText: input.queryText,
+    actionType: input.actionType,
+    maxItems: 1,
+  });
+
+  if (ranked.length === 0) {
+    return {
+      isRepeated: false,
+      repeatScore: 0,
+      matchedDecision: null,
+      recommendMemoryReuse: false,
+    };
+  }
+
+  const top = ranked[0];
+  const isRepeated = top.score >= REPEAT_SCORE_THRESHOLD;
+
+  return {
+    isRepeated,
+    repeatScore: top.score,
+    matchedDecision: isRepeated ? top.decision : null,
+    recommendMemoryReuse: isRepeated,
+  };
+}

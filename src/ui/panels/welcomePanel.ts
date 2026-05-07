@@ -65,20 +65,43 @@ import {
   buildIncidentMemoryEnrichmentSuggestion,
   buildIncidentMemoryPromptHint,
   buildIncidentMemoryReuseSnapshot,
+  detectRepeatedIncident,
   mergeIncidentReplayLearningIntoMemory,
   prependIncidentMemoryReuseBlock,
   shouldAttachIncidentMemoryReuse,
 } from './incidentStudioMemory';
 import {
+  assessVerifyCompleteness,
   buildIncidentFirstResponseRules,
   classifyIncidentActionPolicy,
   isIncidentActionAllowlisted,
+  labelDiagnosisConfidence,
 } from './incidentStudioPromptPolicy';
 import {
   buildIncidentReplayQuery,
   buildLinkSafeExportBundle,
   parseImportedReproBundle,
 } from './incidentReproPackUtils';
+
+type RoutingResult = {
+  actionType:
+    | 'terminal-bridge'
+    | 'change-impact-lite'
+    | 'fix-preview-lite'
+    | 'verify-pack-autopilot'
+    | 'workspace-memory-wizard'
+    | 'doctor-fix'
+    | 'recipe-pack'
+    | 'incident-repro-pack'
+    | 'release-readiness-commander'
+    | 'orchestrate';
+  fallbackReason:
+    | 'success'
+    | 'terminal_bridge_fallback'
+    | 'fix_preview_fallback'
+    | 'bare_keyword_only'
+    | 'orchestrate_default';
+};
 
 type IncidentWorkspaceGraphSnapshot = {
   snapshotVersion: 'v1';
@@ -668,6 +691,7 @@ export class WelcomePanel {
       queryCount: number;
       actionCount: number;
       verifyPassedAt?: number;
+      repeatedIncidentDetected?: boolean;
       framework?: string;
       importedIncidentReplay?: {
         packId: string;
@@ -1932,6 +1956,9 @@ No markdown, no explanation outside the JSON.`;
                       actionType: 'inline-command',
                       command: inlineCommand.slice(0, 180),
                       exitCode: result.exitCode,
+                      verifyRequired: true,
+                      verifyPathPresent: success,
+                      verifyPathReason: success ? 'command_success' : 'command_failed',
                     }
                   );
 
@@ -1957,6 +1984,9 @@ No markdown, no explanation outside the JSON.`;
                     actionType: 'inline-command',
                     command: inlineCommand.slice(0, 180),
                     error: String(errorMsg).slice(0, 180),
+                    verifyRequired: true,
+                    verifyPathPresent: false,
+                    verifyPathReason: 'command_exception',
                   });
                   this._panel.webview.postMessage({
                     command: 'runIncidentInlineCommandDone',
@@ -2543,6 +2573,7 @@ No markdown, no explanation outside the JSON.`;
       history: [] as Array<{ role: 'user' | 'assistant'; content: string }>,
       queryCount: 0,
       actionCount: 0,
+      repeatedIncidentDetected: false,
       framework,
       importedIncidentReplay: undefined,
     };
@@ -2690,20 +2721,10 @@ No markdown, no explanation outside the JSON.`;
       });
   }
 
-  private _routeActionTypeFromMessage(
-    message: string
-  ):
-    | 'terminal-bridge'
-    | 'change-impact-lite'
-    | 'fix-preview-lite'
-    | 'verify-pack-autopilot'
-    | 'workspace-memory-wizard'
-    | 'doctor-fix'
-    | 'recipe-pack'
-    | 'incident-repro-pack'
-    | 'release-readiness-commander'
-    | 'orchestrate' {
+  private _routeActionTypeFromMessage(message: string): RoutingResult {
     const normalized = message.toLowerCase();
+
+    // Specific routes (high priority, no fallback)
     if (
       normalized.includes('release readiness') ||
       normalized.includes('go/no-go') ||
@@ -2712,7 +2733,7 @@ No markdown, no explanation outside the JSON.`;
       normalized.includes('release gate') ||
       normalized.includes('commander artifact')
     ) {
-      return 'release-readiness-commander';
+      return { actionType: 'release-readiness-commander', fallbackReason: 'success' };
     }
     if (
       normalized.includes('verify pack') ||
@@ -2721,27 +2742,7 @@ No markdown, no explanation outside the JSON.`;
       normalized.includes('verify checklist') ||
       normalized.includes('deterministic verify')
     ) {
-      return 'verify-pack-autopilot';
-    }
-    if (
-      normalized.includes('error') ||
-      normalized.includes('terminal') ||
-      normalized.includes('timeout')
-    ) {
-      return 'terminal-bridge';
-    }
-    if (normalized.includes('impact') || normalized.includes('risk')) {
-      return 'change-impact-lite';
-    }
-    if (
-      normalized.includes('preview') ||
-      normalized.includes('patch') ||
-      normalized.includes('fix')
-    ) {
-      return 'fix-preview-lite';
-    }
-    if (normalized.includes('memory') || normalized.includes('convention')) {
-      return 'workspace-memory-wizard';
+      return { actionType: 'verify-pack-autopilot', fallbackReason: 'success' };
     }
     if (
       normalized.includes('repro') ||
@@ -2749,9 +2750,91 @@ No markdown, no explanation outside the JSON.`;
       normalized.includes('incident pack') ||
       normalized.includes('share incident')
     ) {
-      return 'incident-repro-pack';
+      return { actionType: 'incident-repro-pack', fallbackReason: 'success' };
     }
-    return 'orchestrate';
+    if (
+      normalized.includes('recipe') ||
+      normalized.includes('starter template') ||
+      normalized.includes('project template') ||
+      normalized.includes('scaffold')
+    ) {
+      return { actionType: 'recipe-pack', fallbackReason: 'success' };
+    }
+    if (
+      (normalized.includes('doctor') && normalized.includes('fix')) ||
+      (normalized.includes('doctor') && normalized.includes('error')) ||
+      normalized.includes('workspace health') ||
+      normalized.includes('fix workspace') ||
+      normalized.includes('rapidkit doctor')
+    ) {
+      return { actionType: 'doctor-fix', fallbackReason: 'success' };
+    }
+
+    // terminal-bridge: explicit signals (priority match)
+    const hasExplicitTerminalSignal =
+      normalized.includes('traceback') ||
+      normalized.includes('stack trace') ||
+      normalized.includes('exception') ||
+      normalized.includes('terminal') ||
+      normalized.includes('timeout') ||
+      (normalized.includes('error') &&
+        (normalized.includes('line ') ||
+          normalized.includes('at ') ||
+          normalized.includes('crash') ||
+          normalized.includes('stderr') ||
+          normalized.includes('exit code') ||
+          normalized.includes('segfault') ||
+          normalized.includes('killed')));
+
+    if (hasExplicitTerminalSignal) {
+      return { actionType: 'terminal-bridge', fallbackReason: 'success' };
+    }
+
+    // impact/risk routes
+    if (normalized.includes('impact') || normalized.includes('risk')) {
+      return { actionType: 'change-impact-lite', fallbackReason: 'success' };
+    }
+
+    // fix-preview-lite: explicit context (priority match)
+    const hasPatchPreviewContext =
+      normalized.includes('preview') ||
+      normalized.includes('patch') ||
+      (normalized.includes('fix') &&
+        (normalized.includes('code') ||
+          normalized.includes('function') ||
+          normalized.includes('class') ||
+          normalized.includes('module') ||
+          normalized.includes('import') ||
+          normalized.includes('bug') ||
+          normalized.includes('file')));
+
+    if (hasPatchPreviewContext) {
+      return { actionType: 'fix-preview-lite', fallbackReason: 'success' };
+    }
+
+    // memory routes
+    if (normalized.includes('memory') || normalized.includes('convention')) {
+      return { actionType: 'workspace-memory-wizard', fallbackReason: 'success' };
+    }
+
+    // Fallback routes (bare keywords without context)
+    if (
+      normalized.includes('error') ||
+      normalized.includes('fix') ||
+      normalized.includes('failing') ||
+      normalized.includes('broken')
+    ) {
+      // Distinguish between which bare keyword triggered the fallback
+      const barefallbackReason = normalized.includes('error')
+        ? 'bare_keyword_only'
+        : normalized.includes('fix')
+          ? 'fix_preview_fallback'
+          : 'bare_keyword_only';
+      return { actionType: 'terminal-bridge', fallbackReason: barefallbackReason };
+    }
+
+    // No match - orchestrate default
+    return { actionType: 'orchestrate', fallbackReason: 'orchestrate_default' };
   }
 
   private async _buildChatBrainAIContext(options?: {
@@ -4329,7 +4412,8 @@ No markdown, no explanation outside the JSON.`;
       deterministicScore.scopeKnown &&
       !c07GateEvaluation.scopeBlocked &&
       (affectedFiles.length > 0 || affectedModules.length > 0 || affectedTests.length > 0);
-    const verifyPathPresent = !input.actionPolicy.requiresVerifyPath || verifyChecklist.length > 0;
+    const verifyCompletenessCheck = assessVerifyCompleteness(input.actionPolicy, verifyChecklist);
+    const verifyPathPresent = verifyCompletenessCheck.adequate;
     const rollbackPathPresent =
       (input.actionPolicy.riskClass === 'informational' ||
         input.actionPolicy.riskClass === 'non-mutating-executable' ||
@@ -4344,6 +4428,13 @@ No markdown, no explanation outside the JSON.`;
     }
     if (input.actionPolicy.requiresVerifyPath && !input.verifyReady) {
       blockedReasons.push('Verification evidence is missing for a verify-first action.');
+    }
+    if (
+      input.actionPolicy.requiresVerifyPath &&
+      !verifyPathPresent &&
+      verifyCompletenessCheck.reason
+    ) {
+      blockedReasons.push(verifyCompletenessCheck.reason);
     }
     if (!rollbackPathPresent) {
       if (
@@ -4702,6 +4793,24 @@ No markdown, no explanation outside the JSON.`;
     }
   }
 
+  private async _detectIncidentRepeatSignal(input: {
+    workspacePath: string;
+    queryText?: string;
+    actionType?: string;
+  }) {
+    try {
+      const memoryService = WorkspaceMemoryService.getInstance();
+      const memory = await memoryService.readNearest(input.workspacePath);
+      return detectRepeatedIncident({
+        decisions: memory.decisions,
+        queryText: input.queryText,
+        actionType: input.actionType,
+      });
+    } catch {
+      return null;
+    }
+  }
+
   private async _persistIncidentReplayLearning(input: {
     workspacePath: string;
     packId: string;
@@ -4915,6 +5024,7 @@ No markdown, no explanation outside the JSON.`;
       history: [] as Array<{ role: 'user' | 'assistant'; content: string }>,
       queryCount: 0,
       actionCount: 0,
+      repeatedIncidentDetected: false,
       framework: undefined as string | undefined,
     };
 
@@ -4942,11 +5052,13 @@ No markdown, no explanation outside the JSON.`;
     current.history = [...current.history, { role: 'user' as const, content: message }].slice(-12);
     this._chatBrainConversations.set(conversationId, current);
 
+    const routingResult = this._routeActionTypeFromMessage(message);
     this._trackStudioEvent('workspai.studio.next_action_clicked', current.workspacePath, {
       framework: current.framework ?? 'unknown',
       conversationId,
       queryCount: current.queryCount,
-      actionType: this._routeActionTypeFromMessage(message),
+      actionType: routingResult.actionType,
+      fallbackReason: routingResult.fallbackReason,
       timeToFirstActionMs: Date.now() - current.startedAt,
     });
 
@@ -4958,7 +5070,7 @@ No markdown, no explanation outside the JSON.`;
     this._activeChatBrainConversationId = conversationId;
 
     const messageId = `msg-${Date.now()}`;
-    const actionType = this._routeActionTypeFromMessage(message);
+    const actionType = routingResult.actionType;
     const actionPolicy = classifyIncidentActionPolicy(actionType);
     const isFirstQuery = current.queryCount === 1;
     const memoryReuseSnapshot = isFirstQuery
@@ -4969,6 +5081,34 @@ No markdown, no explanation outside the JSON.`;
         })
       : null;
     const memoryPromptHint = buildIncidentMemoryPromptHint(memoryReuseSnapshot);
+    const repeatSignal =
+      isFirstQuery && current.workspacePath
+        ? await this._detectIncidentRepeatSignal({
+            workspacePath: current.workspacePath,
+            queryText: message,
+            actionType,
+          })
+        : null;
+    if (repeatSignal?.isRepeated) {
+      current.repeatedIncidentDetected = true;
+      this._chatBrainConversations.set(conversationId, current);
+      this._trackStudioEvent('workspai.studio.repeated_incident_detected', current.workspacePath, {
+        conversationId,
+        actionType,
+        repeatScore: repeatSignal.repeatScore,
+        framework: current.framework ?? 'unknown',
+      });
+    }
+    const repeatedIncidentHint =
+      repeatSignal?.isRepeated && repeatSignal.matchedDecision
+        ? [
+            'REPEATED_INCIDENT_SIGNAL:',
+            `- A similar incident was previously resolved in this workspace (similarity score: ${repeatSignal.repeatScore}).`,
+            `- Matched pattern: "${repeatSignal.matchedDecision.slice(0, 140)}"`,
+            '- Do NOT re-diagnose from scratch. Reuse the matched verified fix pattern.',
+            '- Confirm whether the current incident matches this pattern before suggesting new steps.',
+          ].join('\n')
+        : '';
     let assistantText = '';
     let responseModelId: string | undefined;
     const expectedWorkspacePath = current.workspacePath;
@@ -4997,7 +5137,7 @@ No markdown, no explanation outside the JSON.`;
 
       const prepared = await prepareAIConversation(
         'ask',
-        memoryPromptHint ? `${structuredPrompt}\n\n${memoryPromptHint}` : structuredPrompt,
+        [structuredPrompt, memoryPromptHint, repeatedIncidentHint].filter(Boolean).join('\n\n'),
         aiContext,
         history,
         chatDoctorSnapshot ?? undefined
@@ -6005,6 +6145,39 @@ No markdown, no explanation outside the JSON.`;
       conv.lastActivityAt = Date.now();
       this._chatBrainConversations.set(conversationId, conv);
 
+      const verifyCompletenessCheck = assessVerifyCompleteness(
+        actionPolicy,
+        wave2Contracts.impactAssessment.verifyChecklist
+      );
+      const verifyRequired = actionPolicy.requiresVerifyPath || actionPolicy.requiresImpactReview;
+      const verifyPathPresent = verifyCompletenessCheck.adequate;
+      const repeatedIncident = conv.repeatedIncidentDetected === true;
+      const uiPrefs = this._getUiPreferences();
+      const memorySuggestion =
+        completionSuccess && uiPrefs.incidentAutoLearningPrompt
+          ? buildIncidentMemoryEnrichmentSuggestion({
+              verifySuccess: completionSuccess,
+              actionType,
+              likelyFailureMode: wave2Contracts.impactAssessment.likelyFailureMode,
+              verifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
+            })
+          : null;
+      if (!verifyCompletenessCheck.adequate) {
+        this._trackStudioEvent('workspai.studio.verify_incomplete_warning', conv.workspacePath, {
+          conversationId,
+          actionId,
+          actionType,
+          reason: verifyCompletenessCheck.reason,
+          verifyRequired,
+          framework: conv.framework ?? 'unknown',
+        });
+      }
+
+      const diagnosisConfidenceLabel = labelDiagnosisConfidence(
+        wave2Contracts.releaseGateEvidence.scopeKnown ? 'known' : 'partial',
+        wave2Contracts.impactAssessment.confidence / 100
+      );
+
       this._trackStudioEvent(
         completionSuccess ? 'workspai.studio.verify_passed' : 'workspai.studio.verify_failed',
         conv.workspacePath,
@@ -6013,6 +6186,12 @@ No markdown, no explanation outside the JSON.`;
           actionId,
           actionType,
           verifyReady,
+          verifyRequired,
+          verifyPathPresent,
+          verifyPathReason: verifyCompletenessCheck.reason ?? 'ok',
+          repeatedIncident,
+          diagnosisConfidenceLabel,
+          verifyCompletenessAdequate: verifyCompletenessCheck.adequate,
           decisionClarityCompletionBlocked,
           decisionClarityMissingFieldCount: decisionClarityMissingFields.length,
           unknownScopeMutationBlocked,
@@ -6024,6 +6203,29 @@ No markdown, no explanation outside the JSON.`;
           passed: doctorEvidence?.passed ?? 0,
         }
       );
+
+      if (completionSuccess) {
+        this._trackStudioEvent(
+          'workspai.studio.verified_outcome_ready_for_artifact',
+          conv.workspacePath,
+          {
+            conversationId,
+            actionId,
+            actionType,
+            framework: conv.framework ?? 'unknown',
+            outcomeContractVersion: 'v2',
+            verifyRequired,
+            verifyPathPresent,
+            repeatedIncident,
+            verifyChecklistCount: wave2Contracts.impactAssessment.verifyChecklist.length,
+            blockedReasonCount: wave2Contracts.releaseGateEvidence.blockedReasons.length,
+            affectedFilesCount: wave2Contracts.impactAssessment.affectedFiles.length,
+            releaseGateBlocked: releaseGateCompletionBlocked,
+            memorySuggestionReady: Boolean(memorySuggestion),
+            replayReady: Boolean(incidentReproPackEvidence),
+          }
+        );
+      }
 
       if (wave2Contracts.predictiveWarning) {
         this._trackStudioEvent(
@@ -6117,11 +6319,19 @@ No markdown, no explanation outside the JSON.`;
       }
 
       if (rollbackEvidence?.attempted) {
+        const rollbackRecoveryClass =
+          rollbackEvidence.status === 'succeeded'
+            ? 'full'
+            : rollbackEvidence.restoredFiles.length > 0
+              ? 'partial'
+              : 'none';
         this._trackStudioEvent('workspai.studio.rollback_attempted', conv.workspacePath, {
           conversationId,
           actionId,
           actionType,
           rollbackStatus: rollbackEvidence.status,
+          recoveryClass: rollbackRecoveryClass,
+          verifyFailureRecovered: !completionSuccess && rollbackEvidence.status === 'succeeded',
           restoredCount: rollbackEvidence.restoredFiles.length,
           failedCount: rollbackEvidence.failedFiles.length,
           framework: conv.framework ?? 'unknown',
@@ -6137,6 +6347,8 @@ No markdown, no explanation outside the JSON.`;
             actionId,
             actionType,
             rollbackStatus: rollbackEvidence.status,
+            recoveryClass: rollbackRecoveryClass,
+            verifyFailureRecovered: !completionSuccess && rollbackEvidence.status === 'succeeded',
             restoredCount: rollbackEvidence.restoredFiles.length,
             failedCount: rollbackEvidence.failedFiles.length,
             framework: conv.framework ?? 'unknown',
@@ -6144,18 +6356,22 @@ No markdown, no explanation outside the JSON.`;
         );
       }
 
-      const uiPrefs = this._getUiPreferences();
       if (completionSuccess && uiPrefs.incidentAutoLearningPrompt) {
-        const memorySuggestion = buildIncidentMemoryEnrichmentSuggestion({
-          verifySuccess: completionSuccess,
-          actionType,
-          likelyFailureMode: wave2Contracts.impactAssessment.likelyFailureMode,
-          verifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
-        });
-
         if (!memorySuggestion) {
           return;
         }
+
+        this._trackStudioEvent(
+          'workspai.studio.outcome_memory_suggestion_ready',
+          conv.workspacePath,
+          {
+            conversationId,
+            actionId,
+            actionType,
+            verifyChecklistCount: wave2Contracts.impactAssessment.verifyChecklist.length,
+            framework: conv.framework ?? 'unknown',
+          }
+        );
 
         this._panel.webview.postMessage({
           command: 'aiChatSuggestedQuestions',
@@ -6767,6 +6983,7 @@ No markdown, no explanation outside the JSON.`;
       ctaVariantBreakdown?: any;
       studioHardGateStatus?: any;
       studioRollbackKpiStatus?: any;
+      studioStabilizationKpiStatus?: any;
       doctorSummary?: any;
       timestamp: number;
     }>(cacheKey);
@@ -6795,14 +7012,18 @@ No markdown, no explanation outside the JSON.`;
       ctaVariantBreakdown,
       studioHardGateStatus,
       studioRollbackKpiStatus,
+      studioStabilizationKpiStatus,
       studioReproPackKpiStatus,
+      releaseReadinessValidationKpiStatus,
     ] = await Promise.all([
       tracker.getCommandTelemetrySummary(workspacePath, 'last7d'),
       tracker.getOnboardingExperimentStats(workspacePath, 'last7d'),
       tracker.getStudioCtaVariantBreakdown(workspacePath, 'last7d'),
       tracker.getStudioHardGateStatus(workspacePath, 'last7d'),
       tracker.getStudioRollbackKpiStatus(workspacePath, 'last7d'),
+      tracker.getStudioStabilizationKpiStatus(workspacePath, 'last7d'),
       tracker.getStudioReproPackKpiStatus(workspacePath, 'last7d'),
+      tracker.getReleaseReadinessValidationKpiStatus(workspacePath, 'last30d'),
     ]);
 
     const telemetryData = buildIncidentStudioTelemetryPayload(
@@ -6812,7 +7033,9 @@ No markdown, no explanation outside the JSON.`;
       doctorSummary,
       studioHardGateStatus,
       studioRollbackKpiStatus,
-      studioReproPackKpiStatus
+      studioStabilizationKpiStatus,
+      studioReproPackKpiStatus,
+      releaseReadinessValidationKpiStatus
     );
 
     // Store in cache

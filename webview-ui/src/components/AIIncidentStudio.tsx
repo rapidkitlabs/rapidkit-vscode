@@ -134,6 +134,56 @@ interface IncidentTelemetrySnapshot {
             overallPass: boolean;
         };
     } | null;
+    studioStabilizationKpiStatus?: {
+        workspacePath: string;
+        timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d';
+        windowStartAt: string | null;
+        windowEndAt: string;
+        thresholds: {
+            routePrecisionMin: number;
+            verifyPathCompletionRateMin: number;
+            falseConfidenceRateMax: number;
+            rollbackRecoverySuccessRateMin: number;
+            repeatVerifiedResolutionRateMin: number;
+        };
+        metrics: {
+            nextActionClicked: number;
+            routeMatchedWithoutFallback: number;
+            routeFallbackCount: number;
+            routePrecision: number | null;
+            verifyRequired: number;
+            verifyPathPresent: number;
+            verifyPathCompletionRate: number | null;
+            verifyFailed: number;
+            rollbackAttempted: number;
+            rollbackSucceeded: number;
+            falseConfidenceRate: number | null;
+            rollbackRecoverySuccessRate: number | null;
+            repeatedIncidentDetected: number;
+            repeatVerifiedResolved: number;
+            repeatVerifiedResolutionRate: number | null;
+            fallbackReasonBreakdown?: {
+                success: number;
+                bare_keyword_only: number;
+                fix_preview_fallback: number;
+                orchestrate_default: number;
+                other: number;
+            };
+            verifyPathReasonTop?: Array<{
+                reason: string;
+                count: number;
+            }>;
+        };
+        gates: {
+            telemetryEvidencePass: boolean;
+            routePrecisionPass: boolean;
+            verifyPathCompletionRatePass: boolean;
+            falseConfidenceRatePass: boolean;
+            rollbackRecoverySuccessRatePass: boolean;
+            repeatVerifiedResolutionRatePass: boolean;
+            overallPass: boolean;
+        };
+    } | null;
     studioReproPackKpiStatus?: {
         workspacePath: string;
         timeWindow: 'all' | 'last24h' | 'last7d';
@@ -156,6 +206,50 @@ interface IncidentTelemetrySnapshot {
             telemetryEvidencePass: boolean;
             reproPackShareRatePass: boolean;
             replayToResolutionRatePass: boolean;
+            overallPass: boolean;
+        };
+    } | null;
+    releaseReadinessValidationKpiStatus?: {
+        workspacePath: string;
+        timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d';
+        windowStartAt: string | null;
+        windowEndAt: string;
+        metrics: {
+            releaseReadinessArtifactsExported: number;
+            goDecisionsExported: number;
+            noGoDecisionsExported: number;
+            decisionsValidated: number;
+            decisionsCorrect: number;
+            noGoDecisionsValidated: number;
+            noGoPreventedIncident: number;
+            releaseReadinessDecisionAccuracy: number | null;
+            noGoPreventedIncidentRate: number | null;
+        };
+        gates: {
+            telemetryEvidencePass: boolean;
+            releaseReadinessDecisionAccuracyAvailable: boolean;
+            noGoPreventedIncidentRateAvailable: boolean;
+            overallPass: boolean;
+        };
+    } | null;
+    verifiedOutcomeLoopStatus?: {
+        workspacePath: string | null;
+        timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d' | null;
+        verifiedOutcomes: number;
+        reusableArtifacts: {
+            reproPacksExported: number;
+            replayReady: number;
+            memoryEnriched: number;
+            releaseArtifactsExported: number;
+        };
+        conversionRates: {
+            replayToResolutionRate: number | null;
+            releaseDecisionAccuracy: number | null;
+            noGoPreventedIncidentRate: number | null;
+        };
+        gates: {
+            reproEvidencePass: boolean;
+            releaseEvidencePass: boolean;
             overallPass: boolean;
         };
     } | null;
@@ -300,6 +394,10 @@ type PrimaryCtaMode = 'single' | 'multi';
 type IncidentUserMode = 'guided' | 'standard' | 'expert';
 type IncidentStudioDisplayMode = 'lite' | 'full';
 type ArchitectureLensViewMode = 'tree' | 'dependency' | 'runtime';
+type ReleaseReadinessShareFormat = 'approval-note' | 'signoff' | 'json';
+type IncidentReleaseReadinessArtifact = NonNullable<
+    NormalizedIncidentActionResultPayload['releaseReadinessCommander']
+>;
 
 type IncidentIntentChip = {
     id: string;
@@ -529,6 +627,127 @@ function formatRelativeCue(timestamp?: string | number | null): string | null {
     return `${deltaDays}d ago`;
 }
 
+function formatPercentValue(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+        return 'N/A';
+    }
+    return `${value}%`;
+}
+
+function formatIsoUtc(iso?: string | null): string {
+    if (!iso) {
+        return 'N/A';
+    }
+    const parsed = Date.parse(iso);
+    if (Number.isNaN(parsed)) {
+        return iso;
+    }
+    return new Date(parsed).toISOString().replace('.000Z', 'Z');
+}
+
+function buildTelemetryWindowLabel(input: {
+    timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d';
+    windowStartAt: string | null;
+    windowEndAt: string;
+}): string {
+    if (input.timeWindow === 'all' || !input.windowStartAt) {
+        return `${input.timeWindow} · until ${formatIsoUtc(input.windowEndAt)}`;
+    }
+    return `${input.timeWindow} · ${formatIsoUtc(input.windowStartAt)} -> ${formatIsoUtc(input.windowEndAt)}`;
+}
+
+function formatTopReasonList(
+    reasons: Array<{ reason: string; count: number }> | null | undefined
+): string {
+    if (!reasons || reasons.length === 0) {
+        return 'none';
+    }
+    return reasons.map((entry) => `${entry.reason} (${entry.count})`).join(', ');
+}
+
+function buildReleaseReadinessApprovalNoteMarkdown(artifact: IncidentReleaseReadinessArtifact): string {
+    const blockingReasonText =
+        artifact.blockingReasons.length > 0 ? artifact.blockingReasons.slice(0, 6).join('; ') : 'None';
+
+    return [
+        '# Release Approval Note (One Page)',
+        '',
+        `Decision: ${artifact.decision.toUpperCase()} (${artifact.confidence}% confidence)`,
+        `Artifact ID: ${artifact.artifactId}`,
+        `Generated at: ${artifact.generatedAt}`,
+        `Workspace: ${artifact.workspacePath}`,
+        '',
+        '## Executive Summary',
+        artifact.summary.goNoGoRationale,
+        '',
+        '## Evidence At A Glance',
+        `- Verify contract: ${artifact.evidence.verifyPackContractStatus}`,
+        `- Sandbox status: ${artifact.evidence.sandboxStatus}`,
+        `- Scope known: ${artifact.evidence.scopeKnown ? 'yes' : 'no'}`,
+        `- Verify path present: ${artifact.evidence.verifyPathPresent ? 'yes' : 'no'}`,
+        `- Rollback path present: ${artifact.evidence.rollbackPathPresent ? 'yes' : 'no'}`,
+        `- Doctor warnings/errors: ${artifact.evidence.doctorWarnings}/${artifact.evidence.doctorErrors}`,
+        '',
+        '## Blocking Reasons',
+        blockingReasonText,
+        '',
+        '## Recommended Next Step',
+        artifact.summary.recommendedNextStep,
+        '',
+        '## Team Signoff',
+        '- Product: ____________________',
+        '- Engineering: ________________',
+        '- Docs: _______________________',
+        '- GTM: ________________________',
+        '- Final decision: [ ] GO   [ ] NO-GO',
+    ].join('\n');
+}
+
+function buildReleaseReadinessSignoffMarkdown(artifact: IncidentReleaseReadinessArtifact): string {
+    const blockingLines =
+        artifact.blockingReasons.length > 0
+            ? artifact.blockingReasons.map((reason) => `- ${reason}`).join('\n')
+            : '- None';
+
+    return [
+        '## Release Readiness Signoff Packet',
+        '',
+        `- Artifact ID: ${artifact.artifactId}`,
+        `- Generated at: ${artifact.generatedAt}`,
+        `- Workspace: ${artifact.workspacePath}`,
+        `- Decision: ${artifact.decision.toUpperCase()}`,
+        `- Confidence: ${artifact.confidence}%`,
+        '',
+        '### Evidence Summary',
+        `- Verify contract: ${artifact.evidence.verifyPackContractStatus}`,
+        `- Sandbox: ${artifact.evidence.sandboxStatus}`,
+        `- Scope known: ${artifact.evidence.scopeKnown ? 'yes' : 'no'}`,
+        `- Verify path: ${artifact.evidence.verifyPathPresent ? 'yes' : 'no'}`,
+        `- Rollback path: ${artifact.evidence.rollbackPathPresent ? 'yes' : 'no'}`,
+        `- Doctor warnings/errors: ${artifact.evidence.doctorWarnings}/${artifact.evidence.doctorErrors}`,
+        '',
+        '### Blocking Reasons',
+        blockingLines,
+        '',
+        '### Rationale',
+        artifact.summary.goNoGoRationale,
+        '',
+        '### Recommended Next Step',
+        artifact.summary.recommendedNextStep,
+        '',
+        '### Team Signoff',
+        '- Product: [ ] Approved [ ] Rejected',
+        '- Engineering: [ ] Approved [ ] Rejected',
+        '- Docs: [ ] Approved [ ] Rejected',
+        '- GTM: [ ] Approved [ ] Rejected',
+        '- Final release decision: [ ] GO [ ] NO-GO',
+    ].join('\n');
+}
+
+function buildReleaseReadinessArtifactJson(artifact: IncidentReleaseReadinessArtifact): string {
+    return JSON.stringify(artifact, null, 2);
+}
+
 function intentLabelFromQuestion(question: string): { label: string; detail: string } {
     const normalized = question.trim().replace(/\?+$/, '');
     const lower = normalized.toLowerCase();
@@ -657,8 +876,8 @@ export function AIIncidentStudio({
     analysisScopeType = 'workspace',
     analysisScopeLabel,
     analysisScopePath = null,
-    analysisWorkspacePath = null,
-    analysisProjectPath = null,
+    analysisWorkspacePath: _analysisWorkspacePath = null,
+    analysisProjectPath: _analysisProjectPath = null,
     modelId,
     availableModels = [],
     selectedModelId = null,
@@ -716,6 +935,9 @@ export function AIIncidentStudio({
     const [isMaximized, setIsMaximized] = useState(false);
     const [showAllSidebarIssues, setShowAllSidebarIssues] = useState(false);
     const [shouldAutoScrollThread, setShouldAutoScrollThread] = useState(true);
+    const [stabilizationSnapshotCopiedFormat, setStabilizationSnapshotCopiedFormat] = useState<'markdown' | 'json' | null>(null);
+    const [releaseReadinessCopiedFormat, setReleaseReadinessCopiedFormat] = useState<ReleaseReadinessShareFormat | null>(null);
+    const [releaseReadinessCopiedArtifactId, setReleaseReadinessCopiedArtifactId] = useState<string | null>(null);
     const [architectureLensViewMode, setArchitectureLensViewMode] = useState<ArchitectureLensViewMode>('tree');
     const threadRef = useRef<HTMLDivElement>(null);
     const architectureLensScopeRef = useRef<string | null>(null);
@@ -770,7 +992,10 @@ export function AIIncidentStudio({
     const ctaVariantBreakdown = telemetry?.ctaVariantBreakdown ?? null;
     const studioHardGateStatus = telemetry?.studioHardGateStatus ?? null;
     const studioRollbackKpiStatus = telemetry?.studioRollbackKpiStatus ?? null;
+    const studioStabilizationKpiStatus = telemetry?.studioStabilizationKpiStatus ?? null;
     const studioReproPackKpiStatus = telemetry?.studioReproPackKpiStatus ?? null;
+    const releaseReadinessValidationKpiStatus = telemetry?.releaseReadinessValidationKpiStatus ?? null;
+    const verifiedOutcomeLoopStatus = telemetry?.verifiedOutcomeLoopStatus ?? null;
     const doctorSummary = telemetry?.doctorSummary ?? null;
     const hasDoctorSnapshot = Boolean(doctorSummary);
     // null = no real data yet; shown as 'N/A' rather than fabricated numbers.
@@ -792,10 +1017,103 @@ export function AIIncidentStudio({
     const rollbackFalseConfidenceRate = studioRollbackKpiStatus?.metrics.falseConfidenceRate ?? null;
     const rollbackSuccessMeter = Math.max(0, Math.min(100, rollbackAutoSuccessRate ?? 0));
     const rollbackFalseConfidenceMeter = Math.max(0, Math.min(100, rollbackFalseConfidenceRate ?? 0));
+    const stabilizationRoutePrecision = studioStabilizationKpiStatus?.metrics.routePrecision ?? null;
+    const stabilizationVerifyPathCompletion = studioStabilizationKpiStatus?.metrics.verifyPathCompletionRate ?? null;
+    const stabilizationFalseConfidence = studioStabilizationKpiStatus?.metrics.falseConfidenceRate ?? null;
+    const stabilizationRollbackRecovery = studioStabilizationKpiStatus?.metrics.rollbackRecoverySuccessRate ?? null;
+    const stabilizationRepeatResolution = studioStabilizationKpiStatus?.metrics.repeatVerifiedResolutionRate ?? null;
+    const stabilizationRepeatWithArtifact = studioStabilizationKpiStatus?.metrics.repeatVerifiedWithArtifactRate ?? null;
+    const stabilizationFallbackMix = studioStabilizationKpiStatus?.metrics.fallbackReasonBreakdown;
+    const stabilizationVerifyPathReasonTop = studioStabilizationKpiStatus?.metrics.verifyPathReasonTop ?? [];
+    const stabilizationRecoveryClassBreakdown = studioStabilizationKpiStatus?.metrics.recoveryClassBreakdown;
+    const stabilizationVerifyPathReasonTopText = formatTopReasonList(stabilizationVerifyPathReasonTop);
+    const stabilizationRouteMeter = Math.max(0, Math.min(100, stabilizationRoutePrecision ?? 0));
+    const stabilizationVerifyMeter = Math.max(0, Math.min(100, stabilizationVerifyPathCompletion ?? 0));
+    const stabilizationFalseConfidenceMeter = Math.max(0, Math.min(100, stabilizationFalseConfidence ?? 0));
+    const stabilizationRollbackMeter = Math.max(0, Math.min(100, stabilizationRollbackRecovery ?? 0));
+    const stabilizationRepeatMeter = Math.max(0, Math.min(100, stabilizationRepeatResolution ?? 0));
+    const stabilizationWindowLabel = studioStabilizationKpiStatus
+        ? buildTelemetryWindowLabel({
+            timeWindow: studioStabilizationKpiStatus.timeWindow,
+            windowStartAt: studioStabilizationKpiStatus.windowStartAt,
+            windowEndAt: studioStabilizationKpiStatus.windowEndAt,
+        })
+        : null;
+    const stabilizationSnapshotMarkdown = useMemo(() => {
+        if (!studioStabilizationKpiStatus) {
+            return '';
+        }
+
+        return [
+            '## Workspai Stabilization KPI Snapshot (S01-S05)',
+            '',
+            `- Generated at: ${new Date().toISOString()}`,
+            `- Workspace: ${studioStabilizationKpiStatus.workspacePath}`,
+            `- Window: ${studioStabilizationKpiStatus.timeWindow}`,
+            `- Window start: ${formatIsoUtc(studioStabilizationKpiStatus.windowStartAt)}`,
+            `- Window end: ${formatIsoUtc(studioStabilizationKpiStatus.windowEndAt)}`,
+            `- Overall gate: ${studioStabilizationKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}`,
+            '',
+            '| KPI | Current | Target |',
+            '| --- | --- | --- |',
+            `| S01 Route Precision | ${formatPercentValue(stabilizationRoutePrecision)} | >= ${studioStabilizationKpiStatus.thresholds.routePrecisionMin}% |`,
+            `| S02 Verify Path Completion | ${formatPercentValue(stabilizationVerifyPathCompletion)} | >= ${studioStabilizationKpiStatus.thresholds.verifyPathCompletionRateMin}% |`,
+            `| S03 False Confidence | ${formatPercentValue(stabilizationFalseConfidence)} | <= ${studioStabilizationKpiStatus.thresholds.falseConfidenceRateMax}% |`,
+            `| S04 Rollback Recovery Success | ${formatPercentValue(stabilizationRollbackRecovery)} | >= ${studioStabilizationKpiStatus.thresholds.rollbackRecoverySuccessRateMin}% |`,
+            `| S05 Repeat Verified Resolution | ${formatPercentValue(stabilizationRepeatResolution)} | >= ${studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}% |`,
+            `| S05-Cohort Repeat With Artifact | ${formatPercentValue(stabilizationRepeatWithArtifact)} | >= ${studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}% |`,
+            '',
+            '### Supporting counts',
+            `- Routes: ${studioStabilizationKpiStatus.metrics.routeMatchedWithoutFallback} success / ${studioStabilizationKpiStatus.metrics.routeFallbackCount} fallback`,
+            `- S01 fallback mix: success=${stabilizationFallbackMix?.success ?? 0}, bare_keyword_only=${stabilizationFallbackMix?.bare_keyword_only ?? 0}, fix_preview_fallback=${stabilizationFallbackMix?.fix_preview_fallback ?? 0}, orchestrate_default=${stabilizationFallbackMix?.orchestrate_default ?? 0}, other=${stabilizationFallbackMix?.other ?? 0}`,
+            `- Verify path: ${studioStabilizationKpiStatus.metrics.verifyPathPresent} present / ${studioStabilizationKpiStatus.metrics.verifyRequired} required`,
+            `- S02 verify-path misses (top reasons): ${stabilizationVerifyPathReasonTopText}`,
+            `- S04 recovery class mix: auto_rollback=${stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0}, manual_recovery=${stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0}, unspecified=${stabilizationRecoveryClassBreakdown?.unspecified ?? 0}`,
+            `- Repeat incidents: ${studioStabilizationKpiStatus.metrics.repeatVerifiedResolved} verified / ${studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0} with artifact / ${studioStabilizationKpiStatus.metrics.repeatedIncidentDetected} detected`,
+        ].join('\n');
+    }, [
+        studioStabilizationKpiStatus,
+        stabilizationRoutePrecision,
+        stabilizationVerifyPathCompletion,
+        stabilizationFalseConfidence,
+        stabilizationRollbackRecovery,
+        stabilizationRepeatResolution,
+        stabilizationRepeatWithArtifact,
+        stabilizationFallbackMix,
+        stabilizationRecoveryClassBreakdown,
+        stabilizationVerifyPathReasonTopText,
+    ]);
+    const stabilizationSnapshotJson = useMemo(() => {
+        if (!studioStabilizationKpiStatus) {
+            return '';
+        }
+
+        return JSON.stringify(
+            {
+                generatedAt: new Date().toISOString(),
+                workspacePath: studioStabilizationKpiStatus.workspacePath,
+                timeWindow: studioStabilizationKpiStatus.timeWindow,
+                thresholds: studioStabilizationKpiStatus.thresholds,
+                metrics: studioStabilizationKpiStatus.metrics,
+                gates: studioStabilizationKpiStatus.gates,
+            },
+            null,
+            2
+        );
+    }, [studioStabilizationKpiStatus]);
+    const releaseDecisionAccuracy = releaseReadinessValidationKpiStatus?.metrics.releaseReadinessDecisionAccuracy ?? null;
+    const noGoPreventedIncidentRate = releaseReadinessValidationKpiStatus?.metrics.noGoPreventedIncidentRate ?? null;
+    const releaseDecisionAccuracyMeter = Math.max(0, Math.min(100, releaseDecisionAccuracy ?? 0));
+    const noGoPreventedIncidentMeter = Math.max(0, Math.min(100, noGoPreventedIncidentRate ?? 0));
+    const loopReplayToResolutionRate = verifiedOutcomeLoopStatus?.conversionRates.replayToResolutionRate ?? null;
+    const loopReleaseDecisionAccuracy = verifiedOutcomeLoopStatus?.conversionRates.releaseDecisionAccuracy ?? null;
+    const loopReplayMeter = Math.max(0, Math.min(100, loopReplayToResolutionRate ?? 0));
+    const loopReleaseMeter = Math.max(0, Math.min(100, loopReleaseDecisionAccuracy ?? 0));
 
     const studioEventLabelMap: Record<string, string> = {
         'workspai.studio.next_action_clicked': 'Actions triggered',
         'workspai.studio.loop_started': 'Sessions started',
+        'workspai.studio.verified_outcome_ready_for_artifact': 'Verified outcomes ready',
         'workspai.studio.abandoned': 'Closed without fix',
         'workspai.studio.cta_verify': 'Verify runs',
         'workspai.studio.cta_ask': 'Ask AI queries',
@@ -1384,6 +1702,49 @@ export function AIIncidentStudio({
             window.setTimeout(() => {
                 setLastCopiedCommand((prev) => (prev === command ? null : prev));
             }, 1200);
+        } catch {
+            // ignore clipboard failure in restricted environments
+        }
+    };
+
+    const copyStabilizationSnapshot = async (
+        format: 'markdown' | 'json',
+        text: string
+    ) => {
+        if (!text) {
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(text);
+            setStabilizationSnapshotCopiedFormat(format);
+            window.setTimeout(() => {
+                setStabilizationSnapshotCopiedFormat((prev) => (prev === format ? null : prev));
+            }, 1400);
+        } catch {
+            // ignore clipboard failure in restricted environments
+        }
+    };
+
+    const copyReleaseReadinessShare = async (
+        artifact: IncidentReleaseReadinessArtifact,
+        format: ReleaseReadinessShareFormat
+    ) => {
+        const text =
+            format === 'approval-note'
+                ? buildReleaseReadinessApprovalNoteMarkdown(artifact)
+                : format === 'signoff'
+                    ? buildReleaseReadinessSignoffMarkdown(artifact)
+                    : buildReleaseReadinessArtifactJson(artifact);
+
+        try {
+            await navigator.clipboard.writeText(text);
+            setReleaseReadinessCopiedFormat(format);
+            setReleaseReadinessCopiedArtifactId(artifact.artifactId);
+            window.setTimeout(() => {
+                setReleaseReadinessCopiedFormat(null);
+                setReleaseReadinessCopiedArtifactId(null);
+            }, 1400);
         } catch {
             // ignore clipboard failure in restricted environments
         }
@@ -2556,6 +2917,139 @@ export function AIIncidentStudio({
                                         </details>
                                     ) : null}
 
+                                    {studioStabilizationKpiStatus ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Stabilization KPI gate (S01-S05)</span>
+                                                <small>{studioStabilizationKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
+                                            </summary>
+                                            <div className="incident-cta-variant-legend">
+                                                operational window: {stabilizationWindowLabel}
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>S01 Route precision</span>
+                                                <strong>
+                                                    {stabilizationRoutePrecision === null ? 'N/A' : `${stabilizationRoutePrecision}%`} / min{' '}
+                                                    {studioStabilizationKpiStatus.thresholds.routePrecisionMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${stabilizationRouteMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>S02 Verify path completion</span>
+                                                <strong>
+                                                    {stabilizationVerifyPathCompletion === null ? 'N/A' : `${stabilizationVerifyPathCompletion}%`} / min{' '}
+                                                    {studioStabilizationKpiStatus.thresholds.verifyPathCompletionRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${stabilizationVerifyMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>S03 False confidence</span>
+                                                <strong>
+                                                    {stabilizationFalseConfidence === null ? 'N/A' : `${stabilizationFalseConfidence}%`} / max{' '}
+                                                    {studioStabilizationKpiStatus.thresholds.falseConfidenceRateMax}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${stabilizationFalseConfidenceMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>S04 Rollback recovery success</span>
+                                                <strong>
+                                                    {stabilizationRollbackRecovery === null ? 'N/A' : `${stabilizationRollbackRecovery}%`} / min{' '}
+                                                    {studioStabilizationKpiStatus.thresholds.rollbackRecoverySuccessRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${stabilizationRollbackMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>S05 Repeat verified resolution</span>
+                                                <strong>
+                                                    {stabilizationRepeatResolution === null ? 'N/A' : `${stabilizationRepeatResolution}%`} / min{' '}
+                                                    {studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${stabilizationRepeatMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>S05-Cohort Repeat with artifact</span>
+                                                <strong>
+                                                    {stabilizationRepeatWithArtifact === null ? 'N/A' : `${stabilizationRepeatWithArtifact}%`} / min{' '}
+                                                    {studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}%
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${Math.max(0, Math.min(100, stabilizationRepeatWithArtifact ?? 0))}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-stats-row">
+                                                <div>
+                                                    <Activity size={12} />
+                                                    <span>
+                                                        routes: {studioStabilizationKpiStatus.metrics.routeMatchedWithoutFallback} success /{' '}
+                                                        {studioStabilizationKpiStatus.metrics.routeFallbackCount} fallback
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <Sparkles size={12} />
+                                                    <span>
+                                                        fallback mix: success {stabilizationFallbackMix?.success ?? 0}, bare{' '}
+                                                        {stabilizationFallbackMix?.bare_keyword_only ?? 0}, fix-preview{' '}
+                                                        {stabilizationFallbackMix?.fix_preview_fallback ?? 0}, default{' '}
+                                                        {stabilizationFallbackMix?.orchestrate_default ?? 0}, other{' '}
+                                                        {stabilizationFallbackMix?.other ?? 0}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <CheckCircle2 size={12} />
+                                                    <span>
+                                                        verify path: {studioStabilizationKpiStatus.metrics.verifyPathPresent} / required{' '}
+                                                        {studioStabilizationKpiStatus.metrics.verifyRequired}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <AlertTriangle size={12} />
+                                                    <span>verify-path misses: {stabilizationVerifyPathReasonTopText}</span>
+                                                </div>
+                                                <div>
+                                                    <RotateCw size={12} />
+                                                    <span>
+                                                        recovery class mix: auto {stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0}, manual{' '}
+                                                        {stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0}, unspecified{' '}
+                                                        {stabilizationRecoveryClassBreakdown?.unspecified ?? 0}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <RotateCw size={12} />
+                                                    <span>
+                                                        repeated incidents: {studioStabilizationKpiStatus.metrics.repeatVerifiedResolved} resolved /{' '}
+                                                        {studioStabilizationKpiStatus.metrics.repeatedIncidentDetected} detected
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="incident-action-row">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn secondary"
+                                                    onClick={() => copyStabilizationSnapshot('markdown', stabilizationSnapshotMarkdown)}
+                                                >
+                                                    {stabilizationSnapshotCopiedFormat === 'markdown' ? 'Copied Markdown' : 'Copy as Markdown'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn secondary"
+                                                    onClick={() => copyStabilizationSnapshot('json', stabilizationSnapshotJson)}
+                                                >
+                                                    {stabilizationSnapshotCopiedFormat === 'json' ? 'Copied JSON' : 'Copy as JSON'}
+                                                </button>
+                                            </div>
+                                        </details>
+                                    ) : null}
+
                                     {studioReproPackKpiStatus ? (
                                         <details className="incident-collapse incident-collapse--snapshot incident-health-section">
                                             <summary>
@@ -2621,6 +3115,127 @@ export function AIIncidentStudio({
                                                         evidence: {studioReproPackKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
                                                     </span>
                                                 </div>
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {releaseReadinessValidationKpiStatus ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Release readiness validation</span>
+                                                <small>{releaseReadinessValidationKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
+                                            </summary>
+                                            <div className="incident-metric-card">
+                                                <span>Decision accuracy</span>
+                                                <strong>
+                                                    {releaseDecisionAccuracy === null ? 'N/A' : `${releaseDecisionAccuracy}%`}
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${releaseDecisionAccuracyMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>No-go prevented incident rate</span>
+                                                <strong>
+                                                    {noGoPreventedIncidentRate === null ? 'N/A' : `${noGoPreventedIncidentRate}%`}
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${noGoPreventedIncidentMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-stats-row">
+                                                <div>
+                                                    <Package size={12} />
+                                                    <span>
+                                                        artifacts: {releaseReadinessValidationKpiStatus.metrics.releaseReadinessArtifactsExported} / validated:{' '}
+                                                        {releaseReadinessValidationKpiStatus.metrics.decisionsValidated}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <CheckCircle2 size={12} />
+                                                    <span>
+                                                        go: {releaseReadinessValidationKpiStatus.metrics.goDecisionsExported} / no-go:{' '}
+                                                        {releaseReadinessValidationKpiStatus.metrics.noGoDecisionsExported}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <Activity size={12} />
+                                                    <span>
+                                                        evidence: {releaseReadinessValidationKpiStatus.gates.telemetryEvidencePass ? 'present' : 'missing'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="incident-action-row">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn secondary"
+                                                    onClick={() => onChatBrainExecuteAction?.('release-readiness-commander')}
+                                                >
+                                                    Generate release-readiness artifact
+                                                </button>
+                                            </div>
+                                        </details>
+                                    ) : null}
+
+                                    {verifiedOutcomeLoopStatus ? (
+                                        <details className="incident-collapse incident-collapse--snapshot incident-health-section">
+                                            <summary>
+                                                <span>Verified outcome loop</span>
+                                                <small>{verifiedOutcomeLoopStatus.gates.overallPass ? 'PASS' : 'IN PROGRESS'}</small>
+                                            </summary>
+                                            <div className="incident-metric-card">
+                                                <span>Replay-to-resolution</span>
+                                                <strong>
+                                                    {loopReplayToResolutionRate === null ? 'N/A' : `${loopReplayToResolutionRate}%`}
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${loopReplayMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-metric-card">
+                                                <span>Release decision accuracy</span>
+                                                <strong>
+                                                    {loopReleaseDecisionAccuracy === null ? 'N/A' : `${loopReleaseDecisionAccuracy}%`}
+                                                </strong>
+                                                <div className="incident-meter">
+                                                    <span style={{ width: `${loopReleaseMeter}%` }} />
+                                                </div>
+                                            </div>
+                                            <div className="incident-stats-row">
+                                                <div>
+                                                    <CheckCircle2 size={12} />
+                                                    <span>verified outcomes: {verifiedOutcomeLoopStatus.verifiedOutcomes}</span>
+                                                </div>
+                                                <div>
+                                                    <RotateCw size={12} />
+                                                    <span>
+                                                        replay ready: {verifiedOutcomeLoopStatus.reusableArtifacts.replayReady} / memory enriched:{' '}
+                                                        {verifiedOutcomeLoopStatus.reusableArtifacts.memoryEnriched}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <Package size={12} />
+                                                    <span>
+                                                        repro exports: {verifiedOutcomeLoopStatus.reusableArtifacts.reproPacksExported} / release artifacts:{' '}
+                                                        {verifiedOutcomeLoopStatus.reusableArtifacts.releaseArtifactsExported}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="incident-action-row">
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn secondary"
+                                                    onClick={() => onChatBrainExecuteAction?.('incident-repro-pack')}
+                                                >
+                                                    Export reproducible incident pack
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn secondary"
+                                                    onClick={() => onChatBrainExecuteAction?.('release-readiness-commander')}
+                                                >
+                                                    Export release-readiness evidence
+                                                </button>
                                             </div>
                                         </details>
                                     ) : null}
@@ -3330,6 +3945,54 @@ export function AIIncidentStudio({
                                                             }}
                                                         >
                                                             Export Go/No-Go artifact
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn"
+                                                            onClick={() => {
+                                                                const artifact = chatBrainActionResult.releaseReadinessCommander;
+                                                                if (artifact) {
+                                                                    copyReleaseReadinessShare(artifact, 'approval-note');
+                                                                }
+                                                            }}
+                                                        >
+                                                            {releaseReadinessCopiedFormat === 'approval-note' &&
+                                                                releaseReadinessCopiedArtifactId ===
+                                                                chatBrainActionResult.releaseReadinessCommander.artifactId
+                                                                ? 'Copied approval note'
+                                                                : 'Copy approval note'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn"
+                                                            onClick={() => {
+                                                                const artifact = chatBrainActionResult.releaseReadinessCommander;
+                                                                if (artifact) {
+                                                                    copyReleaseReadinessShare(artifact, 'signoff');
+                                                                }
+                                                            }}
+                                                        >
+                                                            {releaseReadinessCopiedFormat === 'signoff' &&
+                                                                releaseReadinessCopiedArtifactId ===
+                                                                chatBrainActionResult.releaseReadinessCommander.artifactId
+                                                                ? 'Copied signoff packet'
+                                                                : 'Copy signoff packet'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="incident-btn"
+                                                            onClick={() => {
+                                                                const artifact = chatBrainActionResult.releaseReadinessCommander;
+                                                                if (artifact) {
+                                                                    copyReleaseReadinessShare(artifact, 'json');
+                                                                }
+                                                            }}
+                                                        >
+                                                            {releaseReadinessCopiedFormat === 'json' &&
+                                                                releaseReadinessCopiedArtifactId ===
+                                                                chatBrainActionResult.releaseReadinessCommander.artifactId
+                                                                ? 'Copied artifact JSON'
+                                                                : 'Copy artifact JSON'}
                                                         </button>
                                                     </div>
                                                 </div>

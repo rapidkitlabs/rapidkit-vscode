@@ -285,6 +285,66 @@ export interface StudioRollbackKpiStatus {
   };
 }
 
+export interface StudioStabilizationKpiThresholds {
+  routePrecisionMin: number;
+  verifyPathCompletionRateMin: number;
+  falseConfidenceRateMax: number;
+  rollbackRecoverySuccessRateMin: number;
+  repeatVerifiedResolutionRateMin: number;
+}
+
+export interface StudioStabilizationKpiStatus {
+  workspacePath: string;
+  timeWindow: CommandTelemetryTimeWindow;
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: StudioStabilizationKpiThresholds;
+  metrics: {
+    nextActionClicked: number;
+    routeMatchedWithoutFallback: number;
+    routeFallbackCount: number;
+    routePrecision: number | null;
+    verifyRequired: number;
+    verifyPathPresent: number;
+    verifyPathCompletionRate: number | null;
+    verifyFailed: number;
+    rollbackAttempted: number;
+    rollbackSucceeded: number;
+    falseConfidenceRate: number | null;
+    rollbackRecoverySuccessRate: number | null;
+    repeatedIncidentDetected: number;
+    repeatVerifiedResolved: number;
+    repeatVerifiedResolutionRate: number | null;
+    repeatVerifiedWithArtifactReady?: number;
+    repeatVerifiedWithArtifactRate?: number | null;
+    fallbackReasonBreakdown?: {
+      success: number;
+      bare_keyword_only: number;
+      fix_preview_fallback: number;
+      orchestrate_default: number;
+      other: number;
+    };
+    verifyPathReasonTop?: Array<{
+      reason: string;
+      count: number;
+    }>;
+    recoveryClassBreakdown?: {
+      auto_rollback: number;
+      manual_recovery: number;
+      unspecified: number;
+    };
+  };
+  gates: {
+    telemetryEvidencePass: boolean;
+    routePrecisionPass: boolean;
+    verifyPathCompletionRatePass: boolean;
+    falseConfidenceRatePass: boolean;
+    rollbackRecoverySuccessRatePass: boolean;
+    repeatVerifiedResolutionRatePass: boolean;
+    overallPass: boolean;
+  };
+}
+
 export interface StudioReproPackKpiThresholds {
   reproPackShareRateMin: number;
   replayToResolutionRateMin: number;
@@ -468,7 +528,12 @@ const TELEMETRY_SURFACE_ALLOWLIST: TelemetrySurfaceAllowlistRule[] = [
   {
     surface: 'action',
     pattern:
-      /^workspai\.studio\.(loop_started|next_action_clicked|action_executed|verify_passed|verify_failed|loop_completed|abandoned|prediction_shown|prediction_accepted|prediction_verified|prediction_falsified|rollback_attempted|rollback_succeeded|rollback_failed|incident_repro_pack_captured|incident_repro_pack_exported|incident_repro_pack_imported|incident_replay_ready|incident_replay_memory_enriched)$/,
+      /^workspai\.studio\.(loop_started|next_action_clicked|action_executed|verify_passed|verify_failed|verified_outcome_ready_for_artifact|outcome_memory_suggestion_ready|loop_completed|abandoned|prediction_shown|prediction_accepted|prediction_verified|prediction_falsified|rollback_attempted|rollback_succeeded|rollback_failed|incident_repro_pack_captured|incident_repro_pack_exported|incident_repro_pack_imported|incident_replay_ready|incident_replay_memory_enriched|repeated_incident_detected|verify_incomplete_warning)$/,
+  },
+  {
+    surface: 'action',
+    pattern:
+      /^workspai\.studio\.(release_readiness_artifact_exported|release_readiness_go_decision_exported|release_readiness_no_go_decision_exported|release_readiness_decision_validated|release_readiness_decision_correct|release_readiness_no_go_decision_validated|release_readiness_no_go_prevented_incident)$/,
   },
   {
     surface: 'action',
@@ -576,6 +641,9 @@ export class WorkspaceUsageTracker {
     }
     if (timeWindow === 'last7d') {
       return nowMs - 7 * 24 * 60 * 60 * 1000;
+    }
+    if (timeWindow === 'last30d') {
+      return nowMs - 30 * 24 * 60 * 60 * 1000;
     }
     return null;
   }
@@ -2366,6 +2434,296 @@ export class WorkspaceUsageTracker {
       };
     } catch (error) {
       this.logger.debug(`Failed to read studio rollback KPI status: ${error}`);
+      return null;
+    }
+  }
+
+  async getStudioStabilizationKpiStatus(
+    preferredWorkspacePath?: string,
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    thresholds: Partial<StudioStabilizationKpiThresholds> = {}
+  ): Promise<StudioStabilizationKpiStatus | null> {
+    const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
+    if (!workspacePath) {
+      return null;
+    }
+
+    try {
+      const marker = await readWorkspaceMarker(workspacePath);
+      if (!marker) {
+        return null;
+      }
+
+      const telemetryRaw = marker.metadata?.custom?.workspaiTelemetry;
+      const telemetry =
+        telemetryRaw && typeof telemetryRaw === 'object'
+          ? (telemetryRaw as Record<string, unknown>)
+          : {};
+
+      const recentEvents = this.parseRecentEvents(telemetry.recentEvents);
+      const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
+      const nowMs = Date.now();
+      const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
+      const filteredRecentEvents =
+        windowStartMs === null
+          ? recentEvents
+          : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+
+      const usageMap = this.buildStudioUsageMap({
+        commandUsage: telemetry.commandUsage,
+        hourlyUsage,
+        recentEvents,
+        timeWindow,
+        windowStartMs,
+        windowEndMs: nowMs,
+        preferredCommands: [
+          'workspai.studio.next_action_clicked',
+          'workspai.studio.verify_passed',
+          'workspai.studio.verify_failed',
+          'workspai.studio.verify_incomplete_warning',
+          'workspai.studio.rollback_attempted',
+          'workspai.studio.rollback_succeeded',
+          'workspai.studio.repeated_incident_detected',
+        ],
+      });
+
+      const nextActionClicked = usageMap.get('workspai.studio.next_action_clicked') ?? 0;
+      const verifyPassed = usageMap.get('workspai.studio.verify_passed') ?? 0;
+      const verifyFailed = usageMap.get('workspai.studio.verify_failed') ?? 0;
+      const rollbackAttempted = usageMap.get('workspai.studio.rollback_attempted') ?? 0;
+      const rollbackSucceeded = usageMap.get('workspai.studio.rollback_succeeded') ?? 0;
+      const repeatedIncidentDetected =
+        usageMap.get('workspai.studio.repeated_incident_detected') ?? 0;
+
+      let routeMatchedWithoutFallback = 0;
+      let routeFallbackCount = 0;
+      let verifyRequired = 0;
+      let verifyPathPresent = 0;
+      let repeatVerifiedResolved = 0;
+      let repeatVerifiedWithArtifactReady = 0;
+      const fallbackReasonBreakdown = {
+        success: 0,
+        bare_keyword_only: 0,
+        fix_preview_fallback: 0,
+        orchestrate_default: 0,
+        other: 0,
+      };
+      const verifyPathReasonCount = new Map<string, number>();
+      const recoveryClassBreakdown = {
+        auto_rollback: 0,
+        manual_recovery: 0,
+        unspecified: 0,
+      };
+
+      for (const entry of filteredRecentEvents) {
+        if (entry.command === 'workspai.studio.next_action_clicked') {
+          const fallbackReason = entry.props?.fallbackReason;
+          if (typeof fallbackReason === 'string') {
+            if (fallbackReason === 'success') {
+              routeMatchedWithoutFallback += 1;
+              fallbackReasonBreakdown.success += 1;
+            } else {
+              routeFallbackCount += 1;
+              if (fallbackReason === 'bare_keyword_only') {
+                fallbackReasonBreakdown.bare_keyword_only += 1;
+              } else if (fallbackReason === 'fix_preview_fallback') {
+                fallbackReasonBreakdown.fix_preview_fallback += 1;
+              } else if (fallbackReason === 'orchestrate_default') {
+                fallbackReasonBreakdown.orchestrate_default += 1;
+              } else {
+                fallbackReasonBreakdown.other += 1;
+              }
+            }
+          } else {
+            // Legacy telemetry did not include fallbackReason; treat as success for continuity.
+            routeMatchedWithoutFallback += 1;
+            fallbackReasonBreakdown.success += 1;
+          }
+        }
+
+        if (
+          entry.command === 'workspai.studio.verify_passed' ||
+          entry.command === 'workspai.studio.verify_failed'
+        ) {
+          const verifyRequiredProp = entry.props?.verifyRequired;
+          const verifyRequiredFlag =
+            typeof verifyRequiredProp === 'boolean' ? verifyRequiredProp : true;
+
+          if (!verifyRequiredFlag) {
+            continue;
+          }
+
+          verifyRequired += 1;
+
+          const verifyPathPresentProp = entry.props?.verifyPathPresent;
+          const verifyCompletenessAdequateProp = entry.props?.verifyCompletenessAdequate;
+          const verifyPathPresentFlag =
+            typeof verifyPathPresentProp === 'boolean'
+              ? verifyPathPresentProp
+              : typeof verifyCompletenessAdequateProp === 'boolean'
+                ? verifyCompletenessAdequateProp
+                : entry.command === 'workspai.studio.verify_passed';
+
+          const verifyPathReasonRaw = entry.props?.verifyPathReason;
+          const verifyPathReason =
+            typeof verifyPathReasonRaw === 'string' && verifyPathReasonRaw.trim().length > 0
+              ? verifyPathReasonRaw.trim().toLowerCase()
+              : verifyPathPresentFlag
+                ? 'ok'
+                : 'unspecified';
+          if (!verifyPathPresentFlag) {
+            verifyPathReasonCount.set(
+              verifyPathReason,
+              (verifyPathReasonCount.get(verifyPathReason) ?? 0) + 1
+            );
+          }
+
+          if (verifyPathPresentFlag) {
+            verifyPathPresent += 1;
+          }
+
+          if (entry.command === 'workspai.studio.verify_passed') {
+            const repeatedIncidentProp = entry.props?.repeatedIncident;
+            if (repeatedIncidentProp === true) {
+              repeatVerifiedResolved += 1;
+            }
+          }
+        }
+
+        // Track recovery class from rollback events
+        if (
+          entry.command === 'workspai.studio.rollback_attempted' ||
+          entry.command === 'workspai.studio.rollback_succeeded' ||
+          entry.command === 'workspai.studio.rollback_failed'
+        ) {
+          const recoveryClass = entry.props?.recoveryClass;
+          if (typeof recoveryClass === 'string') {
+            if (recoveryClass === 'auto_rollback') {
+              recoveryClassBreakdown.auto_rollback += 1;
+            } else if (recoveryClass === 'manual_recovery') {
+              recoveryClassBreakdown.manual_recovery += 1;
+            } else {
+              recoveryClassBreakdown.unspecified += 1;
+            }
+          } else {
+            recoveryClassBreakdown.unspecified += 1;
+          }
+        }
+
+        // Track S05 cohort validation: repeated incidents with artifact ready
+        if (entry.command === 'workspai.studio.verified_outcome_ready_for_artifact') {
+          const repeatedIncidentProp = entry.props?.repeatedIncident;
+          const replayReadyProp = entry.props?.replayReady;
+          if (repeatedIncidentProp === true && replayReadyProp === true) {
+            repeatVerifiedWithArtifactReady += 1;
+          }
+        }
+      }
+
+      const routePrecision = this.percent(routeMatchedWithoutFallback, nextActionClicked);
+      const verifyPathCompletionRate = this.percent(verifyPathPresent, verifyRequired);
+      const falseConfidenceRate =
+        verifyFailed > 0
+          ? Number((((verifyFailed - rollbackSucceeded) / verifyFailed) * 100).toFixed(2))
+          : null;
+      const rollbackRecoverySuccessRate = this.percent(rollbackSucceeded, rollbackAttempted);
+      const repeatVerifiedResolutionRate = this.percent(
+        repeatVerifiedResolved,
+        repeatedIncidentDetected
+      );
+      const repeatVerifiedWithArtifactRate = this.percent(
+        repeatVerifiedWithArtifactReady,
+        repeatedIncidentDetected
+      );
+      const verifyPathReasonTop = [...verifyPathReasonCount.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([reason, count]) => ({ reason, count }));
+
+      const resolvedThresholds: StudioStabilizationKpiThresholds = {
+        routePrecisionMin:
+          typeof thresholds.routePrecisionMin === 'number' ? thresholds.routePrecisionMin : 85,
+        verifyPathCompletionRateMin:
+          typeof thresholds.verifyPathCompletionRateMin === 'number'
+            ? thresholds.verifyPathCompletionRateMin
+            : 60,
+        falseConfidenceRateMax:
+          typeof thresholds.falseConfidenceRateMax === 'number'
+            ? thresholds.falseConfidenceRateMax
+            : 40,
+        rollbackRecoverySuccessRateMin:
+          typeof thresholds.rollbackRecoverySuccessRateMin === 'number'
+            ? thresholds.rollbackRecoverySuccessRateMin
+            : 60,
+        repeatVerifiedResolutionRateMin:
+          typeof thresholds.repeatVerifiedResolutionRateMin === 'number'
+            ? thresholds.repeatVerifiedResolutionRateMin
+            : 50,
+      };
+
+      const telemetryEvidencePass =
+        nextActionClicked > 0 || verifyPassed > 0 || verifyFailed > 0 || rollbackAttempted > 0;
+      const routePrecisionPass =
+        routePrecision !== null && routePrecision >= resolvedThresholds.routePrecisionMin;
+      const verifyPathCompletionRatePass =
+        verifyPathCompletionRate !== null &&
+        verifyPathCompletionRate >= resolvedThresholds.verifyPathCompletionRateMin;
+      const falseConfidenceRatePass =
+        falseConfidenceRate !== null &&
+        falseConfidenceRate <= resolvedThresholds.falseConfidenceRateMax;
+      const rollbackRecoverySuccessRatePass =
+        rollbackRecoverySuccessRate !== null &&
+        rollbackRecoverySuccessRate >= resolvedThresholds.rollbackRecoverySuccessRateMin;
+      const repeatVerifiedResolutionRatePass =
+        repeatVerifiedResolutionRate === null ||
+        repeatVerifiedResolutionRate >= resolvedThresholds.repeatVerifiedResolutionRateMin;
+
+      return {
+        workspacePath,
+        timeWindow,
+        windowStartAt: windowStartMs === null ? null : new Date(windowStartMs).toISOString(),
+        windowEndAt: new Date(nowMs).toISOString(),
+        thresholds: resolvedThresholds,
+        metrics: {
+          nextActionClicked,
+          routeMatchedWithoutFallback,
+          routeFallbackCount,
+          routePrecision,
+          verifyRequired,
+          verifyPathPresent,
+          verifyPathCompletionRate,
+          verifyFailed,
+          rollbackAttempted,
+          rollbackSucceeded,
+          falseConfidenceRate,
+          rollbackRecoverySuccessRate,
+          repeatedIncidentDetected,
+          repeatVerifiedResolved,
+          repeatVerifiedResolutionRate,
+          repeatVerifiedWithArtifactReady,
+          repeatVerifiedWithArtifactRate,
+          fallbackReasonBreakdown,
+          verifyPathReasonTop,
+          recoveryClassBreakdown,
+        },
+        gates: {
+          telemetryEvidencePass,
+          routePrecisionPass,
+          verifyPathCompletionRatePass,
+          falseConfidenceRatePass,
+          rollbackRecoverySuccessRatePass,
+          repeatVerifiedResolutionRatePass,
+          overallPass:
+            telemetryEvidencePass &&
+            routePrecisionPass &&
+            verifyPathCompletionRatePass &&
+            falseConfidenceRatePass &&
+            rollbackRecoverySuccessRatePass &&
+            repeatVerifiedResolutionRatePass,
+        },
+      };
+    } catch (error) {
+      this.logger.debug(`Failed to read studio stabilization KPI status: ${error}`);
       return null;
     }
   }

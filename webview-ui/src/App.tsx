@@ -183,6 +183,50 @@ export function App() {
                 overallPass: boolean;
             };
         } | null;
+        releaseReadinessValidationKpiStatus?: {
+            workspacePath: string;
+            timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d';
+            windowStartAt: string | null;
+            windowEndAt: string;
+            metrics: {
+                releaseReadinessArtifactsExported: number;
+                goDecisionsExported: number;
+                noGoDecisionsExported: number;
+                decisionsValidated: number;
+                decisionsCorrect: number;
+                noGoDecisionsValidated: number;
+                noGoPreventedIncident: number;
+                releaseReadinessDecisionAccuracy: number | null;
+                noGoPreventedIncidentRate: number | null;
+            };
+            gates: {
+                telemetryEvidencePass: boolean;
+                releaseReadinessDecisionAccuracyAvailable: boolean;
+                noGoPreventedIncidentRateAvailable: boolean;
+                overallPass: boolean;
+            };
+        } | null;
+        verifiedOutcomeLoopStatus?: {
+            workspacePath: string | null;
+            timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d' | null;
+            verifiedOutcomes: number;
+            reusableArtifacts: {
+                reproPacksExported: number;
+                replayReady: number;
+                memoryEnriched: number;
+                releaseArtifactsExported: number;
+            };
+            conversionRates: {
+                replayToResolutionRate: number | null;
+                releaseDecisionAccuracy: number | null;
+                noGoPreventedIncidentRate: number | null;
+            };
+            gates: {
+                reproEvidencePass: boolean;
+                releaseEvidencePass: boolean;
+                overallPass: boolean;
+            };
+        } | null;
         doctorSummary?: {
             workspaceName?: string;
             generatedAt?: string;

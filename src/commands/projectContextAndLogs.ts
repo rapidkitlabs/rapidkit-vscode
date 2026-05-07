@@ -178,6 +178,11 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
           selectedWorkspace?.path,
           timeWindowPick.value
         );
+      const stabilizationKpiStatus =
+        await WorkspaceUsageTracker.getInstance().getStudioStabilizationKpiStatus(
+          selectedWorkspace?.path,
+          timeWindowPick.value
+        );
 
       if (!summary) {
         vscode.window.showWarningMessage(
@@ -254,6 +259,33 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
           `(threshold: ${rollbackKpiStatus?.thresholds.verifyAutoRollbackSuccessRateMin ?? 'n/a'}%)`,
         `Rollback false-confidence rate: ${rollbackKpiStatus?.metrics.falseConfidenceRate ?? 'n/a'}% ` +
           `(threshold: <=${rollbackKpiStatus?.thresholds.falseConfidenceRateMax ?? 'n/a'}%)`,
+        `Stabilization KPI overall (S01-S05): ${
+          stabilizationKpiStatus?.gates.overallPass ? 'PASS' : 'FAIL'
+        }`,
+        `S01 route precision: ${stabilizationKpiStatus?.metrics.routePrecision ?? 'n/a'}% ` +
+          `(threshold: ${stabilizationKpiStatus?.thresholds.routePrecisionMin ?? 'n/a'}%)`,
+        `S02 verify path completion: ${
+          stabilizationKpiStatus?.metrics.verifyPathCompletionRate ?? 'n/a'
+        }% ` +
+          `(threshold: ${
+            stabilizationKpiStatus?.thresholds.verifyPathCompletionRateMin ?? 'n/a'
+          }%)`,
+        `S03 false-confidence rate: ${
+          stabilizationKpiStatus?.metrics.falseConfidenceRate ?? 'n/a'
+        }% ` +
+          `(threshold: <=${stabilizationKpiStatus?.thresholds.falseConfidenceRateMax ?? 'n/a'}%)`,
+        `S04 rollback recovery success: ${
+          stabilizationKpiStatus?.metrics.rollbackRecoverySuccessRate ?? 'n/a'
+        }% ` +
+          `(threshold: ${
+            stabilizationKpiStatus?.thresholds.rollbackRecoverySuccessRateMin ?? 'n/a'
+          }%)`,
+        `S05 repeat verified resolution: ${
+          stabilizationKpiStatus?.metrics.repeatVerifiedResolutionRate ?? 'n/a'
+        }% ` +
+          `(threshold: ${
+            stabilizationKpiStatus?.thresholds.repeatVerifiedResolutionRateMin ?? 'n/a'
+          }%)`,
         `Surface mix:\n${surfaceRows || 'n/a'}`,
       ].join('\n');
 
@@ -267,6 +299,7 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
         architectureReasoningKpiStatus: architectureKpiStatus,
         sandboxKpiStatus,
         studioRollbackKpiStatus: rollbackKpiStatus,
+        studioStabilizationKpiStatus: stabilizationKpiStatus,
       };
 
       const doc = await vscode.workspace.openTextDocument({

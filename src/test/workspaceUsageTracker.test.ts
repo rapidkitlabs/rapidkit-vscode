@@ -412,6 +412,108 @@ describe('workspaceUsageTracker telemetry stability', () => {
     expect(summary?.surfaceBreakdown.actionVsAskShare).toBe(77.78);
   });
 
+  it('classifies release-readiness studio events as action telemetry surface', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-release-surface');
+
+    createWorkspaceMarker(workspacePath, {
+      commandUsage: {
+        'workspai.studio.release_readiness_artifact_exported': 2,
+        'workspai.studio.release_readiness_go_decision_exported': 1,
+        'workspai.studio.release_readiness_decision_validated': 1,
+        'workspai.studio.release_readiness_decision_correct': 1,
+        'workspai.chat.ask': 2,
+      },
+      recentEvents: [
+        {
+          command: 'workspai.studio.release_readiness_artifact_exported',
+          at: '2026-04-22T12:10:00.000Z',
+        },
+        { command: 'workspai.chat.ask', at: '2026-04-22T12:12:00.000Z' },
+      ],
+      lastCommand: 'workspai.chat.ask',
+      lastCommandAt: '2026-04-22T12:12:00.000Z',
+    });
+
+    const summary = await WorkspaceUsageTracker.getInstance().getCommandTelemetrySummary(
+      workspacePath,
+      'all'
+    );
+
+    expect(summary).not.toBeNull();
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(5);
+    expect(summary?.surfaceBreakdown.askEvents).toBe(2);
+    expect(summary?.surfaceBreakdown.actionVsAskShare).toBe(71.43);
+    expect(
+      summary?.surfaceBreakdown.bySurface.find((entry) => entry.surface === 'other')?.count
+    ).toBe(0);
+  });
+
+  it('classifies verified-outcome readiness event as action telemetry surface', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-verified-outcome-surface');
+
+    createWorkspaceMarker(workspacePath, {
+      commandUsage: {
+        'workspai.studio.verify_passed': 2,
+        'workspai.studio.verified_outcome_ready_for_artifact': 2,
+        'workspai.studio.incident_repro_pack_exported': 1,
+        'workspai.chat.ask': 1,
+      },
+      recentEvents: [
+        {
+          command: 'workspai.studio.verified_outcome_ready_for_artifact',
+          at: '2026-04-22T12:18:00.000Z',
+        },
+        { command: 'workspai.chat.ask', at: '2026-04-22T12:19:00.000Z' },
+      ],
+      lastCommand: 'workspai.chat.ask',
+      lastCommandAt: '2026-04-22T12:19:00.000Z',
+    });
+
+    const summary = await WorkspaceUsageTracker.getInstance().getCommandTelemetrySummary(
+      workspacePath,
+      'all'
+    );
+
+    expect(summary).not.toBeNull();
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(5);
+    expect(summary?.surfaceBreakdown.askEvents).toBe(1);
+    expect(summary?.surfaceBreakdown.actionVsAskShare).toBe(83.33);
+    expect(
+      summary?.surfaceBreakdown.bySurface.find((entry) => entry.surface === 'other')?.count
+    ).toBe(0);
+  });
+
+  it('classifies repeated_incident_detected and verify_incomplete_warning as action telemetry surface', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-phase1-stabilization-events');
+
+    createWorkspaceMarker(workspacePath, {
+      commandUsage: {
+        'workspai.studio.repeated_incident_detected': 3,
+        'workspai.studio.verify_incomplete_warning': 2,
+        'workspai.chat.ask': 1,
+      },
+      recentEvents: [
+        { command: 'workspai.studio.repeated_incident_detected', at: '2026-05-07T10:00:00.000Z' },
+        { command: 'workspai.studio.verify_incomplete_warning', at: '2026-05-07T10:01:00.000Z' },
+        { command: 'workspai.chat.ask', at: '2026-05-07T10:02:00.000Z' },
+      ],
+      lastCommand: 'workspai.studio.verify_incomplete_warning',
+      lastCommandAt: '2026-05-07T10:01:00.000Z',
+    });
+
+    const summary = await WorkspaceUsageTracker.getInstance().getCommandTelemetrySummary(
+      workspacePath,
+      'all'
+    );
+
+    expect(summary).not.toBeNull();
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(5);
+    expect(summary?.surfaceBreakdown.askEvents).toBe(1);
+    expect(
+      summary?.surfaceBreakdown.bySurface.find((entry) => entry.surface === 'other')?.count
+    ).toBe(0);
+  });
+
   it('treats non-allowlisted ai commands as other surface to prevent drift', async () => {
     const workspacePath = path.join(tempRoot, 'ws-allowlist');
 
@@ -936,6 +1038,83 @@ describe('workspaceUsageTracker telemetry stability', () => {
 
     const summary = await tracker.getCommandTelemetrySummary(workspacePath, 'all');
     expect(summary?.surfaceBreakdown.actionEvents).toBe(13);
+  });
+
+  it('computes stabilization KPI status (S01-S05) from studio events with fallback and verify metadata', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-stabilization-kpi');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+
+    await tracker.trackCommandEvent('workspai.studio.next_action_clicked', workspacePath, {
+      actionType: 'doctor-fix',
+      fallbackReason: 'success',
+    });
+    await tracker.trackCommandEvent('workspai.studio.next_action_clicked', workspacePath, {
+      actionType: 'terminal-bridge',
+      fallbackReason: 'bare_keyword_only',
+    });
+    await tracker.trackCommandEvent('workspai.studio.next_action_clicked', workspacePath, {
+      actionType: 'verify-pack-autopilot',
+      fallbackReason: 'success',
+    });
+
+    await tracker.trackCommandEvent('workspai.studio.repeated_incident_detected', workspacePath, {
+      actionType: 'doctor-fix',
+      repeatScore: 78,
+    });
+
+    await tracker.trackCommandEvent('workspai.studio.verify_passed', workspacePath, {
+      actionType: 'doctor-fix',
+      verifyRequired: true,
+      verifyPathPresent: true,
+      repeatedIncident: true,
+    });
+    await tracker.trackCommandEvent('workspai.studio.verify_passed', workspacePath, {
+      actionType: 'verify-pack-autopilot',
+      verifyRequired: true,
+      verifyPathPresent: true,
+      repeatedIncident: false,
+    });
+    await tracker.trackCommandEvent('workspai.studio.verify_failed', workspacePath, {
+      actionType: 'terminal-bridge',
+      verifyRequired: true,
+      verifyPathPresent: false,
+      verifyPathReason: 'missing_verify_step',
+    });
+
+    await tracker.trackCommandEvent('workspai.studio.rollback_attempted', workspacePath, {
+      rollbackStatus: 'succeeded',
+    });
+    await tracker.trackCommandEvent('workspai.studio.rollback_succeeded', workspacePath, {
+      rollbackStatus: 'succeeded',
+    });
+
+    const status = await tracker.getStudioStabilizationKpiStatus(workspacePath, 'all', {
+      routePrecisionMin: 60,
+      verifyPathCompletionRateMin: 60,
+      falseConfidenceRateMax: 40,
+      rollbackRecoverySuccessRateMin: 60,
+      repeatVerifiedResolutionRateMin: 50,
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.metrics.nextActionClicked).toBe(3);
+    expect(status?.metrics.routeMatchedWithoutFallback).toBe(2);
+    expect(status?.metrics.routeFallbackCount).toBe(1);
+    expect(status?.metrics.routePrecision).toBe(66.67);
+    expect(status?.metrics.verifyRequired).toBe(3);
+    expect(status?.metrics.verifyPathPresent).toBe(2);
+    expect(status?.metrics.verifyPathCompletionRate).toBe(66.67);
+    expect(status?.metrics.verifyFailed).toBe(1);
+    expect(status?.metrics.rollbackAttempted).toBe(1);
+    expect(status?.metrics.rollbackSucceeded).toBe(1);
+    expect(status?.metrics.falseConfidenceRate).toBe(0);
+    expect(status?.metrics.rollbackRecoverySuccessRate).toBe(100);
+    expect(status?.metrics.repeatedIncidentDetected).toBe(1);
+    expect(status?.metrics.repeatVerifiedResolved).toBe(1);
+    expect(status?.metrics.repeatVerifiedResolutionRate).toBe(100);
+    expect(status?.gates.overallPass).toBe(true);
   });
 
   it('uses onboarding hourly buckets for last24h stats instead of recentEvents cap', async () => {

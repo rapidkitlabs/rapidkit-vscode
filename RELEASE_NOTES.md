@@ -1,6 +1,43 @@
 # Release Notes
 
-## Latest Release: v0.24.1 (May 6, 2026)
+## Latest Release: v0.25.0 (May 7, 2026)
+
+### ✦ S01–S05 Full Stabilization Loop — Telemetry Breakdowns + Cohort Validation
+
+**Summary:** Completes the full 5-KPI stabilization loop with false-positive protections. Every KPI now has an operational breakdown (S01 fallback mix, S02 miss reasons, S04 recovery class, S05 artifact cohort) that prevents aggregate metrics from masking degradation. Snapshot exports, UI cards, and operational docs updated end-to-end.
+
+#### Added
+
+- **S01 Fallback-reason breakdown**
+  5-category classification (`success`, `bare_keyword_only`, `fix_preview_fallback`, `orchestrate_default`, `other`) computed from `next_action_clicked` events; visible in snapshot Markdown and card stats row.
+
+- **S02 Verify-path miss reasons (top offenders)**
+  Top-5 miss reasons by frequency extracted from `verify_passed`/`verify_failed` events where `verifyPathPresent=false`; included in snapshot and card.
+
+- **S04 Recovery class breakdown**
+  `auto_rollback` / `manual_recovery` / `unspecified` counts from rollback events; snapshot line `S04 recovery class mix` and card stats row added.
+
+- **S05 Cohort validation**
+  `repeatVerifiedWithArtifactReady` and `repeatVerifiedWithArtifactRate` metrics from `verified_outcome_ready_for_artifact` events with `repeatedIncident=true` and `replayReady=true`; new S05-Cohort card in Stabilization KPI gate UI.
+
+- **Operational docs (KPI map, weekly template, 6-week plan, canonical story)**
+  S01–S05 false-positive risk mitigation playbooks, threshold rules, weekly runbook steps, and False-Positive Prevention Checklist added to all four operational documents.
+
+#### Changed
+
+- Stabilization snapshot Markdown extended with S01 mix, S02 top misses, S04 class, S05 cohort lines.
+- `StudioStabilizationKpiStatus` contract extended (optional fields, backward-compatible).
+- S05 promoted from `Partial` to `Available` in KPI dictionary.
+
+#### Validation Snapshot
+
+- `npm run compile` → pass (no TS errors, webview esbuild clean)
+- `npm run lint` → pass (no ESLint violations)
+- `npm test -- --run` → 701/701 tests pass
+
+---
+
+## Previous Release: v0.24.1 (May 6, 2026)
 
 ### ✦ Incident Studio UX Polish + Dashboard AI Surface + Docs Refresh
 

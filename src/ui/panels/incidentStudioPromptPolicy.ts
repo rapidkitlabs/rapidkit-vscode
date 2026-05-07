@@ -150,3 +150,85 @@ export function buildIncidentFirstResponseRules(input: {
 
   return rules;
 }
+
+// ---------------------------------------------------------------------------
+// Confidence labeling — maps architecture scope assessment to a human label
+// ---------------------------------------------------------------------------
+
+export type IncidentDiagnosisConfidenceLabel = 'high' | 'medium' | 'low' | 'unknown';
+
+export function labelDiagnosisConfidence(
+  scopeCoverage: 'known' | 'partial' | 'unknown' | undefined,
+  scopeConfidenceScore: number | undefined
+): IncidentDiagnosisConfidenceLabel {
+  if (scopeCoverage === undefined || scopeConfidenceScore === undefined) {
+    return 'unknown';
+  }
+  if (scopeCoverage === 'unknown') {
+    return scopeConfidenceScore >= 0.45 ? 'low' : 'unknown';
+  }
+  if (scopeCoverage === 'known' && scopeConfidenceScore >= 0.75) {
+    return 'high';
+  }
+  if (scopeConfidenceScore >= 0.45) {
+    return 'medium';
+  }
+  return 'low';
+}
+
+// ---------------------------------------------------------------------------
+// Verify completeness — flags verify-required actions missing a checklist
+// ---------------------------------------------------------------------------
+
+export type VerifyCompletenessAssessment = {
+  adequate: boolean;
+  reason: string | null;
+};
+
+function isActionableVerifyStep(step: string): boolean {
+  const normalized = step.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const nonActionablePatterns = [
+    /^no blocking verify checks detected/i,
+    /^scope is uncertain\./i,
+    /^review workspai contract warnings:/i,
+  ];
+  if (nonActionablePatterns.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+
+  return /\b(run|npm|pnpm|yarn|pytest|jest|vitest|go test|mvn|gradle|rapidkit|python|poetry|cargo)\b/i.test(
+    normalized
+  );
+}
+
+export function assessVerifyCompleteness(
+  policy: Pick<IncidentActionRiskPolicy, 'requiresVerifyPath'>,
+  verifyChecklist: string[]
+): VerifyCompletenessAssessment {
+  if (!policy.requiresVerifyPath) {
+    return { adequate: true, reason: null };
+  }
+  const nonEmpty = verifyChecklist.filter((item) => item.trim().length > 0);
+  if (nonEmpty.length === 0) {
+    return {
+      adequate: false,
+      reason:
+        'Verify checklist is missing: mutating actions require at least one explicit verify step before completion can be claimed.',
+    };
+  }
+
+  const actionableSteps = nonEmpty.filter((item) => isActionableVerifyStep(item));
+  if (actionableSteps.length === 0) {
+    return {
+      adequate: false,
+      reason:
+        'Verify checklist is incomplete: include at least one executable verify command (for example: pnpm test, pytest, rapidkit doctor) before completion can be claimed.',
+    };
+  }
+
+  return { adequate: true, reason: null };
+}

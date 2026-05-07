@@ -4,9 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  assessVerifyCompleteness,
   buildIncidentFirstResponseRules,
   classifyIncidentActionPolicy,
   isIncidentActionAllowlisted,
+  labelDiagnosisConfidence,
 } from '../ui/panels/incidentStudioPromptPolicy';
 
 function readWelcomePanelSource(): string {
@@ -140,5 +142,123 @@ describe('incidentStudioPromptPolicy', () => {
 
     const decisionContractOccurrences = source.match(/Decision Clarity Contract \(required\):/g);
     expect(decisionContractOccurrences?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it('route precision: doctor-fix and recipe-pack routes are reachable', () => {
+    const source = readWelcomePanelSource();
+    expect(source).toContain("actionType: 'doctor-fix'");
+    expect(source).toContain("actionType: 'recipe-pack'");
+  });
+
+  it('route precision: terminal-bridge requires explicit terminal signal, not bare error keyword', () => {
+    const source = readWelcomePanelSource();
+    // Bare 'error' alone should NOT immediately route to terminal-bridge in the primary check
+    expect(source).toContain("normalized.includes('traceback')");
+    expect(source).toContain("normalized.includes('stack trace')");
+    expect(source).toContain("normalized.includes('exception')");
+    // The router must also have a secondary fallback that catches bare 'error'
+    expect(source).toContain("normalized.includes('error') ||");
+  });
+
+  it('route precision: fix-preview-lite requires patch context, not bare fix keyword', () => {
+    const source = readWelcomePanelSource();
+    // fix-preview-lite branch must require additional context beyond bare 'fix'
+    expect(source).toContain("normalized.includes('preview')");
+    expect(source).toContain("normalized.includes('patch')");
+    // Bare 'fix' alone should be paired with code context keywords
+    expect(source).toContain("normalized.includes('fix') &&");
+  });
+
+  it('release gate verify path uses actionable verify completeness (not checklist length only)', () => {
+    const source = readWelcomePanelSource();
+
+    expect(source).toContain('const verifyCompletenessCheck = assessVerifyCompleteness');
+    expect(source).toContain('const verifyPathPresent = verifyCompletenessCheck.adequate;');
+    expect(source).toContain('verifyCompletenessCheck.reason');
+  });
+
+  describe('labelDiagnosisConfidence', () => {
+    it('returns high when scope is known and confidence score >= 0.75', () => {
+      expect(labelDiagnosisConfidence('known', 0.75)).toBe('high');
+      expect(labelDiagnosisConfidence('known', 0.99)).toBe('high');
+    });
+
+    it('returns medium when scope is known/partial and confidence score >= 0.45', () => {
+      expect(labelDiagnosisConfidence('known', 0.6)).toBe('medium');
+      expect(labelDiagnosisConfidence('partial', 0.5)).toBe('medium');
+      expect(labelDiagnosisConfidence('partial', 0.45)).toBe('medium');
+    });
+
+    it('returns low when confidence score is below 0.45 and scope is not fully unknown', () => {
+      expect(labelDiagnosisConfidence('known', 0.3)).toBe('low');
+      expect(labelDiagnosisConfidence('partial', 0.2)).toBe('low');
+    });
+
+    it('returns unknown when scope is undefined or confidence score is missing', () => {
+      expect(labelDiagnosisConfidence(undefined, undefined)).toBe('unknown');
+      expect(labelDiagnosisConfidence(undefined, 0.9)).toBe('unknown');
+      expect(labelDiagnosisConfidence('known', undefined)).toBe('unknown');
+    });
+
+    it('returns low or unknown when scope is unknown based on confidence score', () => {
+      expect(labelDiagnosisConfidence('unknown', 0.5)).toBe('low');
+      expect(labelDiagnosisConfidence('unknown', 0.2)).toBe('unknown');
+    });
+  });
+
+  describe('assessVerifyCompleteness', () => {
+    it('returns adequate when action does not require verify path', () => {
+      const policy = classifyIncidentActionPolicy('terminal-bridge');
+      const result = assessVerifyCompleteness(policy, []);
+      expect(result.adequate).toBe(true);
+      expect(result.reason).toBeNull();
+    });
+
+    it('returns adequate when verify-required action has a non-empty checklist', () => {
+      const policy = classifyIncidentActionPolicy('inline-command');
+      const result = assessVerifyCompleteness(policy, ['pnpm test --filter orders-api']);
+      expect(result.adequate).toBe(true);
+      expect(result.reason).toBeNull();
+    });
+
+    it('returns inadequate when verify-required action has empty checklist', () => {
+      const policy = classifyIncidentActionPolicy('apply-debug-patch');
+      const result = assessVerifyCompleteness(policy, []);
+      expect(result.adequate).toBe(false);
+      expect(result.reason).toContain('mutating actions require at least one explicit verify step');
+    });
+
+    it('ignores whitespace-only checklist items as empty', () => {
+      const policy = classifyIncidentActionPolicy('apply-module-gen');
+      const result = assessVerifyCompleteness(policy, ['   ', '\t']);
+      expect(result.adequate).toBe(false);
+    });
+
+    it('returns inadequate when checklist only contains non-actionable placeholder text', () => {
+      const policy = classifyIncidentActionPolicy('inline-command');
+      const result = assessVerifyCompleteness(policy, [
+        'No blocking verify checks detected for this action class.',
+      ]);
+      expect(result.adequate).toBe(false);
+      expect(result.reason).toContain('include at least one executable verify command');
+    });
+
+    it('returns inadequate when checklist has advisory text without executable command', () => {
+      const policy = classifyIncidentActionPolicy('apply-debug-patch');
+      const result = assessVerifyCompleteness(policy, [
+        'Review Workspai contract warnings: check architecture config',
+      ]);
+      expect(result.adequate).toBe(false);
+    });
+
+    it('accepts actionable verify commands even when mixed with advisory lines', () => {
+      const policy = classifyIncidentActionPolicy('apply-debug-patch');
+      const result = assessVerifyCompleteness(policy, [
+        'Scope is uncertain. Ask for clarification before mutation recommendation.',
+        'Run pnpm test --filter orders-api',
+      ]);
+      expect(result.adequate).toBe(true);
+      expect(result.reason).toBeNull();
+    });
   });
 });

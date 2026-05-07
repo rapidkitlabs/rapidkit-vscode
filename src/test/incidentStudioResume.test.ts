@@ -65,7 +65,8 @@ describe('incidentStudioResume', () => {
     });
 
     expect(snapshot?.resolved).toBe(true);
-    expect(snapshot?.nextActionLabel).toBe('Capture reusable memory');
-    expect(snapshot?.nextActionQuery).toContain('store it as reusable workspace memory');
+    expect(snapshot?.nextActionLabel).toBe('Capture reusable outcome artifact');
+    expect(snapshot?.nextActionQuery).toContain('capture it as reusable workspace memory');
+    expect(snapshot?.nextActionQuery).toContain('replay/share or release-readiness evidence');
   });
 });

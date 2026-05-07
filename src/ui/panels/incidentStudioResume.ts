@@ -70,9 +70,9 @@ function nextActionForPhase(
 ): Pick<IncidentResumeSnapshot, 'nextActionLabel' | 'nextActionQuery'> {
   if (resolved || phase === 'learn') {
     return {
-      nextActionLabel: 'Capture reusable memory',
+      nextActionLabel: 'Capture reusable outcome artifact',
       nextActionQuery:
-        'Summarize what fixed this incident, include the verify command, and store it as reusable workspace memory.',
+        'Summarize what fixed this incident, include the verify command, capture it as reusable workspace memory, and prepare replay/share or release-readiness evidence if this pattern should help the team later.',
     };
   }
 

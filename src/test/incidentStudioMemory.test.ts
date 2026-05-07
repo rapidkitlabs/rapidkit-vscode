@@ -4,6 +4,7 @@ import {
   buildIncidentMemoryEnrichmentSuggestion,
   buildIncidentMemoryPromptHint,
   buildIncidentMemoryReuseSnapshot,
+  detectRepeatedIncident,
   mergeIncidentReplayLearningIntoMemory,
   prependIncidentMemoryReuseBlock,
   rankSimilarIncidentDecisions,
@@ -167,5 +168,58 @@ describe('incidentStudioMemory', () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot?.bullets.some((line) => line.startsWith('Similar incident:'))).toBe(true);
     expect(snapshot?.bullets.join('\n')).toContain('repro-9');
+  });
+
+  describe('detectRepeatedIncident', () => {
+    const highSimilarityDecisions = [
+      'Incident replay repro-1 (high) — resolved migration checksum mismatch — Verify with: pnpm test --filter orders-api',
+    ];
+
+    it('returns isRepeated=false when no prior decisions exist', () => {
+      const result = detectRepeatedIncident({
+        decisions: [],
+        queryText: 'migration checksum mismatch',
+        actionType: 'incident-repro-pack',
+      });
+
+      expect(result.isRepeated).toBe(false);
+      expect(result.repeatScore).toBe(0);
+      expect(result.matchedDecision).toBeNull();
+      expect(result.recommendMemoryReuse).toBe(false);
+    });
+
+    it('flags isRepeated=true when action type and query tokens strongly match a prior decision', () => {
+      const result = detectRepeatedIncident({
+        decisions: highSimilarityDecisions,
+        queryText: 'migration checksum mismatch orders api failing',
+        actionType: 'incident-repro-pack',
+      });
+
+      expect(result.isRepeated).toBe(true);
+      expect(result.repeatScore).toBeGreaterThanOrEqual(65);
+      expect(result.matchedDecision).toContain('repro-1');
+      expect(result.recommendMemoryReuse).toBe(true);
+    });
+
+    it('returns isRepeated=false when query overlap is low despite same action type', () => {
+      const result = detectRepeatedIncident({
+        decisions: highSimilarityDecisions,
+        queryText: 'totally unrelated container startup crash',
+        actionType: 'incident-repro-pack',
+      });
+
+      expect(result.isRepeated).toBe(false);
+      expect(result.matchedDecision).toBeNull();
+    });
+
+    it('does not flag non-incident-replay memory entries as repeated', () => {
+      const result = detectRepeatedIncident({
+        decisions: ['Use additive DB migrations only'],
+        queryText: 'migration checksum mismatch',
+        actionType: 'incident-repro-pack',
+      });
+
+      expect(result.isRepeated).toBe(false);
+    });
   });
 });

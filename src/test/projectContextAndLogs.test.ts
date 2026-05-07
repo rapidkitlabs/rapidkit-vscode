@@ -28,6 +28,7 @@ const {
     getArchitectureReasoningKpiStatus: vi.fn(),
     getSandboxKpiStatus: vi.fn(),
     getStudioRollbackKpiStatus: vi.fn(),
+    getStudioStabilizationKpiStatus: vi.fn(),
     getOnboardingExperimentStats: vi.fn(),
     clearCommandTelemetry: vi.fn(),
   },
@@ -398,6 +399,46 @@ describe('projectContextAndLogs telemetry summary contract', () => {
         overallPass: false,
       },
     });
+
+    trackerMock.getStudioStabilizationKpiStatus.mockResolvedValue({
+      workspacePath: '/tmp/demo-workspace',
+      timeWindow: 'last24h',
+      windowStartAt: '2026-04-21T12:30:00.000Z',
+      windowEndAt: '2026-04-22T12:30:00.000Z',
+      thresholds: {
+        routePrecisionMin: 85,
+        verifyPathCompletionRateMin: 60,
+        falseConfidenceRateMax: 40,
+        rollbackRecoverySuccessRateMin: 60,
+        repeatVerifiedResolutionRateMin: 50,
+      },
+      metrics: {
+        nextActionClicked: 5,
+        routeMatchedWithoutFallback: 4,
+        routeFallbackCount: 1,
+        routePrecision: 80,
+        verifyRequired: 5,
+        verifyPathPresent: 3,
+        verifyPathCompletionRate: 60,
+        verifyFailed: 4,
+        rollbackAttempted: 3,
+        rollbackSucceeded: 2,
+        falseConfidenceRate: 50,
+        rollbackRecoverySuccessRate: 66.67,
+        repeatedIncidentDetected: 2,
+        repeatVerifiedResolved: 1,
+        repeatVerifiedResolutionRate: 50,
+      },
+      gates: {
+        telemetryEvidencePass: true,
+        routePrecisionPass: false,
+        verifyPathCompletionRatePass: true,
+        falseConfidenceRatePass: false,
+        rollbackRecoverySuccessRatePass: true,
+        repeatVerifiedResolutionRatePass: true,
+        overallPass: false,
+      },
+    });
   });
 
   it('includes action-vs-ask and surface mix in copied quick summary', async () => {
@@ -433,6 +474,10 @@ describe('projectContextAndLogs telemetry summary contract', () => {
       '/tmp/demo-workspace',
       'last24h'
     );
+    expect(trackerMock.getStudioStabilizationKpiStatus).toHaveBeenCalledWith(
+      '/tmp/demo-workspace',
+      'last24h'
+    );
 
     expect(writeTextMock).toHaveBeenCalledTimes(1);
     const quickSummary = writeTextMock.mock.calls[0][0] as string;
@@ -460,6 +505,12 @@ describe('projectContextAndLogs telemetry summary contract', () => {
     expect(quickSummary).toContain('Rollback KPI overall: FAIL');
     expect(quickSummary).toContain('Rollback auto success rate: 66.67%');
     expect(quickSummary).toContain('Rollback false-confidence rate: 50%');
+    expect(quickSummary).toContain('Stabilization KPI overall (S01-S05): FAIL');
+    expect(quickSummary).toContain('S01 route precision: 80%');
+    expect(quickSummary).toContain('S02 verify path completion: 60%');
+    expect(quickSummary).toContain('S03 false-confidence rate: 50%');
+    expect(quickSummary).toContain('S04 rollback recovery success: 66.67%');
+    expect(quickSummary).toContain('S05 repeat verified resolution: 50%');
 
     expect(openTextDocumentMock).toHaveBeenCalledTimes(1);
     const openDocArgs = openTextDocumentMock.mock.calls[0][0] as { content: string };
@@ -471,5 +522,6 @@ describe('projectContextAndLogs telemetry summary contract', () => {
     expect(openDocArgs.content).toContain('"architectureReasoningKpiStatus"');
     expect(openDocArgs.content).toContain('"sandboxKpiStatus"');
     expect(openDocArgs.content).toContain('"studioRollbackKpiStatus"');
+    expect(openDocArgs.content).toContain('"studioStabilizationKpiStatus"');
   });
 });

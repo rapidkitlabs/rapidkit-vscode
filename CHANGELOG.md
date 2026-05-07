@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-05-07
+
+### Added
+
+- **S01 fallback-reason breakdown** — `fallbackReasonBreakdown` now classified into 5 categories (`success`, `bare_keyword_only`, `fix_preview_fallback`, `orchestrate_default`, `other`) for every `next_action_clicked` event; visible in Stabilization KPI snapshot and card UI. Prevents false-positive route-precision claims by exposing fallback mix distribution.
+- **S02 verify-path miss reasons (top offenders)** — `verifyPathReasonTop` tracks top-5 miss reasons by frequency; included in snapshot Markdown export and Stabilization KPI card. Drives weekly remediation backlog for verify-path gaps.
+- **S04 recovery class breakdown** — `recoveryClassBreakdown` segments rollback events into `auto_rollback`, `manual_recovery`, `unspecified`; included in snapshot export and card stats row. Prevents aggregate recovery rate hiding manual-burden shifts.
+- **S05 cohort validation** — `repeatVerifiedWithArtifactReady` and `repeatVerifiedWithArtifactRate` track repeated incidents that have both `repeatedIncident=true` and `replayReady=true` on the `verified_outcome_ready_for_artifact` event. New S05-Cohort metric card added to Stabilization KPI gate UI.
+- **False-positive risk mitigation docs** — KPI map, weekly dashboard template, 6-week plan, and canonical story updated with S01–S05 operational playbooks, thresholds, remediation owners, and weekly runbook.
+
+### Changed
+
+- **Stabilization KPI snapshot** — Markdown export now includes S01 fallback mix, S02 top miss reasons, S04 recovery class mix, and S05 cohort stats in addition to S01–S05 gate table.
+- **`StudioStabilizationKpiStatus` metrics contract** — extended with `fallbackReasonBreakdown`, `verifyPathReasonTop`, `recoveryClassBreakdown`, `repeatVerifiedWithArtifactReady`, and `repeatVerifiedWithArtifactRate` fields (all optional, backward-compatible).
+- **KPI Dictionary status** — S05 promoted from `Partial` to `Available` (cohort validation via artifact/replay ID linking now instrumented).
+
 ## [0.24.1] - 2026-05-06
 
 ### Added
