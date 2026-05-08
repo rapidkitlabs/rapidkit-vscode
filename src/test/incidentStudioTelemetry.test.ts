@@ -166,7 +166,9 @@ describe('incidentStudioTelemetry', () => {
       verifiedOutcomeLoopStatus: {
         workspacePath: '/tmp/demo',
         timeWindow: 'last7d',
+        loopStarted: 5,
         verifiedOutcomes: 1,
+        verifiedOutcomeRate: 20,
         reusableArtifacts: {
           reproPacksExported: 2,
           replayReady: 4,
@@ -184,6 +186,7 @@ describe('incidentStudioTelemetry', () => {
           overallPass: false,
         },
       },
+      enterpriseStabilizationGateStatus: null,
       doctorSummary: {
         ...freshDoctorSummary,
         ctaVariantBreakdown: cachedData.ctaVariantBreakdown,
@@ -495,7 +498,9 @@ describe('incidentStudioTelemetry', () => {
       verifiedOutcomeLoopStatus: {
         workspacePath: '/tmp/demo',
         timeWindow: 'last7d',
+        loopStarted: 6,
         verifiedOutcomes: 3,
+        verifiedOutcomeRate: 50,
         reusableArtifacts: {
           reproPacksExported: 3,
           replayReady: 4,
@@ -513,6 +518,7 @@ describe('incidentStudioTelemetry', () => {
           overallPass: true,
         },
       },
+      enterpriseStabilizationGateStatus: null,
       doctorSummary: {
         workspaceName: 'demo',
         ctaVariantBreakdown: {

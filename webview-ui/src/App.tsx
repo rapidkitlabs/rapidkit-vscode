@@ -627,7 +627,10 @@ export function App() {
                     if (message.data?.error) {
                         setAIStreamError(message.data.error);
                     }
-                    vscode.postMessage('requestIncidentStudioTelemetry');
+                    vscode.postMessage('requestIncidentStudioTelemetry', {
+                        workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
+                        projectPath: selectedProjectForAnalysis?.path,
+                    });
                     break;
                 case 'aiModelUsed':
                     if (
@@ -1123,7 +1126,10 @@ export function App() {
         // Request initial data
         vscode.postMessage('ready');
         vscode.postMessage('getUiPreferences');
-        vscode.postMessage('requestIncidentStudioTelemetry');
+        vscode.postMessage('requestIncidentStudioTelemetry', {
+            workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
+            projectPath: selectedProjectForAnalysis?.path,
+        });
 
         return () => window.removeEventListener('message', messageHandler);
     }, []);
@@ -1242,7 +1248,10 @@ export function App() {
     const runIncidentAction = (command: string, data?: any) => {
         vscode.postMessage(command, data);
         window.setTimeout(() => {
-            vscode.postMessage('requestIncidentStudioTelemetry');
+            vscode.postMessage('requestIncidentStudioTelemetry', {
+                workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
+                projectPath: selectedProjectForAnalysis?.path,
+            });
         }, 450);
     };
 
@@ -1351,7 +1360,10 @@ export function App() {
 
         window.setTimeout(() => {
             vscode.postMessage('getUiPreferences', { workspacePath });
-            vscode.postMessage('requestIncidentStudioTelemetry', { workspacePath });
+            vscode.postMessage('requestIncidentStudioTelemetry', {
+                workspacePath,
+                projectPath: projectSelection?.path,
+            });
             vscode.postMessage(
                 'aiChatStart',
                 buildIncidentChatStartPayload({
@@ -1527,6 +1539,7 @@ export function App() {
         vscode.postMessage('exportIncidentReproPack', {
             incidentReproPack: reproPack,
             workspacePath,
+            projectPath: selectedProjectForAnalysis?.path,
         });
     };
 

@@ -1,7 +1,18 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 
-export type ImportedProjectStack = 'fastapi' | 'nestjs' | 'go' | 'springboot' | 'unknown';
+export type ImportedProjectStack =
+  | 'fastapi'
+  | 'django'
+  | 'flask'
+  | 'nestjs'
+  | 'express'
+  | 'koa'
+  | 'go'
+  | 'springboot'
+  | 'rails'
+  | 'dotnet'
+  | 'unknown';
 
 export interface ImportedProjectRegistryEntry {
   name: string;

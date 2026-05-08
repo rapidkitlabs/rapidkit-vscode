@@ -29,6 +29,52 @@ function parseEnvNumber(envKeys, fallback) {
   return fallback;
 }
 
+function parseEnvBoolean(envKeys, fallback = false) {
+  for (const envKey of envKeys) {
+    const raw = process.env[envKey];
+    if (typeof raw !== 'string') {
+      continue;
+    }
+
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized) {
+      continue;
+    }
+
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+      return true;
+    }
+    if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function parseEnvString(envKeys, fallback = '') {
+  for (const envKey of envKeys) {
+    const raw = process.env[envKey];
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      return raw.trim();
+    }
+  }
+  return fallback;
+}
+
+function parseSeverityList(raw, fallback = ['p0', 'p1']) {
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return fallback;
+  }
+
+  const values = raw
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+
+  return values.length > 0 ? values : fallback;
+}
+
 function parseArgs(argv) {
   const options = {
     skipKpi: false,
@@ -38,6 +84,31 @@ function parseArgs(argv) {
       process.env.WORKSPAI_CLAIM_CHECKLIST_PATH ||
       path.resolve(process.cwd(), '..', 'Docs', 'workspai', 'Final', 'WORKSPAI_UNIFIED_FINAL_FEATURE_CHECKLIST.md'),
     enforceClaimChecklist: false,
+    issueReportPath: parseEnvString(
+      ['WORKSPAI_OPEN_ISSUE_REPORT_PATH', 'WORKSPAI_ISSUE_REPORT_PATH'],
+      ''
+    ),
+    enforceOpenIssues: parseEnvBoolean(
+      ['WORKSPAI_GATE_ENFORCE_OPEN_ISSUES', 'WORKSPAI_ENFORCE_OPEN_ISSUES'],
+      false
+    ),
+    blockedSeverities: parseSeverityList(process.env.WORKSPAI_GATE_BLOCK_SEVERITIES || 'p0,p1'),
+    enterpriseGatePath:
+      process.env.WORKSPAI_ENTERPRISE_GATE_PATH ||
+      process.env.WORKSPAI_ENTERPRISE_STABILIZATION_GATE_PATH ||
+      '',
+    enforceEnterpriseFreeze: parseEnvBoolean(
+      ['WORKSPAI_GATE_ENFORCE_ENTERPRISE_FREEZE', 'WORKSPAI_ENFORCE_ENTERPRISE_FREEZE'],
+      false
+    ),
+    releaseNotesPath:
+      process.env.WORKSPAI_RELEASE_NOTES_PATH ||
+      process.env.WORKSPAI_RELEASE_NOTES_FILE ||
+      '',
+    enforceReleasePostureLabel: parseEnvBoolean(
+      ['WORKSPAI_GATE_ENFORCE_RELEASE_POSTURE_LABEL', 'WORKSPAI_ENFORCE_RELEASE_POSTURE_LABEL'],
+      false
+    ),
     verifyPackContract:
       process.env.WORKSPAI_VERIFY_PACK_CONTRACT ||
       process.env.WORKSPAI_VERIFY_PACK_CONTRACT_PATH ||
@@ -47,6 +118,7 @@ function parseArgs(argv) {
       process.env.WORKSPAI_RELEASE_READINESS_COMMANDER_PATH ||
       '',
     marker: process.env.WORKSPAI_GATE_MARKER || process.env.WORKSPAI_GATE_MARKER_PATH || '',
+    markerMaxAgeHours: parseEnvNumber(['WORKSPAI_GATE_MARKER_MAX_AGE_HOURS'], 0),
     verifyPhaseReachMin: parseEnvNumber(
       ['WORKSPAI_GATE_VERIFY_MIN', 'WORKSPAI_GATE_VERIFY_PHASE_REACH_MIN'],
       80
@@ -175,6 +247,15 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === '--marker-max-age-hours') {
+      const value = Number(argv[i + 1]);
+      if (Number.isFinite(value)) {
+        options.markerMaxAgeHours = value;
+      }
+      i += 1;
+      continue;
+    }
+
     if (arg === '--verify-pack-contract') {
       options.verifyPackContract = argv[i + 1] || '';
       i += 1;
@@ -195,6 +276,45 @@ function parseArgs(argv) {
 
     if (arg === '--enforce-claim-checklist') {
       options.enforceClaimChecklist = true;
+      continue;
+    }
+
+    if (arg === '--issue-report') {
+      options.issueReportPath = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--enforce-open-issues') {
+      options.enforceOpenIssues = true;
+      continue;
+    }
+
+    if (arg === '--block-severities') {
+      options.blockedSeverities = parseSeverityList(argv[i + 1], ['p0', 'p1']);
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--enterprise-gate') {
+      options.enterpriseGatePath = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--enforce-enterprise-freeze') {
+      options.enforceEnterpriseFreeze = true;
+      continue;
+    }
+
+    if (arg === '--release-notes') {
+      options.releaseNotesPath = argv[i + 1] || '';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--enforce-release-posture-label') {
+      options.enforceReleasePostureLabel = true;
       continue;
     }
 
@@ -605,6 +725,252 @@ function buildClaimChecklistStatus(checklistPath) {
   };
 }
 
+function normalizeSeverityCandidate(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+
+  const strippedPrefix = raw
+    .replace(/^severity\s*[:=-]?\s*/i, '')
+    .replace(/^priority\s*[:=-]?\s*/i, '')
+    .replace(/^sev\s*/i, 'sev');
+
+  const tokens = strippedPrefix
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (tokens.includes('critical') || tokens.includes('p0') || tokens.includes('sev0')) {
+    return 'p0';
+  }
+  if (tokens.includes('high') || tokens.includes('p1') || tokens.includes('sev1')) {
+    return 'p1';
+  }
+
+  const normalized = strippedPrefix.replace(/[^a-z0-9]+/g, '');
+
+  if (normalized === 'critical' || normalized === 'sev0') {
+    return 'p0';
+  }
+  if (normalized === 'high' || normalized === 'sev1') {
+    return 'p1';
+  }
+
+  if (normalized === 'p0' || normalized === 'priorityp0' || normalized === 'severityp0') {
+    return 'p0';
+  }
+  if (normalized === 'p1' || normalized === 'priorityp1' || normalized === 'severityp1') {
+    return 'p1';
+  }
+
+  if (normalized.includes('critical') || normalized.includes('sev0') || normalized.includes('p0')) {
+    return 'p0';
+  }
+  if (normalized.includes('high') || normalized.includes('sev1') || normalized.includes('p1')) {
+    return 'p1';
+  }
+
+  return raw;
+}
+
+function extractIssueSeverity(issue) {
+  if (!issue || typeof issue !== 'object') {
+    return null;
+  }
+
+  const directCandidates = [
+    issue.severity,
+    issue.priority,
+    issue.level,
+    issue?.metadata?.severity,
+    issue?.metadata?.priority,
+  ];
+
+  for (const candidate of directCandidates) {
+    const normalized = normalizeSeverityCandidate(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const labels = Array.isArray(issue.labels) ? issue.labels : [];
+  for (const label of labels) {
+    const labelName = typeof label === 'string' ? label : label?.name;
+    const normalized = normalizeSeverityCandidate(labelName);
+    if (normalized === 'p0' || normalized === 'p1') {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function isIssueOpen(issue) {
+  if (!issue || typeof issue !== 'object') {
+    return false;
+  }
+
+  if (issue.pull_request) {
+    return false;
+  }
+
+  if (typeof issue.isOpen === 'boolean') {
+    return issue.isOpen;
+  }
+
+  const stateCandidate = String(issue.state || issue.status || '').trim().toLowerCase();
+  if (stateCandidate) {
+    return !(stateCandidate === 'closed' || stateCandidate === 'resolved' || stateCandidate === 'done');
+  }
+
+  if (issue.closedAt || issue.closed_at || issue.resolvedAt || issue.resolved_at) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildOpenIssueSeverityStatus(issueReportPath, blockedSeverities = ['p0', 'p1']) {
+  const resolvedPath = path.resolve(issueReportPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      issueReportPath: resolvedPath,
+      blockedSeverities,
+      blockingOpenIssues: [],
+      openIssueCount: 0,
+      message: `Open-issue report not found: ${resolvedPath}`,
+    };
+  }
+
+  const payload = readJson(resolvedPath);
+  const issues = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.issues)
+    ? payload.issues
+    : [];
+
+  const normalizedBlocked = blockedSeverities.map((item) => String(item).toLowerCase());
+
+  const blockingOpenIssues = issues
+    .filter((issue) => issue && typeof issue === 'object')
+    .filter((issue) => isIssueOpen(issue))
+    .map((issue) => {
+      const severity = extractIssueSeverity(issue);
+      const id =
+        issue.id || issue.number || issue.key || issue.issueId || issue.title || 'unknown-issue-id';
+      return {
+        id,
+        severity,
+        title: typeof issue.title === 'string' ? issue.title : null,
+        state: issue.state || issue.status || null,
+      };
+    })
+    .filter((issue) => issue.severity && normalizedBlocked.includes(String(issue.severity).toLowerCase()));
+
+  const openIssueCount = issues.filter((issue) => isIssueOpen(issue)).length;
+
+  return {
+    ok: blockingOpenIssues.length === 0,
+    issueReportPath: resolvedPath,
+    blockedSeverities: normalizedBlocked,
+    openIssueCount,
+    blockingOpenIssues,
+    message:
+      blockingOpenIssues.length === 0
+        ? 'No blocking open issues found for configured severities.'
+        : `Found ${blockingOpenIssues.length} blocking open issue(s) in severities: ${normalizedBlocked.join(', ')}.`,
+  };
+}
+
+function buildEnterpriseStabilizationGateStatus(gatePath) {
+  const resolvedPath = path.resolve(gatePath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      gatePath: resolvedPath,
+      message: `Enterprise stabilization gate file not found: ${resolvedPath}`,
+    };
+  }
+
+  const payload = readJson(resolvedPath);
+  const gate =
+    payload &&
+    typeof payload === 'object' &&
+    payload.enterpriseStabilizationGateStatus &&
+    typeof payload.enterpriseStabilizationGateStatus === 'object'
+      ? payload.enterpriseStabilizationGateStatus
+      : payload;
+
+  const consecutiveWindowsPass = Number(gate?.consecutiveWindowsPass);
+  const expansionFrozen = gate?.expansionFrozen === true;
+  const last7dOverallPass = gate?.last7d?.overallPass === true;
+  const last30dOverallPass = gate?.last30d?.overallPass === true;
+  const freezeReason =
+    typeof gate?.freezeReason === 'string' && gate.freezeReason.trim().length > 0
+      ? gate.freezeReason.trim()
+      : null;
+
+  const hasShape =
+    Number.isFinite(consecutiveWindowsPass) &&
+    typeof gate?.expansionFrozen === 'boolean' &&
+    (gate?.last7d === null || typeof gate?.last7d === 'object') &&
+    (gate?.last30d === null || typeof gate?.last30d === 'object');
+
+  if (!hasShape) {
+    return {
+      ok: false,
+      gatePath: resolvedPath,
+      message: 'Enterprise stabilization gate payload is malformed or unsupported.',
+    };
+  }
+
+  const ok =
+    consecutiveWindowsPass >= 2 &&
+    expansionFrozen === false &&
+    last7dOverallPass &&
+    last30dOverallPass;
+
+  return {
+    ok,
+    gatePath: resolvedPath,
+    consecutiveWindowsPass,
+    expansionFrozen,
+    last7dOverallPass,
+    last30dOverallPass,
+    freezeReason,
+    message: ok
+      ? 'Enterprise stabilization freeze rule is satisfied (2 consecutive windows).'
+      : 'Enterprise stabilization freeze rule failed (requires 2 consecutive passing windows and expansionFrozen=false).',
+  };
+}
+
+function buildReleasePostureLabelStatus(releaseNotesPath) {
+  const resolvedPath = path.resolve(releaseNotesPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      releaseNotesPath: resolvedPath,
+      postureLabel: null,
+      message: `Release notes file not found: ${resolvedPath}`,
+    };
+  }
+
+  const markdown = fs.readFileSync(resolvedPath, 'utf-8');
+  const match = markdown.match(/\b(stabilization-only|expansion-eligible)\b/i);
+  const postureLabel = match ? match[1].toLowerCase() : null;
+
+  return {
+    ok: Boolean(postureLabel),
+    releaseNotesPath: resolvedPath,
+    postureLabel,
+    message: postureLabel
+      ? `Release notes posture label detected: ${postureLabel}.`
+      : 'Release notes are missing mandatory posture label (stabilization-only | expansion-eligible).',
+  };
+}
+
 function percent(numerator, denominator) {
   return denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(2)) : null;
 }
@@ -736,6 +1102,48 @@ function resolvePredictiveCalibration({ baseThresholds, calibrationOptions, coun
 
 function toIsoNow() {
   return new Date().toISOString();
+}
+
+function buildMarkerFreshnessStatus(markerPath, maxAgeHoursRaw) {
+  const maxAgeHours = Number.isFinite(maxAgeHoursRaw) ? Number(maxAgeHoursRaw) : 0;
+  const normalizedMaxAgeHours = maxAgeHours > 0 ? maxAgeHours : 0;
+
+  if (normalizedMaxAgeHours === 0) {
+    return {
+      ok: true,
+      enabled: false,
+      markerPath,
+      maxAgeHours: 0,
+      message: 'Marker freshness gate disabled.',
+    };
+  }
+
+  const marker = readJson(markerPath);
+  const createdAtRaw = typeof marker?.createdAt === 'string' ? marker.createdAt : '';
+  const createdAtMs = Date.parse(createdAtRaw);
+  if (!Number.isFinite(createdAtMs)) {
+    return {
+      ok: false,
+      enabled: true,
+      markerPath,
+      maxAgeHours: normalizedMaxAgeHours,
+      message: 'Marker freshness gate failed: marker.createdAt is missing or invalid.',
+    };
+  }
+
+  const ageHours = (Date.now() - createdAtMs) / (1000 * 60 * 60);
+  const ok = ageHours <= normalizedMaxAgeHours;
+  return {
+    ok,
+    enabled: true,
+    markerPath,
+    maxAgeHours: normalizedMaxAgeHours,
+    createdAt: new Date(createdAtMs).toISOString(),
+    ageHours: Number(ageHours.toFixed(2)),
+    message: ok
+      ? 'Marker freshness gate passed.'
+      : `Marker freshness gate failed: marker age ${ageHours.toFixed(2)}h exceeds max ${normalizedMaxAgeHours}h.`,
+  };
 }
 
 function appendOverrideLog(record) {
@@ -1433,6 +1841,57 @@ function main() {
     }
   }
 
+  if (options.issueReportPath) {
+    const openIssueStatus = buildOpenIssueSeverityStatus(
+      options.issueReportPath,
+      options.blockedSeverities
+    );
+    console.log('[release-stop-gate] Open-issue severity result:');
+    console.log(JSON.stringify(openIssueStatus, null, 2));
+
+    if (options.enforceOpenIssues && !openIssueStatus.ok) {
+      console.error(`[release-stop-gate] Release blocked: ${openIssueStatus.message}`);
+      process.exit(1);
+    }
+  } else if (options.enforceOpenIssues) {
+    console.error(
+      '[release-stop-gate] Release blocked: --enforce-open-issues requires --issue-report <path> or WORKSPAI_OPEN_ISSUE_REPORT_PATH.'
+    );
+    process.exit(1);
+  }
+
+  if (options.enterpriseGatePath) {
+    const enterpriseGateStatus = buildEnterpriseStabilizationGateStatus(options.enterpriseGatePath);
+    console.log('[release-stop-gate] Enterprise stabilization gate result:');
+    console.log(JSON.stringify(enterpriseGateStatus, null, 2));
+
+    if (options.enforceEnterpriseFreeze && !enterpriseGateStatus.ok) {
+      console.error(`[release-stop-gate] Release blocked: ${enterpriseGateStatus.message}`);
+      process.exit(1);
+    }
+  } else if (options.enforceEnterpriseFreeze) {
+    console.error(
+      '[release-stop-gate] Release blocked: --enforce-enterprise-freeze requires --enterprise-gate <path> or WORKSPAI_ENTERPRISE_GATE_PATH.'
+    );
+    process.exit(1);
+  }
+
+  if (options.releaseNotesPath) {
+    const releasePostureStatus = buildReleasePostureLabelStatus(options.releaseNotesPath);
+    console.log('[release-stop-gate] Release notes posture result:');
+    console.log(JSON.stringify(releasePostureStatus, null, 2));
+
+    if (options.enforceReleasePostureLabel && !releasePostureStatus.ok) {
+      console.error(`[release-stop-gate] Release blocked: ${releasePostureStatus.message}`);
+      process.exit(1);
+    }
+  } else if (options.enforceReleasePostureLabel) {
+    console.error(
+      '[release-stop-gate] Release blocked: --enforce-release-posture-label requires --release-notes <path> or WORKSPAI_RELEASE_NOTES_PATH.'
+    );
+    process.exit(1);
+  }
+
   if (options.skipKpi) {
     console.log('[release-stop-gate] KPI check skipped by --skip-kpi.');
     return;
@@ -1448,6 +1907,16 @@ function main() {
   const markerPath = path.resolve(options.marker);
   if (!fs.existsSync(markerPath)) {
     console.error(`[release-stop-gate] Marker not found: ${markerPath}`);
+    process.exit(1);
+  }
+
+  const markerFreshness = buildMarkerFreshnessStatus(markerPath, options.markerMaxAgeHours);
+  if (markerFreshness.enabled) {
+    console.log('[release-stop-gate] Marker freshness result:');
+    console.log(JSON.stringify(markerFreshness, null, 2));
+  }
+  if (!markerFreshness.ok) {
+    console.error(`[release-stop-gate] Release blocked: ${markerFreshness.message}`);
     process.exit(1);
   }
 

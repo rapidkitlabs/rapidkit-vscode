@@ -1,6 +1,30 @@
 # Release Notes
 
-## v0.26.0 (May 8, 2026)
+## v0.27.0 (May 8, 2026)
+
+### ✦ Stabilization Hardening Release
+
+**Summary:** Enterprise-grade stabilization across routing, UI, telemetry, and test reliability. Extracts incident routing to a shared module, adds specialist intents, aligns phase-gate UI with backend telemetry gates, delivers data-driven action matrix, module graph tree, BYOP stack expansion, and enterprise gate fixtures.
+
+**Quality gates:** typecheck ✓ | build ✓ | package ✓ | **731/731 tests ✓** (66 files)
+
+**Release posture:** `stabilization-only` — expansion frozen until E1/E2/E3 enterprise epics green.
+
+---
+
+### Key Changes
+
+- **`incidentRouting.ts`** — new shared routing module; specialist intents (DevOps/DB/Docs/Arch) with deterministic routing; tests import real implementation
+- **Scope-aware suggested questions** — workspace vs project scope branching per specialist intent
+- **Phase-gate UI** — `phaseContext` aligned with `telemetryRoutePrecisionPass`, `telemetryVerifyPathPass`, quality score ≥ 60, `verifiedOutcomes > 0`
+- **Action Matrix** — stable matrix-prefixed IDs, resolver functions, canonical CLI action source
+- **Module Graph Tree** — framework-grouped with severity filter + auto-reset stability guard
+- **BYOP stacks** — django, flask, express, koa, rails, dotnet detection
+- **Enterprise gate fixtures** — `consecutiveWindowsPass: 2` snapshots + posture label
+- **Incident metrics + resume hardening** — NaN/negative sanitizers in telemetry and resume paths
+- **Doctor telemetry** — `onError` hook + async catch for unhandled rejections
+- **Release gate workflows** — paginated issue fetch, no fixture fallbacks, severity parser hardened
+- **Test fixes** — 3 prompt policy route-precision tests corrected to reference `incidentRouting.ts`
 
 ### ✦ Stability & Strategic Alignment Release
 

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-05-08
+
+### Added
+
+- **Incident routing shared module** — extracted all action-type routing logic into `incidentRouting.ts` (`routeIncidentActionTypeFromMessage`). Eliminates drift between panel implementation and tests; tests now import the real function directly rather than asserting on source text. `RoutingResult` type is exported and shared across routing consumers.
+
+- **Specialist intent routing** — four new deterministic routing branches in the incident router:
+  - **DevOps/CI-CD** (`ci/cd`, `pipeline`, `kubernetes`, `helm`, `dockerfile`, `docker compose`) → `doctor-fix`
+  - **Database/schema** (`schema`, `migration`, `sql`, `postgres`, `mysql`, `mongodb`) → `change-impact-lite`
+  - **Docs/runbook/ADR** (`documentation`, `readme`, `runbook`, `adr`) → `workspace-memory-wizard`
+  - **Architecture/risk** (`architecture`, `risk`, `blast radius`, `refactor plan`) → `change-impact-lite`
+
+- **Scope-aware suggested questions** — `_buildSuggestedQuestions` accepts `scopeIntent: 'workspace' | 'project'` and returns deterministic, non-generic questions per specialist intent and standard action type. Workspace scope surfaces topology/governance questions; project scope surfaces per-service execution questions.
+
+- **Phase-gate UI alignment** — `phaseContext` in `AIIncidentStudio.tsx` aligned with backend telemetry gates:
+  - `diagnosisReady`: `telemetryHardGatePass` as corroborating signal
+  - `planReady`: blocked when `telemetryRoutePrecisionPass` is false and telemetry data exists
+  - `verifyReady`: requires `qualityScore >= 60` for verify-pack path; `telemetryVerifyPathPass` as alternative pass signal
+  - `priorResolutionAvailable`: extended with `verifiedOutcomeLoopStatus.verifiedOutcomes > 0`
+
+- **Data-driven Action Matrix** — `incidentCliActionMatrix.ts` refactored to a canonical source: stable matrix-prefixed IDs, explicit workspace/project scope per entry, `actionTypes` array for routing resolution, and two resolver functions (`resolveIncidentCliActionByActionType`, `resolveIncidentCliActionIdByActionType`) for end-to-end routing alignment.
+
+- **Module Graph Tree in Incident Studio** — doctor evidence payload enriched with `installedModules` from registry manifests; `AIIncidentStudio.tsx` renders framework-grouped module graph with interactive filters (framework dropdown, severity: healthy/warning/critical, module search) and a stability guard that auto-resets the framework filter when the selected framework is no longer present in the dataset.
+
+- **BYOP stack expansion** — `detectProjectStack` extended with BYOP-first detection for six additional stacks: `django`, `flask`, `express`, `koa`, `rails`, `dotnet`. Discovery uses framework-specific file markers (`manage.py`, `wsgi.py`, `app.py`, `app.js`/`server.js`, `Gemfile`/`config/routes.rb`, `*.csproj`/`*.sln`).
+
+- **Enterprise gate fixtures** — `releases/fixtures/wave2-enterprise-gate.json` and `wave3-enterprise-gate.json` provide deterministic gate snapshots with `consecutiveWindowsPass: 2` for regression protection. `releases/fixtures/release-posture-label.md` labels current posture as `stabilization-only`.
+
+- **Incident conversation metrics** — new `incidentConversationMetrics.ts` module: `buildIncidentLifecycleMetrics(input, nowMs)` sanitizes malformed numbers/timestamps before telemetry emission, preventing NaN or negative values from corrupting KPI windows.
+
+- **Incident resume snapshot hardening** — `incidentStudioResume.ts` adds `toNonNegativeInteger`, `toNonNegativeTimestamp`, and `toValidTurns` sanitizers to `buildIncidentResumeSnapshot`; malformed turn counts and timestamps are clamped to safe values.
+
+### Changed
+
+- **Doctor telemetry refresh** — `doctorTelemetryRefresh.ts` adds `onError` hook and async catch in the refresh executor, preventing unhandled promise rejections from crashing the extension host on telemetry refresh failures.
+
+- **Release gate workflows** — `release-gate-wave2.yml` and `release-gate-wave3.yml` hardened: severity parser extracted to shared helper, paginated GitHub issue fetch replaces single-page query, fixture fallback paths removed (hard-fail when KPI marker is missing).
+
+- **Test regression coverage** — three `incidentStudioPromptPolicy.test.ts` route-precision tests updated to read from `incidentRouting.ts` (the real implementation) rather than `welcomePanel.ts`. Test suite: **731/731 tests passing** (66 files).
+
+### Fixed
+
+- **Prompt policy route-precision test source paths** — `route precision: doctor-fix and recipe-pack`, `terminal-bridge requires explicit terminal signal`, and `fix-preview-lite requires patch context` tests were asserting on `welcomePanel.ts` source after routing logic was extracted to `incidentRouting.ts`. Tests now correctly reference the live routing module.
+
 ## [0.26.0] - 2026-05-08
 
 ### Added

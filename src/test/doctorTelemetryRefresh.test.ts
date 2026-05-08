@@ -52,4 +52,24 @@ describe('doctorTelemetryRefresh', () => {
 
     expect(onRefresh).not.toHaveBeenCalled();
   });
+
+  it('captures async refresh failures without leaking unhandled rejections', async () => {
+    const refreshError = new Error('refresh failed');
+    const onRefresh = vi.fn().mockRejectedValue(refreshError);
+    const onError = vi.fn();
+    const controller = createDoctorTelemetryRefreshController({
+      onRefresh,
+      onError,
+      delayMs: 250,
+    });
+
+    controller.schedule('/tmp/demo/.rapidkit/reports/doctor-last-run.json');
+    vi.advanceTimersByTime(250);
+    await Promise.resolve();
+
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledWith('/tmp/demo');
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(refreshError);
+  });
 });

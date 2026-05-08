@@ -1414,4 +1414,179 @@ describe('workspaceUsageTracker telemetry stability', () => {
       boardRenderLatencyP95MaxMs: 200,
     });
   });
+
+  it('repro pack KPI filters by projectPath — export event with projectPath is counted; event without is excluded', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-repro-pack-project-scope');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+    const projectPath = '/home/user/projects/my-service';
+
+    // 2 captures for this project
+    for (let i = 0; i < 2; i += 1) {
+      await tracker.trackCommandEvent(
+        'workspai.studio.incident_repro_pack_captured',
+        workspacePath,
+        { projectPath }
+      );
+    }
+    // 1 capture for a different project (no projectPath on event → workspace-only)
+    await tracker.trackCommandEvent('workspai.studio.incident_repro_pack_captured', workspacePath, {
+      projectPath: '/home/user/projects/other-service',
+    });
+
+    // 1 export for this project
+    await tracker.trackCommandEvent('workspai.studio.incident_repro_pack_exported', workspacePath, {
+      projectPath,
+    });
+    // 1 export with no projectPath (workspace-level, cross-project — should be excluded in project scope)
+    await tracker.trackCommandEvent(
+      'workspai.studio.incident_repro_pack_exported',
+      workspacePath,
+      {}
+    );
+
+    const projectStatus = await tracker.getStudioReproPackKpiStatus(
+      workspacePath,
+      'all',
+      {},
+      projectPath
+    );
+    // Project scope: 2 captures, 1 export (the one with matching projectPath)
+    expect(projectStatus?.metrics.reproPackCaptured).toBe(2);
+    expect(projectStatus?.metrics.reproPackExported).toBe(1);
+    expect(projectStatus?.metrics.reproPackShareRate).toBe(50);
+
+    const workspaceStatus = await tracker.getStudioReproPackKpiStatus(workspacePath, 'all', {});
+    // Workspace scope: all 3 captures, all 2 exports
+    expect(workspaceStatus?.metrics.reproPackCaptured).toBe(3);
+    expect(workspaceStatus?.metrics.reproPackExported).toBe(2);
+  });
+
+  it('inline command verify events with projectPath are counted under project-scoped stabilization KPI', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-inline-cmd-project-scope');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+    const projectPath = '/home/user/projects/api-service';
+
+    // Emit the prerequisite loop_started so telemetryEvidencePass fires
+    await tracker.trackCommandEvent('workspai.studio.loop_started', workspacePath, { projectPath });
+
+    // 2 action_executed + verify_passed in project scope (inline-command path)
+    for (let i = 0; i < 2; i += 1) {
+      await tracker.trackCommandEvent('workspai.studio.action_executed', workspacePath, {
+        actionType: 'inline-command',
+        projectPath,
+      });
+      await tracker.trackCommandEvent('workspai.studio.verify_passed', workspacePath, {
+        actionType: 'inline-command',
+        verifyRequired: true,
+        verifyPathPresent: true,
+        projectPath,
+      });
+    }
+    // 1 verify_passed from a different project — should NOT appear in project KPI
+    await tracker.trackCommandEvent('workspai.studio.verify_passed', workspacePath, {
+      actionType: 'inline-command',
+      verifyRequired: true,
+      verifyPathPresent: true,
+      projectPath: '/home/user/projects/other-service',
+    });
+
+    const projectStatus = await tracker.getStudioStabilizationKpiStatus(
+      workspacePath,
+      'all',
+      {},
+      projectPath
+    );
+    // Only 2 verify_passed events belong to this project; both have verifyRequired: true and verifyPathPresent: true
+    expect(projectStatus?.metrics.verifyRequired).toBe(2);
+    expect(projectStatus?.metrics.verifyPathPresent).toBe(2);
+    expect(projectStatus?.metrics.verifyFailed).toBe(0);
+    expect(projectStatus?.gates.telemetryEvidencePass).toBe(true);
+
+    const workspaceStatus = await tracker.getStudioStabilizationKpiStatus(workspacePath, 'all', {});
+    // Workspace total: 3 verify_passed (2 project + 1 other)
+    expect(workspaceStatus?.metrics.verifyRequired).toBe(3);
+    expect(workspaceStatus?.metrics.verifyPathPresent).toBe(3);
+  });
+
+  it('getEnterpriseStabilizationGateStatus returns expansionFrozen=true and consecutiveWindowsPass=0 when no telemetry present', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-enterprise-gate-empty');
+    createWorkspaceMarker(workspacePath);
+
+    const status =
+      await WorkspaceUsageTracker.getInstance().getEnterpriseStabilizationGateStatus(workspacePath);
+
+    expect(status).not.toBeNull();
+    expect(status?.expansionFrozen).toBe(true);
+    expect(status?.consecutiveWindowsPass).toBe(0);
+    expect(status?.freezeReason).not.toBeNull();
+    expect(typeof status?.evaluatedAt).toBe('string');
+    expect(status?.last7d).not.toBeNull();
+    expect(status?.last30d).not.toBeNull();
+    // All individual gates should be false when no telemetry
+    expect(status?.last7d?.routePrecisionPass).toBe(false);
+    expect(status?.last7d?.verifyPathCompletionPass).toBe(false);
+    expect(status?.last7d?.overallPass).toBe(false);
+    expect(status?.last30d?.overallPass).toBe(false);
+  });
+
+  it('team_expansion_triggered event is tracked as action surface event', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-team-expansion');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+
+    await tracker.trackCommandEvent('workspai.studio.team_expansion_triggered', workspacePath, {
+      expansionType: 'repro_pack_import',
+      packId: 'test-pack-001',
+      actionType: 'doctor-fix',
+      sourceFile: 'incident-bundle.json',
+    });
+
+    const summary = await tracker.getCommandTelemetrySummary(workspacePath, 'all');
+    expect(summary?.surfaceBreakdown.actionEvents).toBe(1);
+
+    // Should not crash stabilization KPI when event not in its direct loop
+    const stabilization = await tracker.getStudioStabilizationKpiStatus(workspacePath, 'all', {});
+    expect(stabilization).not.toBeNull();
+  });
+
+  it('verifiedOutcomeLoopStatus computes loopStarted and verifiedOutcomeRate from ctaVariantBreakdown', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-verified-outcome-rate');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+
+    // 4 loops started
+    for (let i = 0; i < 4; i += 1) {
+      await tracker.trackCommandEvent('workspai.studio.loop_started', workspacePath, {});
+    }
+    // 2 verify_passed
+    for (let i = 0; i < 2; i += 1) {
+      await tracker.trackCommandEvent('workspai.studio.verify_passed', workspacePath, {
+        verifyRequired: true,
+        verifyPathPresent: true,
+      });
+    }
+
+    const ctaVariantBreakdown = await tracker.getStudioCtaVariantBreakdown(workspacePath, 'all');
+    expect(ctaVariantBreakdown).not.toBeNull();
+
+    const totalLoopStarted = ctaVariantBreakdown!.variants.reduce(
+      (sum, v) => sum + v.loopStarted,
+      0
+    );
+    const totalVerifyPassed = ctaVariantBreakdown!.variants.reduce(
+      (sum, v) => sum + v.verifyPassed,
+      0
+    );
+    expect(totalLoopStarted).toBe(4);
+    expect(totalVerifyPassed).toBe(2);
+    // verifiedOutcomeRate = 2/4 * 100 = 50
+    const verifiedOutcomeRate = Number(((totalVerifyPassed / totalLoopStarted) * 100).toFixed(2));
+    expect(verifiedOutcomeRate).toBe(50);
+  });
 });

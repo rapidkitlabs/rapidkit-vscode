@@ -17,6 +17,15 @@ jobs:
       WORKSPAI_GATE_PREDICTIVE_PRECISION_MIN: ${{ vars.WORKSPAI_GATE_PREDICTIVE_PRECISION_MIN || '65' }}
       WORKSPAI_GATE_FALSE_ALARM_RATE_MAX: ${{ vars.WORKSPAI_GATE_FALSE_ALARM_RATE_MAX || '35' }}
       WORKSPAI_GATE_PREVENTED_INCIDENT_RATE_MIN: ${{ vars.WORKSPAI_GATE_PREVENTED_INCIDENT_RATE_MIN || '20' }}
+      WORKSPAI_GATE_RELEASE_READINESS_VALIDATION_MODE: ${{ vars.WORKSPAI_GATE_RELEASE_READINESS_VALIDATION_MODE || 'auto' }}
+      WORKSPAI_GATE_MARKER_MAX_AGE_HOURS: ${{ vars.WORKSPAI_GATE_MARKER_MAX_AGE_HOURS || '168' }}
+      WORKSPAI_GATE_ENFORCE_OPEN_ISSUES: '1'
+      WORKSPAI_GATE_BLOCK_SEVERITIES: ${{ vars.WORKSPAI_GATE_BLOCK_SEVERITIES || 'p0,p1' }}
+      WORKSPAI_GATE_ENFORCE_ENTERPRISE_FREEZE: '1'
+      WORKSPAI_GATE_ENFORCE_RELEASE_POSTURE_LABEL: '1'
+      WORKSPAI_OPEN_ISSUE_REPORT_PATH: releases/fixtures/ci-open-issues-wave2.json
+      WORKSPAI_ENTERPRISE_GATE_PATH: ${{ vars.WORKSPAI_ENTERPRISE_GATE_PATH_WAVE2 }}
+      WORKSPAI_RELEASE_NOTES_PATH: ${{ vars.WORKSPAI_RELEASE_NOTES_PATH_WAVE2 }}
 
     steps:
       - name: Checkout
@@ -34,5 +43,99 @@ jobs:
       - name: Compile extension
         run: npm run compile
 
+      - name: Validate required release evidence inputs
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${WORKSPAI_ENTERPRISE_GATE_PATH:-}" ]]; then
+            echo "Missing WORKSPAI_ENTERPRISE_GATE_PATH_WAVE2 repository variable." >&2
+            exit 1
+          fi
+          if [[ -z "${WORKSPAI_RELEASE_NOTES_PATH:-}" ]]; then
+            echo "Missing WORKSPAI_RELEASE_NOTES_PATH_WAVE2 repository variable." >&2
+            exit 1
+          fi
+
+          if [[ "${WORKSPAI_ENTERPRISE_GATE_PATH}" == releases/fixtures/* ]]; then
+            echo "WORKSPAI_ENTERPRISE_GATE_PATH must point to real release evidence, not fixtures." >&2
+            exit 1
+          fi
+          if [[ "${WORKSPAI_RELEASE_NOTES_PATH}" == releases/fixtures/* ]]; then
+            echo "WORKSPAI_RELEASE_NOTES_PATH must point to candidate release notes, not fixtures." >&2
+            exit 1
+          fi
+
+          [[ -f "${WORKSPAI_ENTERPRISE_GATE_PATH}" ]] || {
+            echo "Enterprise gate file not found: ${WORKSPAI_ENTERPRISE_GATE_PATH}" >&2
+            exit 1
+          }
+          [[ -f "${WORKSPAI_RELEASE_NOTES_PATH}" ]] || {
+            echo "Release notes file not found: ${WORKSPAI_RELEASE_NOTES_PATH}" >&2
+            exit 1
+          }
+
+      - name: Collect open issues report (P0/P1 gate input)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const token = process.env.GITHUB_TOKEN;
+          const repo = process.env.GITHUB_REPOSITORY;
+          const outputPath = process.env.WORKSPAI_OPEN_ISSUE_REPORT_PATH;
+
+          async function main() {
+            const allIssues = [];
+            let page = 1;
+            const perPage = 100;
+
+            while (true) {
+              const url = `https://api.github.com/repos/${repo}/issues?state=open&per_page=${perPage}&page=${page}`;
+              const response = await fetch(url, {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  Accept: 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'User-Agent': 'workspai-release-gate',
+                },
+              });
+
+              if (!response.ok) {
+                throw new Error(`GitHub issues fetch failed on page ${page}: ${response.status} ${response.statusText}`);
+              }
+
+              const chunk = await response.json();
+              if (!Array.isArray(chunk) || chunk.length === 0) {
+                break;
+              }
+
+              allIssues.push(...chunk);
+              if (chunk.length < perPage) {
+                break;
+              }
+
+              page += 1;
+            }
+
+            fs.writeFileSync(outputPath, JSON.stringify(allIssues, null, 2), 'utf-8');
+            console.log(`Collected ${allIssues.length} open issue(s) across ${page} page(s).`);
+          }
+
+          main().catch((error) => {
+            console.error(error instanceof Error ? error.message : String(error));
+            process.exit(1);
+          });
+          NODE
+
       - name: Wave 2 release gate
-        run: npm run release:stop-gate:wave2
+        run: |
+          npm run release:stop-gate:wave2 -- \
+            --issue-report "${WORKSPAI_OPEN_ISSUE_REPORT_PATH}" \
+            --enforce-open-issues \
+            --block-severities "${WORKSPAI_GATE_BLOCK_SEVERITIES}" \
+            --enterprise-gate "${WORKSPAI_ENTERPRISE_GATE_PATH}" \
+            --enforce-enterprise-freeze \
+            --release-notes "${WORKSPAI_RELEASE_NOTES_PATH}" \
+            --enforce-release-posture-label

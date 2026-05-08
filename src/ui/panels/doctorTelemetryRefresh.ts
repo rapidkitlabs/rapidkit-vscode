@@ -13,6 +13,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 
 type CreateDoctorTelemetryRefreshControllerOptions = {
   onRefresh: (explicitWorkspacePath?: string) => void | Promise<void>;
+  onError?: (error: unknown) => void;
   delayMs?: number;
   setTimer?: (callback: () => void, delay: number) => TimerHandle;
   clearTimer?: (timer: TimerHandle) => void;
@@ -24,6 +25,7 @@ export function createDoctorTelemetryRefreshController(
   const delayMs = options.delayMs ?? 250;
   const setTimer = options.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
   const clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
+  const onError = options.onError ?? (() => undefined);
   let timer: TimerHandle | undefined;
 
   return {
@@ -38,7 +40,9 @@ export function createDoctorTelemetryRefreshController(
 
       timer = setTimer(() => {
         timer = undefined;
-        void options.onRefresh(explicitWorkspacePath);
+        void Promise.resolve(options.onRefresh(explicitWorkspacePath)).catch((error) => {
+          onError(error);
+        });
       }, delayMs);
     },
     dispose() {

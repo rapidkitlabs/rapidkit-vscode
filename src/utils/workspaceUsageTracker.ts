@@ -397,6 +397,43 @@ export interface ReleaseReadinessValidationKpiStatus {
   };
 }
 
+export interface EnterpriseStabilizationGateWindowResult {
+  window: 'last7d' | 'last30d';
+  windowStartAt: string | null;
+  windowEndAt: string;
+  /** S01: route precision gate */
+  routePrecisionPass: boolean;
+  /** S02: verify path completion gate */
+  verifyPathCompletionPass: boolean;
+  /** S03: false confidence rate gate */
+  falseConfidencePass: boolean;
+  /** S04: rollback recovery success gate */
+  rollbackRecoveryPass: boolean;
+  /** S05: repeat verified resolution gate */
+  repeatVerifiedResolutionPass: boolean;
+  /** Repro pack share rate gate */
+  reproPackSharePass: boolean;
+  /** Release readiness evidence available */
+  releaseReadinessEvidencePass: boolean;
+  /** Hard gate: verify phase reach + bridge route completion */
+  hardGatePass: boolean;
+  overallPass: boolean;
+}
+
+export interface EnterpriseStabilizationGateStatus {
+  workspacePath: string;
+  evaluatedAt: string;
+  last7d: EnterpriseStabilizationGateWindowResult | null;
+  last30d: EnterpriseStabilizationGateWindowResult | null;
+  /**
+   * Number of windows (0, 1, or 2) where overallPass is true.
+   * Freeze rule: expansion is only allowed when consecutiveWindowsPass >= 2.
+   */
+  consecutiveWindowsPass: number;
+  expansionFrozen: boolean;
+  freezeReason: string | null;
+}
+
 export interface ClarificationGateKpiThresholds {
   clarificationRateVsAskMax: number;
 }
@@ -528,7 +565,7 @@ const TELEMETRY_SURFACE_ALLOWLIST: TelemetrySurfaceAllowlistRule[] = [
   {
     surface: 'action',
     pattern:
-      /^workspai\.studio\.(loop_started|next_action_clicked|action_executed|verify_passed|verify_failed|verified_outcome_ready_for_artifact|outcome_memory_suggestion_ready|loop_completed|abandoned|prediction_shown|prediction_accepted|prediction_verified|prediction_falsified|rollback_attempted|rollback_succeeded|rollback_failed|incident_repro_pack_captured|incident_repro_pack_exported|incident_repro_pack_imported|incident_replay_ready|incident_replay_memory_enriched|repeated_incident_detected|verify_incomplete_warning)$/,
+      /^workspai\.studio\.(loop_started|next_action_clicked|action_executed|verify_passed|verify_failed|verified_outcome_ready_for_artifact|outcome_memory_suggestion_ready|loop_completed|abandoned|prediction_shown|prediction_accepted|prediction_verified|prediction_falsified|rollback_attempted|rollback_succeeded|rollback_failed|incident_repro_pack_captured|incident_repro_pack_exported|incident_repro_pack_imported|incident_replay_ready|incident_replay_memory_enriched|repeated_incident_detected|verify_incomplete_warning|team_expansion_triggered)$/,
   },
   {
     surface: 'action',
@@ -633,6 +670,48 @@ export class WorkspaceUsageTracker {
       })
       .filter((entry): entry is TelemetryCommandEvent => entry !== null)
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  }
+
+  private normalizeProjectPathForTelemetry(value?: string): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const normalized = value.trim().replace(/\\/g, '/').toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private filterRecentEventsByProjectPath(
+    events: TelemetryCommandEvent[],
+    projectPathFilter?: string
+  ): TelemetryCommandEvent[] {
+    const normalizedProjectPath = this.normalizeProjectPathForTelemetry(projectPathFilter);
+    if (!normalizedProjectPath) {
+      return events;
+    }
+
+    return events.filter((entry) => {
+      const rawProjectPath = entry.props?.projectPath;
+      if (typeof rawProjectPath !== 'string') {
+        return false;
+      }
+      const normalizedEventPath = this.normalizeProjectPathForTelemetry(rawProjectPath);
+      return normalizedEventPath === normalizedProjectPath;
+    });
+  }
+
+  private buildUsageFromRecentEvents(
+    recentEvents: TelemetryCommandEvent[],
+    windowStartMs: number | null
+  ): Map<string, number> {
+    const usageMap = new Map<string, number>();
+    for (const event of recentEvents) {
+      const eventMs = Date.parse(event.at);
+      if (Number.isNaN(eventMs) || (windowStartMs !== null && eventMs < windowStartMs)) {
+        continue;
+      }
+      usageMap.set(event.command, (usageMap.get(event.command) ?? 0) + 1);
+    }
+    return usageMap;
   }
 
   private getWindowStartMs(timeWindow: CommandTelemetryTimeWindow, nowMs: number): number | null {
@@ -1575,7 +1654,8 @@ export class WorkspaceUsageTracker {
    */
   async getStudioCtaVariantBreakdown(
     preferredWorkspacePath?: string,
-    timeWindow: CommandTelemetryTimeWindow = 'last7d'
+    timeWindow: CommandTelemetryTimeWindow = 'last7d',
+    projectPathFilter?: string
   ): Promise<StudioCtaVariantBreakdown | null> {
     const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
     if (!workspacePath) {
@@ -1601,8 +1681,12 @@ export class WorkspaceUsageTracker {
         windowStartMs === null
           ? recentEvents
           : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+      const scopedRecentEvents = this.filterRecentEventsByProjectPath(
+        filteredRecentEvents,
+        projectPathFilter
+      );
 
-      const studioEvents = filteredRecentEvents.filter((entry) =>
+      const studioEvents = scopedRecentEvents.filter((entry) =>
         entry.command.startsWith('workspai.studio.')
       );
 
@@ -1697,11 +1781,13 @@ export class WorkspaceUsageTracker {
   async getStudioHardGateStatus(
     preferredWorkspacePath?: string,
     timeWindow: CommandTelemetryTimeWindow = 'last7d',
-    thresholds: Partial<StudioHardGateThresholds> = {}
+    thresholds: Partial<StudioHardGateThresholds> = {},
+    projectPathFilter?: string
   ): Promise<StudioHardGateStatus | null> {
     const variantBreakdown = await this.getStudioCtaVariantBreakdown(
       preferredWorkspacePath,
-      timeWindow
+      timeWindow,
+      projectPathFilter
     );
     if (!variantBreakdown) {
       return null;
@@ -2338,7 +2424,8 @@ export class WorkspaceUsageTracker {
   async getStudioRollbackKpiStatus(
     preferredWorkspacePath?: string,
     timeWindow: CommandTelemetryTimeWindow = 'last7d',
-    thresholds: Partial<StudioRollbackKpiThresholds> = {}
+    thresholds: Partial<StudioRollbackKpiThresholds> = {},
+    projectPathFilter?: string
   ): Promise<StudioRollbackKpiStatus | null> {
     const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
     if (!workspacePath) {
@@ -2364,12 +2451,16 @@ export class WorkspaceUsageTracker {
         windowStartMs === null
           ? recentEvents
           : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+      const scopedRecentEvents = this.filterRecentEventsByProjectPath(
+        filteredRecentEvents,
+        projectPathFilter
+      );
 
       let verifyFailed = 0;
       let rollbackAttempted = 0;
       let rollbackSucceeded = 0;
 
-      for (const entry of filteredRecentEvents) {
+      for (const entry of scopedRecentEvents) {
         if (entry.command === 'workspai.studio.verify_failed') {
           verifyFailed += 1;
         } else if (entry.command === 'workspai.studio.rollback_attempted') {
@@ -2441,7 +2532,8 @@ export class WorkspaceUsageTracker {
   async getStudioStabilizationKpiStatus(
     preferredWorkspacePath?: string,
     timeWindow: CommandTelemetryTimeWindow = 'last7d',
-    thresholds: Partial<StudioStabilizationKpiThresholds> = {}
+    thresholds: Partial<StudioStabilizationKpiThresholds> = {},
+    projectPathFilter?: string
   ): Promise<StudioStabilizationKpiStatus | null> {
     const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
     if (!workspacePath) {
@@ -2468,24 +2560,30 @@ export class WorkspaceUsageTracker {
         windowStartMs === null
           ? recentEvents
           : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+      const scopedRecentEvents = this.filterRecentEventsByProjectPath(
+        filteredRecentEvents,
+        projectPathFilter
+      );
 
-      const usageMap = this.buildStudioUsageMap({
-        commandUsage: telemetry.commandUsage,
-        hourlyUsage,
-        recentEvents,
-        timeWindow,
-        windowStartMs,
-        windowEndMs: nowMs,
-        preferredCommands: [
-          'workspai.studio.next_action_clicked',
-          'workspai.studio.verify_passed',
-          'workspai.studio.verify_failed',
-          'workspai.studio.verify_incomplete_warning',
-          'workspai.studio.rollback_attempted',
-          'workspai.studio.rollback_succeeded',
-          'workspai.studio.repeated_incident_detected',
-        ],
-      });
+      const usageMap = projectPathFilter
+        ? this.buildUsageFromRecentEvents(scopedRecentEvents, null)
+        : this.buildStudioUsageMap({
+            commandUsage: telemetry.commandUsage,
+            hourlyUsage,
+            recentEvents,
+            timeWindow,
+            windowStartMs,
+            windowEndMs: nowMs,
+            preferredCommands: [
+              'workspai.studio.next_action_clicked',
+              'workspai.studio.verify_passed',
+              'workspai.studio.verify_failed',
+              'workspai.studio.verify_incomplete_warning',
+              'workspai.studio.rollback_attempted',
+              'workspai.studio.rollback_succeeded',
+              'workspai.studio.repeated_incident_detected',
+            ],
+          });
 
       const nextActionClicked = usageMap.get('workspai.studio.next_action_clicked') ?? 0;
       const verifyPassed = usageMap.get('workspai.studio.verify_passed') ?? 0;
@@ -2515,7 +2613,7 @@ export class WorkspaceUsageTracker {
         unspecified: 0,
       };
 
-      for (const entry of filteredRecentEvents) {
+      for (const entry of scopedRecentEvents) {
         if (entry.command === 'workspai.studio.next_action_clicked') {
           const fallbackReason = entry.props?.fallbackReason;
           if (typeof fallbackReason === 'string') {
@@ -2731,7 +2829,8 @@ export class WorkspaceUsageTracker {
   async getStudioReproPackKpiStatus(
     preferredWorkspacePath?: string,
     timeWindow: CommandTelemetryTimeWindow = 'last7d',
-    thresholds: Partial<StudioReproPackKpiThresholds> = {}
+    thresholds: Partial<StudioReproPackKpiThresholds> = {},
+    projectPathFilter?: string
   ): Promise<StudioReproPackKpiStatus | null> {
     const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
     if (!workspacePath) {
@@ -2754,21 +2853,31 @@ export class WorkspaceUsageTracker {
       const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
       const nowMs = Date.now();
       const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
-      const usageMap = this.buildStudioUsageMap({
-        commandUsage: telemetry.commandUsage,
-        hourlyUsage,
-        recentEvents,
-        timeWindow,
-        windowStartMs,
-        windowEndMs: nowMs,
-        preferredCommands: [
-          'workspai.studio.incident_repro_pack_captured',
-          'workspai.studio.incident_repro_pack_exported',
-          'workspai.studio.incident_repro_pack_imported',
-          'workspai.studio.incident_replay_ready',
-          'workspai.studio.incident_replay_memory_enriched',
-        ],
-      });
+      const filteredRecentEvents =
+        windowStartMs === null
+          ? recentEvents
+          : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+      const scopedRecentEvents = this.filterRecentEventsByProjectPath(
+        filteredRecentEvents,
+        projectPathFilter
+      );
+      const usageMap = projectPathFilter
+        ? this.buildUsageFromRecentEvents(scopedRecentEvents, null)
+        : this.buildStudioUsageMap({
+            commandUsage: telemetry.commandUsage,
+            hourlyUsage,
+            recentEvents,
+            timeWindow,
+            windowStartMs,
+            windowEndMs: nowMs,
+            preferredCommands: [
+              'workspai.studio.incident_repro_pack_captured',
+              'workspai.studio.incident_repro_pack_exported',
+              'workspai.studio.incident_repro_pack_imported',
+              'workspai.studio.incident_replay_ready',
+              'workspai.studio.incident_replay_memory_enriched',
+            ],
+          });
 
       const reproPackCaptured = usageMap.get('workspai.studio.incident_repro_pack_captured') ?? 0;
       const reproPackExported = usageMap.get('workspai.studio.incident_repro_pack_exported') ?? 0;
@@ -2830,7 +2939,8 @@ export class WorkspaceUsageTracker {
 
   async getReleaseReadinessValidationKpiStatus(
     preferredWorkspacePath?: string,
-    timeWindow: CommandTelemetryTimeWindow = 'last30d'
+    timeWindow: CommandTelemetryTimeWindow = 'last30d',
+    projectPathFilter?: string
   ): Promise<ReleaseReadinessValidationKpiStatus | null> {
     const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
     if (!workspacePath) {
@@ -2853,23 +2963,33 @@ export class WorkspaceUsageTracker {
       const hourlyUsage = this.parseHourlyUsage(telemetry.hourlyUsage);
       const nowMs = Date.now();
       const windowStartMs = this.getWindowStartMs(timeWindow, nowMs);
-      const usageMap = this.buildStudioUsageMap({
-        commandUsage: telemetry.commandUsage,
-        hourlyUsage,
-        recentEvents,
-        timeWindow,
-        windowStartMs,
-        windowEndMs: nowMs,
-        preferredCommands: [
-          'workspai.studio.release_readiness_artifact_exported',
-          'workspai.studio.release_readiness_go_decision_exported',
-          'workspai.studio.release_readiness_no_go_decision_exported',
-          'workspai.studio.release_readiness_decision_validated',
-          'workspai.studio.release_readiness_decision_correct',
-          'workspai.studio.release_readiness_no_go_decision_validated',
-          'workspai.studio.release_readiness_no_go_prevented_incident',
-        ],
-      });
+      const filteredRecentEvents =
+        windowStartMs === null
+          ? recentEvents
+          : recentEvents.filter((entry) => Date.parse(entry.at) >= windowStartMs);
+      const scopedRecentEvents = this.filterRecentEventsByProjectPath(
+        filteredRecentEvents,
+        projectPathFilter
+      );
+      const usageMap = projectPathFilter
+        ? this.buildUsageFromRecentEvents(scopedRecentEvents, null)
+        : this.buildStudioUsageMap({
+            commandUsage: telemetry.commandUsage,
+            hourlyUsage,
+            recentEvents,
+            timeWindow,
+            windowStartMs,
+            windowEndMs: nowMs,
+            preferredCommands: [
+              'workspai.studio.release_readiness_artifact_exported',
+              'workspai.studio.release_readiness_go_decision_exported',
+              'workspai.studio.release_readiness_no_go_decision_exported',
+              'workspai.studio.release_readiness_decision_validated',
+              'workspai.studio.release_readiness_decision_correct',
+              'workspai.studio.release_readiness_no_go_decision_validated',
+              'workspai.studio.release_readiness_no_go_prevented_incident',
+            ],
+          });
 
       const releaseReadinessArtifactsExported =
         usageMap.get('workspai.studio.release_readiness_artifact_exported') ?? 0;
@@ -3211,6 +3331,157 @@ export class WorkspaceUsageTracker {
       };
     } catch (error) {
       this.logger.debug(`Failed to read performance SLO status: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Enterprise Stabilization Gate v1 — evaluates all S01-S05 KPIs plus release readiness
+   * in both last7d and last30d windows. Returns a combined gate status used to enforce the
+   * loop expansion freeze rule: expansion is allowed only when both windows pass.
+   */
+  async getEnterpriseStabilizationGateStatus(
+    preferredWorkspacePath?: string,
+    projectPathFilter?: string
+  ): Promise<EnterpriseStabilizationGateStatus | null> {
+    const workspacePath = this.resolveWorkspacePath(preferredWorkspacePath);
+    if (!workspacePath) {
+      return null;
+    }
+
+    try {
+      const [
+        stabilization7d,
+        stabilization30d,
+        reproPackKpi7d,
+        reproPackKpi30d,
+        releaseReadiness7d,
+        releaseReadiness30d,
+        hardGate7d,
+        hardGate30d,
+      ] = await Promise.all([
+        this.getStudioStabilizationKpiStatus(workspacePath, 'last7d', {}, projectPathFilter),
+        this.getStudioStabilizationKpiStatus(workspacePath, 'last30d', {}, projectPathFilter),
+        this.getStudioReproPackKpiStatus(workspacePath, 'last7d', {}, projectPathFilter),
+        this.getStudioReproPackKpiStatus(workspacePath, 'last30d', {}, projectPathFilter),
+        this.getReleaseReadinessValidationKpiStatus(workspacePath, 'last7d', projectPathFilter),
+        this.getReleaseReadinessValidationKpiStatus(workspacePath, 'last30d', projectPathFilter),
+        this.getStudioHardGateStatus(workspacePath, 'last7d', {}, projectPathFilter),
+        this.getStudioHardGateStatus(workspacePath, 'last30d', {}, projectPathFilter),
+      ]);
+
+      const evaluateWindow = (
+        window: 'last7d' | 'last30d',
+        stabilization: StudioStabilizationKpiStatus | null,
+        reproPackKpi: StudioReproPackKpiStatus | null,
+        releaseReadiness: ReleaseReadinessValidationKpiStatus | null,
+        hardGate: StudioHardGateStatus | null
+      ): EnterpriseStabilizationGateWindowResult => {
+        const windowEndAt = stabilization?.windowEndAt ?? new Date().toISOString();
+        const windowStartAt = stabilization?.windowStartAt ?? null;
+
+        const routePrecisionPass = stabilization?.gates.routePrecisionPass ?? false;
+        const verifyPathCompletionPass = stabilization?.gates.verifyPathCompletionRatePass ?? false;
+        const falseConfidencePass = stabilization?.gates.falseConfidenceRatePass ?? false;
+        const rollbackRecoveryPass = stabilization?.gates.rollbackRecoverySuccessRatePass ?? false;
+        const repeatVerifiedResolutionPass =
+          stabilization?.gates.repeatVerifiedResolutionRatePass ?? false;
+        const reproPackSharePass = reproPackKpi?.gates.reproPackShareRatePass ?? false;
+        const releaseReadinessEvidencePass = releaseReadiness?.gates.telemetryEvidencePass ?? false;
+        const hardGatePass = hardGate?.gates.overallPass ?? false;
+
+        const overallPass =
+          routePrecisionPass &&
+          verifyPathCompletionPass &&
+          falseConfidencePass &&
+          rollbackRecoveryPass &&
+          repeatVerifiedResolutionPass &&
+          reproPackSharePass &&
+          releaseReadinessEvidencePass &&
+          hardGatePass;
+
+        return {
+          window,
+          windowStartAt,
+          windowEndAt,
+          routePrecisionPass,
+          verifyPathCompletionPass,
+          falseConfidencePass,
+          rollbackRecoveryPass,
+          repeatVerifiedResolutionPass,
+          reproPackSharePass,
+          releaseReadinessEvidencePass,
+          hardGatePass,
+          overallPass,
+        };
+      };
+
+      const last7dResult = evaluateWindow(
+        'last7d',
+        stabilization7d,
+        reproPackKpi7d,
+        releaseReadiness7d,
+        hardGate7d
+      );
+      const last30dResult = evaluateWindow(
+        'last30d',
+        stabilization30d,
+        reproPackKpi30d,
+        releaseReadiness30d,
+        hardGate30d
+      );
+
+      const consecutiveWindowsPass =
+        (last7dResult.overallPass ? 1 : 0) + (last30dResult.overallPass ? 1 : 0);
+      const expansionFrozen = consecutiveWindowsPass < 2;
+
+      let freezeReason: string | null = null;
+      if (expansionFrozen) {
+        if (consecutiveWindowsPass === 0) {
+          freezeReason = 'Neither last7d nor last30d window passes all enterprise gate criteria.';
+        } else {
+          // One window passes, find which one failed
+          const failingWindow = !last7dResult.overallPass ? last7dResult : last30dResult;
+          const failedGates: string[] = [];
+          if (!failingWindow.routePrecisionPass) {
+            failedGates.push('S01 Route Precision');
+          }
+          if (!failingWindow.verifyPathCompletionPass) {
+            failedGates.push('S02 Verify Path Quality');
+          }
+          if (!failingWindow.falseConfidencePass) {
+            failedGates.push('S03 False Confidence Rate');
+          }
+          if (!failingWindow.rollbackRecoveryPass) {
+            failedGates.push('S04 Rollback Recovery');
+          }
+          if (!failingWindow.repeatVerifiedResolutionPass) {
+            failedGates.push('S05 Repeat Verified Resolution');
+          }
+          if (!failingWindow.reproPackSharePass) {
+            failedGates.push('Repro Pack Share Rate');
+          }
+          if (!failingWindow.releaseReadinessEvidencePass) {
+            failedGates.push('Release Readiness Evidence');
+          }
+          if (!failingWindow.hardGatePass) {
+            failedGates.push('Hard Gate (verify phase reach)');
+          }
+          freezeReason = `${failingWindow.window} window failing: ${failedGates.join(', ')}.`;
+        }
+      }
+
+      return {
+        workspacePath,
+        evaluatedAt: new Date().toISOString(),
+        last7d: last7dResult,
+        last30d: last30dResult,
+        consecutiveWindowsPass,
+        expansionFrozen,
+        freezeReason,
+      };
+    } catch (error) {
+      this.logger.debug(`Failed to evaluate enterprise stabilization gate: ${error}`);
       return null;
     }
   }

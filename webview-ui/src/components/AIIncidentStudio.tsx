@@ -230,6 +230,7 @@ interface IncidentTelemetrySnapshot {
         frameworks: Array<{ name: string; count: number }>;
         projects: Array<{
             name: string;
+            path?: string;
             framework?: string;
             issues: number;
             depsInstalled?: boolean;
@@ -994,8 +995,8 @@ export function AIIncidentStudio({
     analysisScopeType = 'workspace',
     analysisScopeLabel,
     analysisScopePath = null,
-    analysisWorkspacePath: _analysisWorkspacePath = null,
-    analysisProjectPath: _analysisProjectPath = null,
+    analysisWorkspacePath = null,
+    analysisProjectPath = null,
     modelId,
     availableModels = [],
     selectedModelId = null,
@@ -1141,12 +1142,64 @@ export function AIIncidentStudio({
     const releaseReadinessValidationKpiStatus = telemetry?.releaseReadinessValidationKpiStatus ?? null;
     const verifiedOutcomeLoopStatus = telemetry?.verifiedOutcomeLoopStatus ?? null;
     const doctorSummary = telemetry?.doctorSummary ?? null;
+    const isProjectAnalysisScope = analysisScopeType === 'project';
+    const normalizedProjectScopePath = (analysisProjectPath || analysisScopePath || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .toLowerCase();
+    const selectedProjectScopeName = isProjectAnalysisScope
+        ? (analysisScopeLabel || '')
+            .split('@')[0]
+            .trim()
+            .toLowerCase()
+        : '';
     const hasDoctorSnapshot = Boolean(doctorSummary);
     const doctorProjects = doctorSummary?.projects ?? [];
-    const doctorVisibleProjects = showAllDoctorProjects
-        ? doctorProjects
-        : doctorProjects.slice(0, 4);
-    const hiddenDoctorProjectsCount = Math.max(doctorProjects.length - doctorVisibleProjects.length, 0);
+    const scopedDoctorProjects = useMemo(() => {
+        if (!isProjectAnalysisScope) {
+            return doctorProjects;
+        }
+
+        if (doctorProjects.length === 0) {
+            return [];
+        }
+
+        const byPath = normalizedProjectScopePath
+            ? doctorProjects.filter((project) => {
+                if (typeof project.path !== 'string' || !project.path.trim()) {
+                    return false;
+                }
+                return project.path.trim().replace(/\\/g, '/').toLowerCase() === normalizedProjectScopePath;
+            })
+            : [];
+        if (byPath.length > 0) {
+            return byPath;
+        }
+
+        const byName = selectedProjectScopeName
+            ? doctorProjects.filter(
+                (project) => project.name.trim().toLowerCase() === selectedProjectScopeName
+            )
+            : [];
+        if (byName.length > 0) {
+            return byName;
+        }
+
+        return doctorProjects.slice(0, 1);
+    }, [
+        doctorProjects,
+        isProjectAnalysisScope,
+        normalizedProjectScopePath,
+        selectedProjectScopeName,
+    ]);
+    const doctorVisibleProjects = isProjectAnalysisScope
+        ? scopedDoctorProjects
+        : showAllDoctorProjects
+            ? scopedDoctorProjects
+            : scopedDoctorProjects.slice(0, 4);
+    const hiddenDoctorProjectsCount = isProjectAnalysisScope
+        ? 0
+        : Math.max(scopedDoctorProjects.length - doctorVisibleProjects.length, 0);
     const cliActionMatrix = useMemo(
         () => buildIncidentCliActionMatrix(hasProjectSelected),
         [hasProjectSelected]
@@ -1213,12 +1266,71 @@ export function AIIncidentStudio({
             setModuleGraphFrameworkFilter('all');
         }
     }, [doctorModuleGraphFrameworkOptions, moduleGraphFrameworkFilter]);
+    const scopedDoctorIssueCount = scopedDoctorProjects.reduce(
+        (total, project) => total + (project.issues || 0),
+        0
+    );
+    const scopedDoctorProjectsWithIssues = scopedDoctorProjects.filter(
+        (project) => (project.issues || 0) > 0
+    ).length;
+    const projectScopeHealthPercent = useMemo(() => {
+        if (!isProjectAnalysisScope || !hasDoctorSnapshot) {
+            return null;
+        }
+
+        if (scopedDoctorProjects.length === 0) {
+            return null;
+        }
+
+        if (scopedDoctorProjects.length === 1) {
+            const project = scopedDoctorProjects[0];
+            const rawPenalty =
+                (project.issues || 0) * 12 +
+                (project.vulnerabilities || 0) * 3 +
+                (project.depsInstalled === false ? 15 : 0);
+            return Math.max(10, Math.min(100, 100 - rawPenalty));
+        }
+
+        const healthyShare =
+            scopedDoctorProjects.length > 0
+                ? (scopedDoctorProjects.length - scopedDoctorProjectsWithIssues) /
+                scopedDoctorProjects.length
+                : 0;
+        return Math.round(Math.max(0, Math.min(1, healthyShare)) * 100);
+    }, [
+        hasDoctorSnapshot,
+        isProjectAnalysisScope,
+        scopedDoctorProjects,
+        scopedDoctorProjectsWithIssues,
+    ]);
     // null = no real data yet; shown as 'N/A' rather than fabricated numbers.
-    const snapshotHealthPercent = hasDoctorSnapshot ? doctorSummary!.health.percent : null;
+    const snapshotHealthPercent = hasDoctorSnapshot
+        ? isProjectAnalysisScope
+            ? projectScopeHealthPercent
+            : doctorSummary!.health.percent
+        : null;
     const projectsWithIssuesRatio =
-        hasDoctorSnapshot && doctorSummary!.projectCount > 0
-            ? Math.round((doctorSummary!.projectsWithIssues / doctorSummary!.projectCount) * 100)
+        hasDoctorSnapshot && scopedDoctorProjects.length > 0
+            ? Math.round((scopedDoctorProjectsWithIssues / scopedDoctorProjects.length) * 100)
             : null;
+    const snapshotIssueCount = hasDoctorSnapshot
+        ? isProjectAnalysisScope
+            ? scopedDoctorIssueCount
+            : doctorSummary!.issueCount
+        : null;
+    const snapshotPrimaryLabel = isProjectAnalysisScope ? 'Project health' : 'Workspace health';
+    const snapshotSecondaryLabel = isProjectAnalysisScope
+        ? 'Selected scope with issues'
+        : 'Projects with issues';
+    const snapshotSectionTitle = isProjectAnalysisScope
+        ? 'Project Health Snapshot'
+        : 'Workspace Health Snapshot';
+    const diagnosisPanelTitle = isProjectAnalysisScope
+        ? 'Project Live Diagnosis'
+        : 'Workspace Live Diagnosis';
+    const diagnosisHeadline = isProjectAnalysisScope
+        ? 'Current project diagnosis'
+        : 'Current workspace diagnosis';
     const incidentCount = commandSummary?.totalEvents
         ? Math.min(99, Math.ceil(commandSummary.totalEvents / 3))
         : conversationTurns > 0
@@ -1517,7 +1629,6 @@ export function AIIncidentStudio({
             // Mirror the verifyReady condition from phaseContext (no latestStructuredResponse yet
             // at this point, so use actionResult and verifyCommandPack as the signal sources)
             done: Boolean(
-                chatBrainActionResult?.success ||
                 verifyPackReady
             ),
         },
@@ -1628,6 +1739,22 @@ export function AIIncidentStudio({
         () => (latestAssistantEntry ? parseStructuredResponse(latestAssistantEntry.text) : null),
         [latestAssistantEntry]
     );
+    // ── telemetry gate signals ─────────────────────────────────────────────────
+    // These are derived once here so phaseContext can use them as precise boolean gates.
+    // For workspace scope: hard gate pass AND route precision pass are required as an evidence
+    // floor before plan/verify phases advance.
+    // For project scope: same gates but scoped evidence is sufficient.
+    const telemetryHardGatePass = studioHardGateStatus?.gates.overallPass === true;
+    const telemetryRoutePrecisionPass = studioStabilizationKpiStatus?.gates.routePrecisionPass === true;
+    const telemetryVerifyPathPass = studioStabilizationKpiStatus?.gates.verifyPathCompletionRatePass === true;
+    // verifyCommandPack qualityScore >= 60 is required to claim verifyReady via pack path.
+    const verifyPackQualityAdequate =
+        (chatBrainActionResult?.verifyCommandPack?.qualityScore ?? 0) >= 60;
+    // workspace scope: verified outcomes in telemetry count as prior resolution evidence.
+    const workspaceHasPriorResolutions =
+        !isProjectAnalysisScope &&
+        (verifiedOutcomeLoopStatus?.verifiedOutcomes ?? 0) > 0;
+
     const phaseContext = useMemo(
         () => ({
             workspaceReady: Boolean(
@@ -1636,35 +1763,70 @@ export function AIIncidentStudio({
                 doctorSummary?.workspaceName ||
                 commandSummary?.totalEvents
             ),
+            // diagnosisReady: require at least one real evidence signal.
+            // Telemetry hard gate pass (when available) acts as a corroborating signal;
+            // it does NOT block diagnosis if only local evidence is present.
             diagnosisReady: Boolean(
                 chatBrainActionResult?.diagnosis ||
                 chatBrainImpactAssessment ||
-                (chatBrainHistory?.length || 0) > 0
+                doctorSummary?.generatedAt ||
+                (doctorSummary && doctorSummary.issueCount >= 0) ||
+                telemetryHardGatePass
             ),
-            planReady: Boolean(sortedBoardActions.length > 0),
+            // planReady: board actions + diagnosis evidence are required.
+            // When telemetry gates are available, route precision pass strengthens the signal
+            // so the plan phase only advances when the routing system is behaving correctly.
+            planReady: Boolean(
+                sortedBoardActions.length > 0 &&
+                (chatBrainActionResult?.diagnosis ||
+                    chatBrainImpactAssessment ||
+                    doctorSummary?.generatedAt ||
+                    (doctorSummary && doctorSummary.issueCount >= 0)) &&
+                // If telemetry gate data is present, route precision must also pass.
+                // If no telemetry data yet, do not block the plan phase.
+                (studioStabilizationKpiStatus === null || telemetryRoutePrecisionPass)
+            ),
+            // verifyReady: structured verify command, or a quality-adequate pack with no blockers.
+            // Telemetry verify path gate (when present) acts as a corroborating floor:
+            // if it explicitly fails (false) and there is no local verify evidence, block the phase.
             verifyReady: Boolean(
-                chatBrainActionResult?.success ||
                 latestStructuredResponse?.verifyCommand ||
-                verifyPackReady
+                (chatBrainActionResult?.verifyCommandPack?.commands.some((entry) => entry.required) &&
+                    (chatBrainActionResult?.verifyCommandPack?.blockedReasons.length ?? 0) === 0 &&
+                    verifyPackQualityAdequate) ||
+                verifyPackReady ||
+                // Telemetry verify path pass is sufficient when no local pack exists yet.
+                (telemetryVerifyPathPass && studioStabilizationKpiStatus !== null)
             ),
-            priorResolutionAvailable: Boolean(incidentResume?.resolved || onboardingSummary?.followupClicked),
+            // priorResolutionAvailable: direct resolved flag OR workspace telemetry evidence.
+            priorResolutionAvailable: Boolean(
+                incidentResume?.resolved ||
+                workspaceHasPriorResolutions
+            ),
         }),
         [
             workspaceName,
             chatBrainSystemGraphSnapshot?.workspacePath,
             doctorSummary?.workspaceName,
+            doctorSummary?.generatedAt,
+            doctorSummary?.issueCount,
             commandSummary?.totalEvents,
             chatBrainActionResult?.diagnosis,
-            chatBrainActionResult?.success,
             chatBrainActionResult?.verifyCommandPack?.commands.length,
             chatBrainActionResult?.verifyCommandPack?.readiness,
             chatBrainActionResult?.verifyCommandPack?.blockedReasons.length,
+            chatBrainActionResult?.verifyCommandPack?.qualityScore,
             chatBrainImpactAssessment,
-            chatBrainHistory,
             sortedBoardActions.length,
             latestStructuredResponse?.verifyCommand,
             incidentResume?.resolved,
-            onboardingSummary?.followupClicked,
+            telemetryHardGatePass,
+            telemetryRoutePrecisionPass,
+            telemetryVerifyPathPass,
+            verifyPackQualityAdequate,
+            studioStabilizationKpiStatus,
+            verifyPackReady,
+            workspaceHasPriorResolutions,
         ]
     );
 
@@ -1764,17 +1926,19 @@ export function AIIncidentStudio({
     const summaryTitle = aiUnavailable
         ? 'AI is temporarily unavailable'
         : isAnalyzing
-            ? 'AI is analyzing this workspace'
+            ? `AI is analyzing this ${isProjectAnalysisScope ? 'project' : 'workspace'}`
             : sortedBoardActions.length > 0
                 ? 'AI found the next actions for you'
-                : 'Ask AI to inspect the current workspace';
+                : `Ask AI to inspect the current ${isProjectAnalysisScope ? 'project' : 'workspace'}`;
     const summaryText = aiUnavailable
         ? 'Switch to deterministic checks now, then retry AI when the connection recovers.'
         : isAnalyzing
             ? 'Stay here. The conversation and action list will update in this Studio.'
             : sortedBoardActions.length > 0
                 ? `Current phase: ${activePhase}. Start with "${nextActionLabel}" or ask a follow-up below.`
-                : 'Use the input below to describe a bug, add a service, inspect risk, or debug a failing flow.';
+                : isProjectAnalysisScope
+                    ? 'Use the input below to debug this project, inspect module risk, or verify a targeted fix path.'
+                    : 'Use the input below to analyze cross-project risk, shared failures, and workspace-level priorities.';
     const modeHint =
         activeUserMode === 'guided'
             ? 'Guided mode: one best next action, minimal cognitive load.'
@@ -1929,7 +2093,9 @@ export function AIIncidentStudio({
 
     const focusNarrative = latestStructuredResponse?.whatHappened || latestAssistantEntry?.text || summaryText;
     const focusReason = latestStructuredResponse?.why || null;
-    const focusHeadline = latestStructuredResponse?.whatHappened ? 'Latest diagnosis' : summaryTitle;
+    const focusHeadline = latestStructuredResponse?.whatHappened
+        ? `Latest ${isProjectAnalysisScope ? 'project' : 'workspace'} diagnosis`
+        : summaryTitle;
     const focusTimestamp = latestAssistantEntry?.timestamp
         ? new Date(latestAssistantEntry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : 'Waiting for signal';
@@ -2069,6 +2235,29 @@ export function AIIncidentStudio({
             });
         }
 
+        if (!isProjectAnalysisScope) {
+            addChip({
+                id: 'workspace-doctor-chip',
+                label: 'Run workspace doctor',
+                detail: 'Refresh cross-project health evidence before taking a mutating action.',
+                kind: 'doctor-checks',
+            });
+            addChip({
+                id: 'workspace-verify-pack-chip',
+                label: 'Generate workspace verify pack',
+                detail: 'Build deterministic verification commands for all affected services.',
+                kind: 'board-action',
+                actionType: 'verify-pack-autopilot',
+            });
+            addChip({
+                id: 'workspace-release-readiness-chip',
+                label: 'Run release readiness check',
+                detail: 'Create a workspace-wide GO or NO-GO decision with evidence.',
+                kind: 'board-action',
+                actionType: 'release-readiness-commander',
+            });
+        }
+
         (chatBrainSuggestedQuestions || []).slice(0, 5).forEach((question, index) => {
             const inferred = intentLabelFromQuestion(question);
             addChip({
@@ -2081,30 +2270,52 @@ export function AIIncidentStudio({
         });
 
         if (chips.length === 0) {
-            addChip({
-                id: 'fallback-inspect-logs',
-                label: 'Inspect logs',
-                detail: 'Start with runtime evidence to reduce guesswork in the next step.',
-                kind: 'terminal-bridge',
-            });
-            addChip({
-                id: 'fallback-preview-fix',
-                label: 'Preview safe fix',
-                detail: 'Generate a patch proposal before editing the workspace.',
-                kind: 'fix-preview',
-            });
-            addChip({
-                id: 'fallback-blast-radius',
-                label: 'Check blast radius',
-                detail: 'Review impact before rollout or refactor.',
-                kind: 'change-impact',
-            });
-            addChip({
-                id: 'fallback-save-pattern',
-                label: 'Save incident pattern',
-                detail: 'Store the diagnosis path as reusable workspace memory.',
-                kind: 'memory-wizard',
-            });
+            if (isProjectAnalysisScope) {
+                addChip({
+                    id: 'fallback-inspect-logs',
+                    label: 'Inspect project logs',
+                    detail: 'Start with runtime evidence from this project to reduce guesswork.',
+                    kind: 'terminal-bridge',
+                });
+                addChip({
+                    id: 'fallback-preview-fix',
+                    label: 'Preview safe project fix',
+                    detail: 'Generate a patch proposal before editing this project.',
+                    kind: 'fix-preview',
+                });
+                addChip({
+                    id: 'fallback-project-blast-radius',
+                    label: 'Check project blast radius',
+                    detail: 'Review module and test impact before rollout.',
+                    kind: 'change-impact',
+                });
+            } else {
+                addChip({
+                    id: 'fallback-workspace-doctor',
+                    label: 'Run workspace doctor',
+                    detail: 'Collect fresh workspace-wide health evidence before making changes.',
+                    kind: 'doctor-checks',
+                });
+                addChip({
+                    id: 'fallback-workspace-verify-pack',
+                    label: 'Generate workspace verify pack',
+                    detail: 'Create deterministic verify commands across affected projects.',
+                    kind: 'board-action',
+                    actionType: 'verify-pack-autopilot',
+                });
+                addChip({
+                    id: 'fallback-workspace-blast-radius',
+                    label: 'Check cross-project blast radius',
+                    detail: 'Map impact propagation before rollout across the workspace.',
+                    kind: 'change-impact',
+                });
+                addChip({
+                    id: 'fallback-save-pattern',
+                    label: 'Save workspace incident pattern',
+                    detail: 'Store the diagnosis path as reusable workspace memory.',
+                    kind: 'memory-wizard',
+                });
+            }
         }
 
         const maxChips = activeUserMode === 'guided' ? 3 : activeUserMode === 'expert' ? 7 : 5;
@@ -2113,6 +2324,7 @@ export function AIIncidentStudio({
             isPrimary: primaryCtaMode === 'single' ? index === 0 : true,
         }));
     }, [
+        isProjectAnalysisScope,
         chatBrainSuggestedQuestions,
         latestStructuredResponse?.nextCommand,
         latestStructuredResponse?.verifyCommand,
@@ -2641,7 +2853,7 @@ export function AIIncidentStudio({
 
                             <div className="incident-panel-heading incident-panel-heading--brand">
                                 <Activity size={13} />
-                                <span>Live Diagnosis</span>
+                                <span>{diagnosisPanelTitle}</span>
                                 <span className="incident-analysis-status">
                                     {isAnalyzing ? '● Analyzing…' : chatBrainHistory?.length ? `${chatBrainHistory.length} messages` : 'Ready'}
                                 </span>
@@ -2687,7 +2899,7 @@ export function AIIncidentStudio({
                                             <small>{focusTimestamp}</small>
                                         </summary>
                                         <div className="incident-focus-copy">
-                                            <h3>{latestAssistantEntry ? 'Current diagnosis' : 'Workspace ready for incident analysis'}</h3>
+                                            <h3>{latestAssistantEntry ? diagnosisHeadline : `${isProjectAnalysisScope ? 'Project' : 'Workspace'} ready for incident analysis`}</h3>
                                             <p>{focusNarrative}</p>
                                             <small className="incident-mode-hint">{modeHint}</small>
                                             {modePresentation?.rationale ? (
@@ -3106,7 +3318,7 @@ export function AIIncidentStudio({
                                 <div className="incident-health-snapshot">
                                     <div className="incident-panel-heading">
                                         <BarChart3 size={13} />
-                                        <span>Workspace Health Snapshot</span>
+                                        <span>{snapshotSectionTitle}</span>
                                     </div>
                                     <details className="incident-collapse incident-collapse--snapshot incident-collapse--issues incident-health-section">
                                         <summary>
@@ -3157,13 +3369,19 @@ export function AIIncidentStudio({
                                     <details className="incident-collapse incident-collapse--snapshot incident-health-section">
                                         <summary>
                                             <span>Snapshot numbers</span>
-                                            <small>{snapshotHealthPercent === null ? 'No data' : `${snapshotHealthPercent}%`}</small>
+                                            <small>
+                                                {snapshotHealthPercent === null
+                                                    ? (isProjectAnalysisScope ? 'Scoped data unavailable' : 'No data')
+                                                    : `${snapshotHealthPercent}%`}
+                                            </small>
                                         </summary>
                                         <div className="incident-metric-card">
-                                            <span>Workspace health</span>
+                                            <span>{snapshotPrimaryLabel}</span>
                                             <strong>
                                                 {snapshotHealthPercent === null
-                                                    ? 'N/A — run doctor checks'
+                                                    ? (isProjectAnalysisScope
+                                                        ? 'N/A — select a tracked project'
+                                                        : 'N/A — run doctor checks')
                                                     : `${snapshotHealthPercent}%`}
                                             </strong>
                                             <div className="incident-meter">
@@ -3172,9 +3390,9 @@ export function AIIncidentStudio({
                                         </div>
                                         {hasDoctorSnapshot ? (
                                             <div className="incident-metric-card">
-                                                <span>Projects with issues</span>
+                                                <span>{snapshotSecondaryLabel}</span>
                                                 <strong>
-                                                    {doctorSummary!.projectsWithIssues}/{doctorSummary!.projectCount}
+                                                    {scopedDoctorProjectsWithIssues}/{scopedDoctorProjects.length}
                                                 </strong>
                                                 <div className="incident-meter">
                                                     <span style={{ width: `${projectsWithIssuesRatio ?? 0}%` }} />
@@ -3196,7 +3414,7 @@ export function AIIncidentStudio({
                                                 <CheckCircle2 size={12} />
                                                 <span>
                                                     {hasDoctorSnapshot
-                                                        ? `${doctorSummary!.issueCount} issue(s) detected`
+                                                        ? `${snapshotIssueCount ?? 0} issue(s) detected`
                                                         : incidentCount !== null
                                                             ? `${incidentCount} items tracked`
                                                             : 'No activity yet'}
@@ -3208,7 +3426,9 @@ export function AIIncidentStudio({
                                                     {isAnalyzing
                                                         ? 'AI is updating this view'
                                                         : hasDoctorSnapshot
-                                                            ? 'Doctor evidence loaded from workspace'
+                                                            ? isProjectAnalysisScope
+                                                                ? 'Doctor evidence loaded for selected project scope'
+                                                                : `Doctor evidence loaded from workspace${analysisWorkspacePath ? ': ' + analysisWorkspacePath.split('/').pop() : ''}`
                                                             : 'Waiting for your next action'}
                                                 </span>
                                             </div>

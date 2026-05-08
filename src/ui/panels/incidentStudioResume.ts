@@ -30,6 +30,30 @@ function compactSingleLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function toNonNegativeInteger(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.floor(value);
+}
+
+function toNonNegativeTimestamp(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return Math.floor(value);
+}
+
+function toValidTurns(history: IncidentConversationTurn[]): IncidentConversationTurn[] {
+  return history
+    .filter((turn) => turn && (turn.role === 'user' || turn.role === 'assistant'))
+    .map((turn) => ({
+      role: turn.role,
+      content: compactSingleLine(String(turn.content ?? '')),
+    }))
+    .filter((turn) => turn.content.length > 0);
+}
+
 function trimToSentence(value: string, maxLength = 220): string {
   const singleLine = compactSingleLine(value);
   if (!singleLine) {
@@ -103,22 +127,25 @@ export function buildIncidentResumeSnapshot(
   conversation: IncidentConversationState
 ): IncidentResumeSnapshot | null {
   const workspacePath = conversation.workspacePath?.trim();
-  if (!workspacePath || conversation.history.length === 0) {
+  const validTurns = toValidTurns(conversation.history);
+
+  if (!workspacePath || validTurns.length === 0) {
     return null;
   }
 
-  const resolved = typeof conversation.verifyPassedAt === 'number';
+  const resolved =
+    typeof conversation.verifyPassedAt === 'number' && Number.isFinite(conversation.verifyPassedAt);
   const nextAction = nextActionForPhase(conversation.phase, resolved);
 
   return {
     workspacePath,
     phase: conversation.phase,
-    turnCount: conversation.history.length,
-    queryCount: conversation.queryCount,
-    actionCount: conversation.actionCount,
-    lastActivityAt: conversation.lastActivityAt,
+    turnCount: validTurns.length,
+    queryCount: toNonNegativeInteger(conversation.queryCount),
+    actionCount: toNonNegativeInteger(conversation.actionCount),
+    lastActivityAt: toNonNegativeTimestamp(conversation.lastActivityAt),
     resolved,
-    recap: buildRecapFromHistory(conversation.history),
+    recap: buildRecapFromHistory(validTurns),
     nextActionLabel: nextAction.nextActionLabel,
     nextActionQuery: nextAction.nextActionQuery,
   };

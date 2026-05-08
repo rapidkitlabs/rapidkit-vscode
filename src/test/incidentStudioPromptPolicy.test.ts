@@ -17,6 +17,12 @@ function readWelcomePanelSource(): string {
   return readFileSync(welcomePanelPath, 'utf8');
 }
 
+function readIncidentRoutingSource(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const routingPath = path.resolve(currentDir, '../ui/panels/incidentRouting.ts');
+  return readFileSync(routingPath, 'utf8');
+}
+
 describe('incidentStudioPromptPolicy', () => {
   it('returns no extra rules for workspace-scoped mode', () => {
     expect(
@@ -145,13 +151,13 @@ describe('incidentStudioPromptPolicy', () => {
   });
 
   it('route precision: doctor-fix and recipe-pack routes are reachable', () => {
-    const source = readWelcomePanelSource();
+    const source = readIncidentRoutingSource();
     expect(source).toContain("actionType: 'doctor-fix'");
     expect(source).toContain("actionType: 'recipe-pack'");
   });
 
   it('route precision: terminal-bridge requires explicit terminal signal, not bare error keyword', () => {
-    const source = readWelcomePanelSource();
+    const source = readIncidentRoutingSource();
     // Bare 'error' alone should NOT immediately route to terminal-bridge in the primary check
     expect(source).toContain("normalized.includes('traceback')");
     expect(source).toContain("normalized.includes('stack trace')");
@@ -161,7 +167,7 @@ describe('incidentStudioPromptPolicy', () => {
   });
 
   it('route precision: fix-preview-lite requires patch context, not bare fix keyword', () => {
-    const source = readWelcomePanelSource();
+    const source = readIncidentRoutingSource();
     // fix-preview-lite branch must require additional context beyond bare 'fix'
     expect(source).toContain("normalized.includes('preview')");
     expect(source).toContain("normalized.includes('patch')");

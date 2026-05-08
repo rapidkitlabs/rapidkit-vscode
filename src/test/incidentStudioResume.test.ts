@@ -69,4 +69,27 @@ describe('incidentStudioResume', () => {
     expect(snapshot?.nextActionQuery).toContain('capture it as reusable workspace memory');
     expect(snapshot?.nextActionQuery).toContain('replay/share or release-readiness evidence');
   });
+
+  it('sanitizes corrupted counters/timestamps and ignores blank turns', () => {
+    const snapshot = buildIncidentResumeSnapshot({
+      workspacePath: '/tmp/demo',
+      lastActivityAt: Number.NaN,
+      phase: 'plan',
+      history: [
+        { role: 'user', content: '   ' },
+        { role: 'assistant', content: '   Apply migration fix.   ' },
+      ],
+      queryCount: Number.NaN,
+      actionCount: -5,
+      verifyPassedAt: Number.NaN,
+    });
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.turnCount).toBe(1);
+    expect(snapshot?.queryCount).toBe(0);
+    expect(snapshot?.actionCount).toBe(0);
+    expect(snapshot?.lastActivityAt).toBe(0);
+    expect(snapshot?.resolved).toBe(false);
+    expect(snapshot?.recap).toContain('Apply migration fix.');
+  });
 });

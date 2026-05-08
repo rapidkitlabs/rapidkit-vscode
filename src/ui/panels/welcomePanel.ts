@@ -49,6 +49,7 @@ import { WorkspaceUsageTracker } from '../../utils/workspaceUsageTracker';
 import { openWorkspace } from '../../commands/workspaceContextMenu';
 import type { WorkspaceExplorerProvider } from '../treeviews/workspaceExplorer';
 import { createDoctorTelemetryRefreshController } from './doctorTelemetryRefresh';
+import { routeIncidentActionTypeFromMessage, type RoutingResult } from './incidentRouting';
 import {
   findIncidentNavigatorSelection,
   resolveIncidentNavigatorTargetPath,
@@ -59,6 +60,7 @@ import {
   buildIncidentStudioTelemetryPayload,
   shouldUseIncidentStudioTelemetryCache,
 } from './incidentStudioTelemetry';
+import { buildIncidentLifecycleMetrics } from './incidentConversationMetrics';
 import { ProjectSelectionSequence } from './projectSelectionSequence';
 import { buildIncidentResumeSnapshot, type IncidentResumeSnapshot } from './incidentStudioResume';
 import {
@@ -82,27 +84,6 @@ import {
   buildLinkSafeExportBundle,
   parseImportedReproBundle,
 } from './incidentReproPackUtils';
-
-type RoutingResult = {
-  actionType:
-    | 'terminal-bridge'
-    | 'change-impact-lite'
-    | 'fix-preview-lite'
-    | 'verify-pack-autopilot'
-    | 'workspace-memory-wizard'
-    | 'doctor-fix'
-    | 'recipe-pack'
-    | 'incident-repro-pack'
-    | 'release-readiness-commander'
-    | 'browser-smoke-test'
-    | 'orchestrate';
-  fallbackReason:
-    | 'success'
-    | 'terminal_bridge_fallback'
-    | 'fix_preview_fallback'
-    | 'bare_keyword_only'
-    | 'orchestrate_default';
-};
 
 type IncidentWorkspaceGraphSnapshot = {
   snapshotVersion: 'v1';
@@ -1146,6 +1127,9 @@ export class WelcomePanel {
   private _doctorTelemetryRefreshController = createDoctorTelemetryRefreshController({
     onRefresh: (explicitWorkspacePath?: string) =>
       this._sendIncidentStudioTelemetry(explicitWorkspacePath),
+    onError: (error) => {
+      console.warn('[WelcomePanel] Doctor telemetry refresh failed:', error);
+    },
   });
 
   private constructor(
@@ -1908,6 +1892,7 @@ No markdown, no explanation outside the JSON.`;
           case 'requestIncidentStudioTelemetry':
             await this._sendIncidentStudioTelemetry(
               message.data?.workspacePath,
+              message.data?.projectPath,
               message.data?.forceRefresh === true
             );
             break;
@@ -1990,26 +1975,26 @@ No markdown, no explanation outside the JSON.`;
                   this._incidentResumeByWorkspace.set(resumeSnapshot.workspacePath, resumeSnapshot);
                 }
 
-                const durationMs = Date.now() - conv.startedAt;
-                const hasExchange = conv.history.length > 0;
-                const resolved = typeof conv.verifyPassedAt === 'number';
+                const lifecycleMetrics = buildIncidentLifecycleMetrics(conv, Date.now());
 
-                if (resolved) {
+                if (lifecycleMetrics.resolved) {
                   // ── Analytics: incident_loop_completed ───────────────────
                   this._trackStudioEvent('workspai.studio.loop_completed', conv.workspacePath, {
                     framework: conv.framework ?? 'unknown',
-                    durationMs,
-                    queryCount: conv.queryCount,
-                    actionCount: conv.actionCount,
-                    timeToVerifyMs: conv.verifyPassedAt! - conv.startedAt,
+                    durationMs: lifecycleMetrics.durationMs,
+                    queryCount: lifecycleMetrics.queryCount,
+                    actionCount: lifecycleMetrics.actionCount,
+                    projectPath: conv.projectPath,
+                    timeToVerifyMs: lifecycleMetrics.timeToVerifyMs,
                   });
-                } else if (hasExchange) {
+                } else if (lifecycleMetrics.hasExchange) {
                   // ── Analytics: incident_abandoned ─────────────────────────
                   this._trackStudioEvent('workspai.studio.abandoned', conv.workspacePath, {
                     framework: conv.framework ?? 'unknown',
-                    durationMs,
-                    queryCount: conv.queryCount,
-                    actionCount: conv.actionCount,
+                    durationMs: lifecycleMetrics.durationMs,
+                    queryCount: lifecycleMetrics.queryCount,
+                    actionCount: lifecycleMetrics.actionCount,
+                    projectPath: conv.projectPath,
                   });
                 }
 
@@ -2413,6 +2398,11 @@ No markdown, no explanation outside the JSON.`;
                 selectedProjectPath
               );
 
+              const inlineScopeProps =
+                selectedProjectPath && selectedProjectBelongsToWorkspace
+                  ? { projectPath: selectedProjectPath }
+                  : {};
+
               if (!inlineCommand) {
                 vscode.window.showWarningMessage('No command provided to run.');
                 break;
@@ -2496,6 +2486,7 @@ No markdown, no explanation outside the JSON.`;
                       effectiveCwd === selectedProjectPath,
                     success,
                     exitCode: result.exitCode,
+                    ...inlineScopeProps,
                   });
 
                   this._trackStudioEvent(
@@ -2508,6 +2499,7 @@ No markdown, no explanation outside the JSON.`;
                       verifyRequired: true,
                       verifyPathPresent: success,
                       verifyPathReason: success ? 'command_success' : 'command_failed',
+                      ...inlineScopeProps,
                     }
                   );
 
@@ -2528,6 +2520,7 @@ No markdown, no explanation outside the JSON.`;
                     command: inlineCommand.slice(0, 180),
                     success: false,
                     error: String(errorMsg).slice(0, 180),
+                    ...inlineScopeProps,
                   });
                   this._trackStudioEvent('workspai.studio.verify_failed', workspacePath, {
                     actionType: 'inline-command',
@@ -2536,6 +2529,7 @@ No markdown, no explanation outside the JSON.`;
                     verifyRequired: true,
                     verifyPathPresent: false,
                     verifyPathReason: 'command_exception',
+                    ...inlineScopeProps,
                   });
                   this._panel.webview.postMessage({
                     command: 'runIncidentInlineCommandDone',
@@ -2961,19 +2955,61 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private async _getWorkspaceGraphSnapshot(
-    workspacePath?: string
+    options?:
+      | string
+      | {
+          workspacePath?: string;
+          projectPath?: string;
+          projectName?: string;
+          projectType?: string;
+          scopeIntent?: 'workspace' | 'project';
+        }
   ): Promise<IncidentWorkspaceGraphSnapshot> {
-    const resolvedWorkspacePath = workspacePath || this._resolveTelemetryWorkspacePath();
+    const resolvedWorkspacePath =
+      (typeof options === 'string' ? options : options?.workspacePath) ||
+      this._resolveTelemetryWorkspacePath();
     const tracker = WorkspaceUsageTracker.getInstance();
     const memoryService = WorkspaceMemoryService.getInstance();
 
     const doctorSnapshot = await this._readDoctorEvidenceSnapshot(resolvedWorkspacePath);
 
-    const selectedProject = await this._resolveScopedProjectForWorkspace({
-      workspacePath: resolvedWorkspacePath,
-      doctorSnapshot,
-    });
+    const explicitProjectPath =
+      typeof options === 'string' ? undefined : options?.projectPath?.trim();
+    const explicitProjectName = typeof options === 'string' ? undefined : options?.projectName;
+    const explicitProjectType = typeof options === 'string' ? undefined : options?.projectType;
+    const scopeIntent = typeof options === 'string' ? 'workspace' : options?.scopeIntent;
+    const isProjectScope = Boolean(explicitProjectPath) || scopeIntent === 'project';
+
+    const selectedProject = isProjectScope
+      ? await this._resolveScopedProjectForWorkspace({
+          workspacePath: resolvedWorkspacePath,
+          projectPath: explicitProjectPath,
+          projectName: explicitProjectName,
+          projectType: explicitProjectType,
+          doctorSnapshot,
+        })
+      : null;
     const graphScanPath = selectedProject?.path || resolvedWorkspacePath;
+    const workspaceFrameworkLabel = (() => {
+      const frameworks = (doctorSnapshot?.frameworks || [])
+        .map((item) =>
+          String(item?.name || '')
+            .trim()
+            .toLowerCase()
+        )
+        .filter((name) => name.length > 0);
+      const unique = Array.from(new Set(frameworks));
+      if (unique.length === 0) {
+        return 'unknown';
+      }
+      if (unique.length === 1) {
+        return unique[0];
+      }
+      return 'mixed';
+    })();
+    const workspaceInstalledModules = (doctorSnapshot?.projects || [])
+      .flatMap((project) => project.installedModules || [])
+      .slice(0, 60);
 
     const [
       commandSummary,
@@ -2987,16 +3023,14 @@ No markdown, no explanation outside the JSON.`;
       tracker.getOnboardingExperimentStats(resolvedWorkspacePath, 'last7d'),
       selectedProject?.path
         ? this._inferFrameworkFromWorkspace(selectedProject.path)
-        : resolvedWorkspacePath
-          ? this._inferFrameworkFromWorkspace(resolvedWorkspacePath)
-          : Promise.resolve('unknown'),
+        : Promise.resolve(workspaceFrameworkLabel),
       resolvedWorkspacePath
         ? memoryService.readNearest(resolvedWorkspacePath)
         : Promise.resolve(undefined),
       graphScanPath ? getGitDiffStat(graphScanPath, 1500) : Promise.resolve(null),
       selectedProject
         ? WelcomePanel._readInstalledModules(selectedProject.path)
-        : Promise.resolve([]),
+        : Promise.resolve(workspaceInstalledModules),
     ] as const);
 
     const hasWorkspaceMemory = Boolean(
@@ -3163,6 +3197,7 @@ No markdown, no explanation outside the JSON.`;
     this._trackStudioEvent('workspai.studio.loop_started', workspacePath, {
       framework: framework ?? 'unknown',
       resumed,
+      projectPath: conversation.projectPath,
     });
 
     this._panel.webview.postMessage({
@@ -3227,7 +3262,10 @@ No markdown, no explanation outside the JSON.`;
     // Ensure a watcher is running for this workspace so file changes invalidate the cache.
     void this._ensureSystemGraphWatcher(workspacePath, cacheKey);
 
-    const graph = await this._getWorkspaceGraphSnapshot(workspacePath);
+    const graph = await this._getWorkspaceGraphSnapshot({
+      workspacePath,
+      scopeIntent: 'workspace',
+    });
     await this._context.globalState.update(cacheKey, { graph, timestamp: now });
 
     this._panel.webview.postMessage({
@@ -3277,131 +3315,7 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private _routeActionTypeFromMessage(message: string): RoutingResult {
-    const normalized = message.toLowerCase();
-
-    // Specific routes (high priority, no fallback)
-    if (
-      normalized.includes('release readiness') ||
-      normalized.includes('go/no-go') ||
-      normalized.includes('go no-go') ||
-      normalized.includes('ship readiness') ||
-      normalized.includes('release gate') ||
-      normalized.includes('commander artifact')
-    ) {
-      return { actionType: 'release-readiness-commander', fallbackReason: 'success' };
-    }
-    if (
-      normalized.includes('verify pack') ||
-      normalized.includes('verification pack') ||
-      normalized.includes('proof of success') ||
-      normalized.includes('verify checklist') ||
-      normalized.includes('deterministic verify')
-    ) {
-      return { actionType: 'verify-pack-autopilot', fallbackReason: 'success' };
-    }
-    if (
-      normalized.includes('browser smoke') ||
-      normalized.includes('smoke test') ||
-      normalized.includes('ui smoke') ||
-      normalized.includes('browser test') ||
-      normalized.includes('browser check') ||
-      normalized.includes('verify ui') ||
-      normalized.includes('verify browser') ||
-      normalized.includes('open browser')
-    ) {
-      return { actionType: 'browser-smoke-test', fallbackReason: 'success' };
-    }
-    if (
-      normalized.includes('repro') ||
-      normalized.includes('replay') ||
-      normalized.includes('incident pack') ||
-      normalized.includes('share incident')
-    ) {
-      return { actionType: 'incident-repro-pack', fallbackReason: 'success' };
-    }
-    if (
-      normalized.includes('recipe') ||
-      normalized.includes('starter template') ||
-      normalized.includes('project template') ||
-      normalized.includes('scaffold')
-    ) {
-      return { actionType: 'recipe-pack', fallbackReason: 'success' };
-    }
-    if (
-      (normalized.includes('doctor') && normalized.includes('fix')) ||
-      (normalized.includes('doctor') && normalized.includes('error')) ||
-      normalized.includes('workspace health') ||
-      normalized.includes('fix workspace') ||
-      normalized.includes('rapidkit doctor')
-    ) {
-      return { actionType: 'doctor-fix', fallbackReason: 'success' };
-    }
-
-    // terminal-bridge: explicit signals (priority match)
-    const hasExplicitTerminalSignal =
-      normalized.includes('traceback') ||
-      normalized.includes('stack trace') ||
-      normalized.includes('exception') ||
-      normalized.includes('terminal') ||
-      normalized.includes('timeout') ||
-      (normalized.includes('error') &&
-        (normalized.includes('line ') ||
-          normalized.includes('at ') ||
-          normalized.includes('crash') ||
-          normalized.includes('stderr') ||
-          normalized.includes('exit code') ||
-          normalized.includes('segfault') ||
-          normalized.includes('killed')));
-
-    if (hasExplicitTerminalSignal) {
-      return { actionType: 'terminal-bridge', fallbackReason: 'success' };
-    }
-
-    // impact/risk routes
-    if (normalized.includes('impact') || normalized.includes('risk')) {
-      return { actionType: 'change-impact-lite', fallbackReason: 'success' };
-    }
-
-    // fix-preview-lite: explicit context (priority match)
-    const hasPatchPreviewContext =
-      normalized.includes('preview') ||
-      normalized.includes('patch') ||
-      (normalized.includes('fix') &&
-        (normalized.includes('code') ||
-          normalized.includes('function') ||
-          normalized.includes('class') ||
-          normalized.includes('module') ||
-          normalized.includes('import') ||
-          normalized.includes('bug') ||
-          normalized.includes('file')));
-
-    if (hasPatchPreviewContext) {
-      return { actionType: 'fix-preview-lite', fallbackReason: 'success' };
-    }
-
-    // memory routes
-    if (normalized.includes('memory') || normalized.includes('convention')) {
-      return { actionType: 'workspace-memory-wizard', fallbackReason: 'success' };
-    }
-
-    // Fallback routes (bare keywords without context)
-    if (
-      normalized.includes('error') ||
-      normalized.includes('fix') ||
-      normalized.includes('failing') ||
-      normalized.includes('broken')
-    ) {
-      // Distinguish between which bare keyword triggered the fallback
-      const barefallbackReason = normalized.includes('error')
-        ? 'bare_keyword_only'
-        : normalized.includes('fix')
-          ? 'fix_preview_fallback'
-          : 'bare_keyword_only';
-      return { actionType: 'terminal-bridge', fallbackReason: barefallbackReason };
-    }
-
-    // No match - orchestrate default
-    return { actionType: 'orchestrate', fallbackReason: 'orchestrate_default' };
+    return routeIncidentActionTypeFromMessage(message);
   }
 
   private async _buildChatBrainAIContext(options?: {
@@ -3409,22 +3323,32 @@ No markdown, no explanation outside the JSON.`;
     projectPath?: string;
     projectName?: string;
     projectType?: string;
+    scopeIntent?: 'workspace' | 'project';
   }): Promise<import('../../core/aiService').AIModalContext> {
     const resolvedWorkspacePath = options?.workspacePath || this._resolveTelemetryWorkspacePath();
-    const selectedProject = await this._resolveScopedProjectForWorkspace({
-      workspacePath: resolvedWorkspacePath,
-      projectPath: options?.projectPath,
-      projectName: options?.projectName,
-      projectType: options?.projectType,
-    });
+    const explicitProjectPath = options?.projectPath?.trim();
+    const isProjectScope = Boolean(explicitProjectPath) || options?.scopeIntent === 'project';
+    const selectedProject = isProjectScope
+      ? await this._resolveScopedProjectForWorkspace({
+          workspacePath: resolvedWorkspacePath,
+          projectPath: explicitProjectPath,
+          projectName: options?.projectName,
+          projectType: options?.projectType,
+        })
+      : null;
     const selectedProjectBelongsToWorkspace = Boolean(selectedProject);
     const effectiveContextPath =
       selectedProjectBelongsToWorkspace && selectedProject
         ? selectedProject.path
         : resolvedWorkspacePath;
-    const framework = effectiveContextPath
-      ? await this._inferFrameworkFromWorkspace(effectiveContextPath)
-      : 'unknown';
+    const framework = selectedProjectBelongsToWorkspace
+      ? selectedProject?.type ||
+        (effectiveContextPath
+          ? await this._inferFrameworkFromWorkspace(effectiveContextPath)
+          : 'unknown')
+      : resolvedWorkspacePath
+        ? 'mixed'
+        : 'unknown';
 
     return {
       type: selectedProjectBelongsToWorkspace ? 'project' : 'workspace',
@@ -3435,10 +3359,7 @@ No markdown, no explanation outside the JSON.`;
             ? path.basename(resolvedWorkspacePath)
             : 'Workspace',
       path: effectiveContextPath,
-      framework:
-        selectedProjectBelongsToWorkspace && selectedProject?.type
-          ? selectedProject.type
-          : framework,
+      framework,
       workspaceRootPath: resolvedWorkspacePath,
       projectRootPath:
         selectedProjectBelongsToWorkspace && selectedProject ? selectedProject.path : undefined,
@@ -3540,64 +3461,204 @@ No markdown, no explanation outside the JSON.`;
     return lines.join('\n');
   }
 
-  private _buildSuggestedQuestions(actionType: string, message: string): string[] {
-    if (actionType === 'terminal-bridge' || /error|traceback|failed/i.test(message)) {
-      return [
-        'Show me which files I need to change to fix this',
-        'Run impact analysis before applying the fix',
-        'Add this issue to workspace memory so it never happens again',
-      ];
+  private _buildSuggestedQuestions(
+    actionType: string,
+    message: string,
+    scopeIntent: 'workspace' | 'project' = 'workspace'
+  ): string[] {
+    const isProject = scopeIntent === 'project';
+    const norm = message.toLowerCase();
+
+    // ── specialist: DevOps / CI-CD ──────────────────────────────────────────
+    if (
+      actionType === 'doctor-fix' &&
+      (norm.includes('ci/cd') ||
+        norm.includes('pipeline') ||
+        norm.includes('kubernetes') ||
+        norm.includes('helm') ||
+        norm.includes('dockerfile') ||
+        norm.includes('docker compose'))
+    ) {
+      return isProject
+        ? [
+            'Show me the exact Dockerfile line causing this failure',
+            'What environment variables are missing from my CI pipeline?',
+            'Verify the deployment config is consistent with the doctor evidence',
+          ]
+        : [
+            'Which services have CI/CD drift across this workspace?',
+            'Show me cross-service pipeline config inconsistencies',
+            'Generate a workspace-wide deployment health checklist',
+          ];
     }
-    if (actionType === 'fix-preview-lite' || /fix|patch|bug/i.test(message)) {
-      return [
-        'What tests should I add to cover this fix?',
-        'Check if this fix could break anything else',
-        'Apply this fix and verify with doctor checks',
-      ];
+
+    // ── specialist: Database / schema ───────────────────────────────────────
+    if (
+      actionType === 'change-impact-lite' &&
+      (norm.includes('schema') ||
+        norm.includes('migration') ||
+        norm.includes('sql') ||
+        norm.includes('database') ||
+        norm.includes('postgres') ||
+        norm.includes('mysql') ||
+        norm.includes('mongodb'))
+    ) {
+      return isProject
+        ? [
+            'What tables or collections does this migration touch?',
+            'Generate a rollback SQL script for this schema change',
+            'Which integration tests cover this migration path?',
+          ]
+        : [
+            'Which services share this database schema dependency?',
+            'Show cross-service migration order and risk',
+            'Generate rollback steps for each affected service',
+          ];
     }
-    if (actionType === 'change-impact-lite' || /impact|risk|refactor/i.test(message)) {
-      return [
-        'Show me the safest order to make these changes',
-        'What rollback plan should I have?',
-        'Generate a test checklist for this change',
-      ];
+
+    // ── specialist: Docs / readme / runbook ─────────────────────────────────
+    if (
+      actionType === 'workspace-memory-wizard' &&
+      (norm.includes('docs') ||
+        norm.includes('documentation') ||
+        norm.includes('readme') ||
+        norm.includes('runbook') ||
+        norm.includes('adr'))
+    ) {
+      return isProject
+        ? [
+            'Generate a README section for the public API of this project',
+            'What architecture decisions should I document for this project?',
+            'Create a runbook entry for the most common failure in this service',
+          ]
+        : [
+            'Generate a workspace topology overview for the README',
+            'Which ADRs are missing across all workspace services?',
+            'Create a cross-service runbook for the top shared failure mode',
+          ];
     }
-    if (actionType === 'doctor-fix' || /doctor|health|issue/i.test(message)) {
-      return [
-        'Fix all remaining doctor issues automatically',
-        'Explain why this issue happens in my project type',
-        'Save this fix pattern to workspace memory',
-      ];
+
+    // ── specialist: Architecture / risk / blast-radius ──────────────────────
+    if (
+      actionType === 'change-impact-lite' &&
+      (norm.includes('architecture') ||
+        norm.includes('blast radius') ||
+        norm.includes('refactor plan') ||
+        norm.includes('risk'))
+    ) {
+      return isProject
+        ? [
+            'Show me the safest order to make these changes in this project',
+            'What rollback plan should I have for this refactor?',
+            'Generate a test checklist scoped to the affected modules',
+          ]
+        : [
+            'Which other services are coupled to the changes I am making?',
+            'What is the safest multi-service rollout sequence?',
+            'Generate a workspace-wide blast-radius rollback plan',
+          ];
     }
-    if (/module|install|add service|database|auth/i.test(message)) {
+
+    // ── standard action types ────────────────────────────────────────────────
+    if (actionType === 'terminal-bridge' || /error|traceback|failed/i.test(norm)) {
+      return isProject
+        ? [
+            'Show me which files I need to change to fix this',
+            'Run impact analysis before applying the fix',
+            'Add this issue to workspace memory so it never happens again',
+          ]
+        : [
+            'Which workspace services are affected by this error?',
+            'Show cross-service impact before applying the fix',
+            'Add this failure pattern to workspace memory',
+          ];
+    }
+    if (actionType === 'fix-preview-lite' || /fix|patch|bug/i.test(norm)) {
+      return isProject
+        ? [
+            'What tests should I add to cover this fix?',
+            'Check if this fix could break anything else in this project',
+            'Apply this fix and verify with doctor checks',
+          ]
+        : [
+            'Does this fix propagate a regression risk to other services?',
+            'Generate a workspace-level test checklist for this patch',
+            'Apply this fix and verify across all affected services',
+          ];
+    }
+    if (actionType === 'change-impact-lite' || /impact|risk|refactor/i.test(norm)) {
+      return isProject
+        ? [
+            'Show me the safest order to make these changes',
+            'What rollback plan should I have?',
+            'Generate a test checklist for this change',
+          ]
+        : [
+            'Which services are at highest risk from this change?',
+            'What is the safest cross-service rollout sequence?',
+            'Generate a workspace-wide rollback checklist',
+          ];
+    }
+    if (actionType === 'doctor-fix' || /doctor|health|issue/i.test(norm)) {
+      return isProject
+        ? [
+            'Fix all remaining doctor issues automatically',
+            'Explain why this issue happens in my project type',
+            'Save this fix pattern to workspace memory',
+          ]
+        : [
+            'Fix all workspace issues grouped by root cause',
+            'Show me which services share the same failure pattern',
+            'Save the workspace-wide fix pattern to memory',
+          ];
+    }
+    if (/module|install|add service|database|auth/i.test(norm)) {
       return [
         'What configuration do I need after adding this?',
         'Show me how to test this module is working',
         'What other modules pair well with this one?',
       ];
     }
-    if (actionType === 'release-readiness-commander' || /release|ship|go\/no-go/i.test(message)) {
-      return [
-        'Export the Go/No-Go artifact for team signoff',
-        'Show me blocking reasons ranked by risk',
-        'Generate the exact release-stop-gate command for this decision',
-      ];
+    if (actionType === 'release-readiness-commander' || /release|ship|go\/no-go/i.test(norm)) {
+      return isProject
+        ? [
+            'Export the Go/No-Go artifact for team signoff',
+            'Show me blocking reasons ranked by risk',
+            'Generate the exact release-stop-gate command for this decision',
+          ]
+        : [
+            'Export the workspace-level Go/No-Go artifact for all services',
+            'Which services are blocking the workspace release?',
+            'Generate release-stop-gate commands for each NO-GO service',
+          ];
     }
     if (
       actionType === 'verify-pack-autopilot' ||
-      /verify|proof|checklist|deterministic/i.test(message)
+      /verify|proof|checklist|deterministic/i.test(norm)
     ) {
-      return [
-        'Generate a deterministic verify command pack for this change',
-        'Rank verification commands by confidence and execution scope',
-        'Show blockers that still prevent a completion claim',
-      ];
+      return isProject
+        ? [
+            'Generate a deterministic verify command pack for this change',
+            'Rank verification commands by confidence and execution scope',
+            'Show blockers that still prevent a completion claim',
+          ]
+        : [
+            'Generate a workspace-wide verify command pack',
+            'Show per-service verify commands ranked by confidence',
+            'List workspace blockers that prevent a completion claim',
+          ];
     }
-    return [
-      'Run a full workspace health check now',
-      'Show me the next highest-priority action',
-      'Save this analysis to workspace memory',
-    ];
+    return isProject
+      ? [
+          'Run a full project health check now',
+          'Show me the next highest-priority action for this project',
+          'Save this analysis to workspace memory',
+        ]
+      : [
+          'Run a full workspace health check now',
+          'Show me the next highest-priority workspace action',
+          'Save this workspace analysis to memory',
+        ];
   }
 
   private async _buildStructuredIncidentPrompt(
@@ -3607,13 +3668,69 @@ No markdown, no explanation outside the JSON.`;
       projectPath?: string;
       projectName?: string;
       projectType?: string;
+      scopeIntent?: 'workspace' | 'project';
     }
   ): Promise<string> {
     const resolvedWorkspacePath = options?.workspacePath || this._resolveTelemetryWorkspacePath();
     const doctorSnapshot = await this._readDoctorEvidenceSnapshot(resolvedWorkspacePath);
+
+    // Explicit project path or scopeIntent='project' → project-level analysis.
+    // No project path and scopeIntent='workspace' (or omitted) → workspace-level analysis.
+    // We do NOT auto-detect a project when the user is in workspace scope; doing so silently
+    // collapses multi-project workspace reasoning into single-service focus.
+    const explicitProjectPath = options?.projectPath?.trim() || undefined;
+    const isProjectScope = Boolean(explicitProjectPath) || options?.scopeIntent === 'project';
+
+    if (!isProjectScope) {
+      // ── WORKSPACE-LEVEL ANALYSIS ────────────────────────────────────────────
+      // Reason across ALL workspace projects: topology, shared health, cross-project risks,
+      // workspace memory, and workspace-wide KPI state.
+      const projectCandidatesBlock = resolvedWorkspacePath
+        ? await this._buildWorkspaceProjectCandidatesBlock(resolvedWorkspacePath, doctorSnapshot)
+        : undefined;
+      const workspaceArchitectureBlock = this._buildWorkspaceArchitectureBlock(
+        doctorSnapshot,
+        resolvedWorkspacePath
+      );
+      const workspaceResponseRules = [
+        'SCOPE: This is a workspace-level analysis. Reason across ALL projects in the workspace topology — do not collapse focus onto a single service.',
+        'EVIDENCE INTEGRITY: Use only facts from the WORKSPACE ARCHITECTURE block. Do not invent project names, paths, or issue counts.',
+        'CROSS-PROJECT REASONING: Identify which projects share dependencies, configs, or failure modes. Surface topology-level risks explicitly.',
+        'WORKSPACE HEALTH: Lead with the overall workspace health score and how issues are distributed across projects.',
+        'If all projects are healthy, confirm that explicitly and suggest a proactive workspace-level improvement (e.g., memory capture, topology snapshot).',
+        'If multiple projects share a root cause (same framework issue, missing deps, config drift), name the shared pattern and address it once.',
+        'Do NOT recommend project-specific commands as the primary answer unless workspace health shows a single-project bottleneck that clearly dominates.',
+        'PRIORITY: Rank recommendations by workspace-wide impact, not per-project severity in isolation.',
+      ];
+
+      return [
+        message,
+        '',
+        ...(projectCandidatesBlock ? [projectCandidatesBlock, ''] : []),
+        workspaceArchitectureBlock,
+        '',
+        ...workspaceResponseRules,
+        '',
+        'Respond using this exact structure and headings:',
+        'Workspace Status: <health score — e.g. "85% — 17 passed, 2 warnings, 1 error | 3 project(s)">',
+        'Priority Issues:',
+        '  • <project-name>: <issue or "healthy">',
+        '  (list top issues per project; if all healthy, write "No critical issues detected across all projects")',
+        'Cross-Project Risks: <shared dependencies, config drift, topology risks — or "None detected">',
+        'Recommended Action: <workspace-wide next step — single most impactful command or investigation>',
+        'Verification: <workspace-level check command, e.g. rapidkit doctor workspace>',
+        'Affected Projects: <comma-separated project names needing attention, or "All healthy">',
+        '',
+        'Keep it concise, evidence-backed, and actionable at the workspace level.',
+      ].join('\n');
+    }
+
+    // ── PROJECT-LEVEL ANALYSIS ────────────────────────────────────────────────
+    // User has explicitly selected a project. Focus on that project's internals:
+    // runtime state, module health, framework-specific blockers, execution readiness.
     const selectedProject = await this._resolveScopedProjectForWorkspace({
       workspacePath: resolvedWorkspacePath,
-      projectPath: options?.projectPath,
+      projectPath: explicitProjectPath,
       projectName: options?.projectName,
       projectType: options?.projectType,
       doctorSnapshot,
@@ -3634,22 +3751,20 @@ No markdown, no explanation outside the JSON.`;
       projectType: selectedProjectBelongsToWorkspace ? selectedProject?.type : undefined,
     });
     const responseRules = [
+      'SCOPE: This is a project-level analysis. Focus on the selected project internals — runtime state, module health, framework-specific blockers, and execution readiness.',
       'EVIDENCE INTEGRITY: Use only facts present in WORKSPACE ARCHITECTURE and PROJECT EXECUTION STATE blocks. Do not invent missing modules, unknown kit, or missing projects.',
       'If doctor evidence shows healthy projects with zero issues, do not recommend setup/reset commands unless the user explicitly asks for reconfiguration.',
       'Never claim `kit unknown` or `no modules installed` unless those exact conditions are explicitly listed in the evidence block.',
       ...(selectedProjectBelongsToWorkspace
         ? [
-            'When a project is selected, answer as a launch/readiness assistant for that project first.',
+            'Answer as a launch/readiness assistant for the selected project first.',
             'Explain the current delivery stage in plain language before listing commands.',
             'If Java build wrappers or system build tools are missing, name that blocker explicitly and do not recommend `rapidkit dev` as the next successful step.',
             'If `rapidkit init` may be quiet, explain what it prepares and how the user can verify readiness for `rapidkit dev`.',
           ]
-        : []),
-      ...(!selectedProjectBelongsToWorkspace
-        ? [
+        : [
             'If workspace project scope is ambiguous, do not produce definitive project-level root-cause claims. Ask for target project path first and provide a safe workspace-level next step.',
-          ]
-        : []),
+          ]),
       ...buildIncidentFirstResponseRules({
         projectScoped: selectedProjectBelongsToWorkspace,
         hasDoctorEvidence: Boolean(doctorSnapshot),
@@ -3667,12 +3782,12 @@ No markdown, no explanation outside the JSON.`;
       ...responseRules,
       ...(responseRules.length ? [''] : []),
       'Respond using this exact structure and headings:',
-      'What happened: <short diagnosis>',
+      'What happened: <short diagnosis specific to this project>',
       'Why: <root cause in 1-3 bullets>',
-      'Next command: <single best next command or action>',
+      'Next command: <single best next command for this project>',
       'Verify command: <single command/check to confirm success>',
       '',
-      'Keep it concise, specific to this workspace, and executable.',
+      'Keep it concise, specific to this project, and executable.',
     ].join('\n');
   }
 
@@ -4470,6 +4585,11 @@ No markdown, no explanation outside the JSON.`;
           ? reproPack.workspacePath.trim()
           : undefined;
 
+    const exportProjectPath =
+      typeof data?.projectPath === 'string' && data.projectPath.trim()
+        ? data.projectPath.trim()
+        : undefined;
+
     const workspaceResolution = await this._resolveIncidentReplayWorkspacePath(workspacePathInput);
     const defaultFileName = `${reproPack.packId}-redacted-bundle.json`;
     const defaultUri = workspaceResolution
@@ -4525,6 +4645,7 @@ No markdown, no explanation outside the JSON.`;
         verifyChecklistCount:
           redactedBundle.incident_repro_pack.replayPayload.verifyChecklist.length,
         blockedReasonCount: redactedBundle.incident_repro_pack.replayPayload.blockedReasons.length,
+        ...(exportProjectPath ? { projectPath: exportProjectPath } : {}),
       }
     );
 
@@ -4606,6 +4727,19 @@ No markdown, no explanation outside the JSON.`;
           sourceFile: path.basename(fileUri.fsPath),
           verifyChecklistCount: normalizedReproPack.replayPayload.verifyChecklist.length,
           blockedReasonCount: normalizedReproPack.replayPayload.blockedReasons.length,
+        }
+      );
+
+      // Importing a repro pack from an external file is a team-expansion signal:
+      // the bundle originated from a different session/user and is now being replayed here.
+      this._trackStudioEvent(
+        'workspai.studio.team_expansion_triggered',
+        workspaceResolution.workspacePath,
+        {
+          packId: normalizedReproPack.packId,
+          sourceFile: path.basename(fileUri.fsPath),
+          actionType: normalizedReproPack.replayPayload.actionType ?? 'unknown',
+          expansionType: 'repro_pack_import',
         }
       );
 
@@ -5646,6 +5780,7 @@ No markdown, no explanation outside the JSON.`;
       queryCount: current.queryCount,
       actionType: routingResult.actionType,
       fallbackReason: routingResult.fallbackReason,
+      projectPath: current.projectPath,
       timeToFirstActionMs: Date.now() - current.startedAt,
     });
 
@@ -5684,6 +5819,7 @@ No markdown, no explanation outside the JSON.`;
         actionType,
         repeatScore: repeatSignal.repeatScore,
         framework: current.framework ?? 'unknown',
+        projectPath: current.projectPath,
       });
     }
     const repeatedIncidentHint =
@@ -5702,11 +5838,16 @@ No markdown, no explanation outside the JSON.`;
 
     try {
       const { prepareAIConversation, streamAIResponse } = await import('../../core/aiService.js');
+      // Derive scope intent from the conversation's projectPath.
+      // When the user is in workspace scope, projectPath is absent; we must NOT silently
+      // collapse into single-project focus via auto-detection.
+      const scopeIntent: 'workspace' | 'project' = current.projectPath ? 'project' : 'workspace';
       const aiContext = await this._buildChatBrainAIContext({
         workspacePath: current.workspacePath,
         projectPath: current.projectPath,
         projectName: current.projectName,
         projectType: current.projectType,
+        scopeIntent,
       });
       const history = current.history.slice(-8);
       const structuredPrompt = await this._buildStructuredIncidentPrompt(message, {
@@ -5714,6 +5855,7 @@ No markdown, no explanation outside the JSON.`;
         projectPath: current.projectPath,
         projectName: current.projectName,
         projectType: current.projectType,
+        scopeIntent,
       });
 
       // Doctor snapshot is already read inside _buildStructuredIncidentPrompt;
@@ -5973,7 +6115,7 @@ No markdown, no explanation outside the JSON.`;
         data: {
           conversationId,
           messageId,
-          questions: this._buildSuggestedQuestions(actionType, message),
+          questions: this._buildSuggestedQuestions(actionType, message, scopeIntent),
         },
         meta: { requestId, version: 'v1' },
       });
@@ -6038,11 +6180,18 @@ No markdown, no explanation outside the JSON.`;
    * Build a natural-language query from an action type + optional payload.
    * Lets every action stream its answer INTO the Studio thread instead of
    * opening a separate modal.
+   *
+   * scopeIntent drives fundamentally different query content:
+   * - 'workspace': reason across all projects, topology, shared health
+   * - 'project': focus on the selected project's internals and runtime state
    */
   private async _buildInlineQueryFromAction(
     actionType: string,
-    payload?: Record<string, unknown>
+    payload?: Record<string, unknown>,
+    scopeIntent: 'workspace' | 'project' = 'workspace'
   ): Promise<string> {
+    const isWorkspaceScope = scopeIntent === 'workspace';
+
     // ── terminal-bridge ──────────────────────────────────────────────────────
     if (actionType === 'terminal-bridge') {
       let terminalOutput = '';
@@ -6059,13 +6208,20 @@ No markdown, no explanation outside the JSON.`;
         terminalOutput = editor?.document.getText(editor.selection).trim() ?? '';
       }
       if (terminalOutput) {
+        const scopeLabel = isWorkspaceScope
+          ? 'Identify which workspace projects are affected and provide workspace-wide remediation steps.'
+          : 'Guide me to the fastest, safest fix for this project.';
         return [
-          'Analyze this terminal output and guide me to the fastest, safest fix.',
+          isWorkspaceScope
+            ? 'Analyze this terminal output across the workspace context and identify affected services.'
+            : 'Analyze this terminal output and guide me to the fastest, safest fix.',
           '```\n' + terminalOutput + '\n```',
-          'Respond with: root cause, immediate fix steps, any code-level follow-up, and a prevention tip.',
+          `Respond with: root cause, immediate fix steps, any code-level follow-up, a prevention tip. ${scopeLabel}`,
         ].join('\n\n');
       }
-      return 'Analyze my workspace for runtime errors, check logs and recent terminal output, then suggest the highest-priority fix.';
+      return isWorkspaceScope
+        ? 'Analyze all workspace projects for runtime errors, check logs and recent terminal output across services, then surface the highest-priority cross-workspace fix.'
+        : 'Analyze my project for runtime errors, check logs and recent terminal output, then suggest the highest-priority fix.';
     }
 
     // ── fix-preview-lite ─────────────────────────────────────────────────────
@@ -6086,7 +6242,9 @@ No markdown, no explanation outside the JSON.`;
       if (issueSummary) {
         return `Preview the safest fix for this issue: ${issueSummary}\n\nShow the corrected code and explain why the change is safe.`;
       }
-      return 'Scan my project for the most impactful bug or code smell and show a concrete fix preview with before/after code.';
+      return isWorkspaceScope
+        ? 'Scan all workspace projects for the most impactful bugs or code smells. For each project with issues, show a concrete fix preview with before/after code and note any cross-project propagation risk.'
+        : 'Scan my project for the most impactful bug or code smell and show a concrete fix preview with before/after code.';
     }
 
     // ── change-impact-lite ───────────────────────────────────────────────────
@@ -6097,13 +6255,20 @@ No markdown, no explanation outside the JSON.`;
         ? path.basename(editor.document.fileName)
         : 'current file';
       if (selection) {
+        const impactLens = isWorkspaceScope
+          ? 'List: affected modules/files across ALL workspace projects, cross-service propagation risk, overall risk level (low/medium/high/critical), required test updates per service, and a safe workspace-wide rollout checklist.'
+          : 'List: affected modules/files, risk level (low/medium/high/critical), required test updates, and a safe rollout checklist.';
         return [
-          `Analyze the blast radius of changing this code in \`${fileName}\`:`,
+          isWorkspaceScope
+            ? `Analyze the workspace-wide blast radius of changing this code in \`${fileName}\`:`
+            : `Analyze the blast radius of changing this code in \`${fileName}\`:`,
           '```\n' + selection.slice(0, 3000) + '\n```',
-          'List: affected modules/files, risk level (low/medium/high/critical), required test updates, and a safe rollout checklist.',
+          impactLens,
         ].join('\n\n');
       }
-      return 'Analyze the current workspace for the highest-risk pending change or tech debt and estimate its impact on the rest of the project.';
+      return isWorkspaceScope
+        ? 'Analyze the entire workspace for the highest-risk pending changes or tech debt. Identify cross-project impact: which projects are coupled, what shared dependencies could cascade, and what the safest multi-project rollout sequence is.'
+        : 'Analyze the current project for the highest-risk pending change or tech debt and estimate its impact on the rest of the project.';
     }
 
     // ── doctor-fix ───────────────────────────────────────────────────────────
@@ -6118,27 +6283,43 @@ No markdown, no explanation outside the JSON.`;
           `Detail: ${issueSummary}`,
           '',
           'Give me the exact fix commands or code changes to resolve this. Be direct and specific.',
+          ...(isWorkspaceScope
+            ? [
+                'Also check whether this issue pattern affects other projects in the workspace and surface any shared root cause.',
+              ]
+            : []),
         ].join('\n');
       }
-      return 'Run a full workspace doctor check and explain the top issues with their exact fix steps.';
+      return isWorkspaceScope
+        ? 'Run a full workspace doctor check across ALL projects and summarize the top issues per project. Group issues by root cause where possible and provide workspace-wide fix steps.'
+        : 'Run a full project doctor check and explain the top issues with their exact fix steps.';
     }
 
     // ── workspace-memory-wizard ───────────────────────────────────────────────
     if (actionType === 'workspace-memory-wizard') {
-      return [
-        'Help me capture the key architecture decisions and conventions from this workspace into memory.',
-        'Ask me the most important questions to build a complete workspace memory profile.',
-        'After my answers, generate a structured memory summary I can save.',
-      ].join('\n');
+      return isWorkspaceScope
+        ? [
+            'Help me capture workspace-wide architecture decisions, conventions, and cross-project patterns into memory.',
+            'Cover all projects in the workspace: shared patterns, deployment topology, cross-service contracts, and team conventions.',
+            'Ask the most important questions to build a comprehensive workspace-level memory profile that benefits all projects.',
+            'After my answers, generate a structured workspace memory summary that spans all projects.',
+          ].join('\n')
+        : [
+            'Help me capture the key architecture decisions and conventions from this project into memory.',
+            'Ask me the most important questions to build a complete project memory profile.',
+            'After my answers, generate a structured memory summary I can save.',
+          ].join('\n');
     }
 
     // ── recipe-pack ───────────────────────────────────────────────────────────
     if (actionType === 'recipe-pack') {
       const recipeId = typeof payload?.recipeId === 'string' ? payload.recipeId : '';
       if (recipeId) {
-        return `Run the AI recipe "${recipeId}" for this workspace. Provide a step-by-step analysis and actionable output.`;
+        return `Run the AI recipe "${recipeId}" for this ${isWorkspaceScope ? 'workspace (apply across all relevant projects)' : 'project'}. Provide a step-by-step analysis and actionable output.`;
       }
-      return 'List the 5 most relevant AI recipe workflows for my current workspace and project type, then run the top one.';
+      return isWorkspaceScope
+        ? 'List the 5 most relevant AI recipe workflows for this workspace topology and project mix, then run the highest-impact one across all applicable projects.'
+        : 'List the 5 most relevant AI recipe workflows for my current project type, then run the top one.';
     }
 
     // ── incident-repro-pack (KF5) ─────────────────────────────────────────────
@@ -6261,16 +6442,29 @@ No markdown, no explanation outside the JSON.`;
 
     // ── release-readiness-commander (KF9) ───────────────────────────────────
     if (actionType === 'release-readiness-commander') {
-      return [
-        'Build a release readiness decision for this workspace.',
-        'Use strict verify-first and evidence-first policy.',
-        '',
-        'Return exactly these sections:',
-        '1) Decision: GO or NO-GO',
-        '2) Blocking reasons',
-        '3) Evidence summary (verify/sandbox/doctor/scope)',
-        '4) Recommended next safe step',
-      ].join('\n');
+      return isWorkspaceScope
+        ? [
+            'Build a release readiness decision for ALL projects in this workspace.',
+            'Evaluate cross-project health, dependency state, and go/no-go criteria for each service.',
+            'Use strict verify-first and evidence-first policy.',
+            '',
+            'Return exactly these sections:',
+            '1) Workspace Decision: GO or NO-GO',
+            '2) Per-project status: list each project with its individual GO / NO-GO and top blocking reason',
+            '3) Cross-project blockers: shared risks that affect multiple services',
+            '4) Evidence summary (verify/sandbox/doctor/scope per workspace)',
+            '5) Recommended next safe step (workspace-wide)',
+          ].join('\n')
+        : [
+            'Build a release readiness decision for this project.',
+            'Use strict verify-first and evidence-first policy.',
+            '',
+            'Return exactly these sections:',
+            '1) Decision: GO or NO-GO',
+            '2) Blocking reasons',
+            '3) Evidence summary (verify/sandbox/doctor/scope)',
+            '4) Recommended next safe step',
+          ].join('\n');
     }
 
     // ── browser-smoke-test (VSC-1119 browser agent tools) ───────────────────
@@ -6315,21 +6509,34 @@ No markdown, no explanation outside the JSON.`;
 
     // ── verify-pack-autopilot ───────────────────────────────────────────────
     if (actionType === 'verify-pack-autopilot') {
-      return [
-        'Generate a deterministic verify command pack for this incident context.',
-        'Prioritize commands by confidence and execution scope (workspace vs project).',
-        'Flag blockers that still prevent completion claim.',
-        'Return exactly these sections:',
-        '1) Verify pack quality score (0-100)',
-        '2) Required commands (max 3)',
-        '3) Optional commands (max 2)',
-        '4) Blocking reasons (if any)',
-      ].join('\n');
+      return isWorkspaceScope
+        ? [
+            'Generate a deterministic verify command pack for ALL projects in this workspace.',
+            'Start with workspace-wide health checks, then per-project verify commands.',
+            'Prioritize by cross-project risk and confidence.',
+            'Flag blockers that prevent workspace-level completion claim.',
+            'Return exactly these sections:',
+            '1) Workspace verify pack quality score (0-100)',
+            '2) Workspace-wide required checks (max 3)',
+            '3) Per-project required commands (max 2 per project)',
+            '4) Blocking reasons (workspace-level and per-project)',
+          ].join('\n')
+        : [
+            'Generate a deterministic verify command pack for this incident context.',
+            'Prioritize commands by confidence and execution scope (workspace vs project).',
+            'Flag blockers that still prevent completion claim.',
+            'Return exactly these sections:',
+            '1) Verify pack quality score (0-100)',
+            '2) Required commands (max 3)',
+            '3) Optional commands (max 2)',
+            '4) Blocking reasons (if any)',
+          ].join('\n');
     }
 
     // ── generic/orchestrate fallback ──────────────────────────────────────────
     const label = typeof payload?.label === 'string' ? payload.label : actionType;
-    return `Perform the following action for my workspace: ${label}. Analyze the current state and provide specific, actionable guidance.`;
+    const scopeLabel = isWorkspaceScope ? 'workspace (across all projects)' : 'project';
+    return `Perform the following action for my ${scopeLabel}: ${label}. Analyze the current state and provide specific, actionable guidance.`;
   }
 
   private async _handleAiChatExecuteAction(data: any, requestId?: string) {
@@ -6363,6 +6570,7 @@ No markdown, no explanation outside the JSON.`;
           actionType,
           reason: 'action_not_allowlisted',
           framework: conv.framework ?? 'unknown',
+          projectPath: conv.projectPath,
         });
       }
 
@@ -6445,6 +6653,8 @@ No markdown, no explanation outside the JSON.`;
 
     const actionPolicy = classifyIncidentActionPolicy(actionType);
     const workspacePath = explicitWorkspacePath || conv?.workspacePath;
+    const telemetryProjectPath = projectPathInPayload || conv?.projectPath;
+    const telemetryScopeProps = telemetryProjectPath ? { projectPath: telemetryProjectPath } : {};
     const shouldAttemptAutoRollback =
       actionPolicy.riskClass === 'guarded-mutating' ||
       actionPolicy.riskClass === 'high-risk-mutating';
@@ -6466,6 +6676,7 @@ No markdown, no explanation outside the JSON.`;
         actionRiskClass: actionPolicy.riskClass,
         actionRiskLevel: actionPolicy.riskLevel,
         framework: conv.framework ?? 'unknown',
+        ...telemetryScopeProps,
         actionCount: conv.actionCount,
         timeToFirstActionMs: Date.now() - conv.startedAt,
       });
@@ -6485,9 +6696,13 @@ No markdown, no explanation outside the JSON.`;
     });
 
     // Build the inline query — no modal opened
+    // Derive scope intent: explicit projectPath in action payload or conversation = project scope.
+    const actionScopeIntent: 'workspace' | 'project' =
+      projectPathInPayload || conv?.projectPath ? 'project' : 'workspace';
     const inlineQuery = await this._buildInlineQueryFromAction(
       actionType,
-      data?.payload as Record<string, unknown> | undefined
+      data?.payload as Record<string, unknown> | undefined,
+      actionScopeIntent
     );
 
     this._panel.webview.postMessage({
@@ -6518,7 +6733,19 @@ No markdown, no explanation outside the JSON.`;
 
     const activeWorkspacePath =
       workspacePath || this._chatBrainConversations.get(conversationId)?.workspacePath;
-    const graphSnapshot = await this._getWorkspaceGraphSnapshot(activeWorkspacePath);
+    const graphSnapshot = await this._getWorkspaceGraphSnapshot({
+      workspacePath: activeWorkspacePath,
+      projectPath: projectPathInPayload || conv?.projectPath,
+      projectName:
+        typeof data?.projectName === 'string' && data.projectName.trim()
+          ? data.projectName.trim()
+          : conv?.projectName,
+      projectType:
+        typeof data?.projectType === 'string' && data.projectType.trim()
+          ? data.projectType.trim()
+          : conv?.projectType,
+      scopeIntent: actionScopeIntent,
+    });
     const doctorEvidence = await this._readDoctorEvidenceSummary(activeWorkspacePath);
     const verifyEvidenceAvailable = Boolean(doctorEvidence);
     const verifyReady = !actionPolicy.requiresVerifyPath || verifyEvidenceAvailable;
@@ -6659,6 +6886,7 @@ No markdown, no explanation outside the JSON.`;
           requiredCommandCount: verifyCommandPack.commands.filter((entry) => entry.required).length,
           blockedReasonCount: verifyCommandPack.blockedReasons.length,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
         }
       );
 
@@ -6670,6 +6898,7 @@ No markdown, no explanation outside the JSON.`;
           qualityScore: verifyCommandPack.qualityScore,
           requiredCommandCount: verifyCommandPack.commands.filter((entry) => entry.required).length,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
         });
       }
     }
@@ -6759,6 +6988,7 @@ No markdown, no explanation outside the JSON.`;
         confidenceBand: wave2Contracts.predictiveWarning.confidenceBand,
         riskLevel: wave2Contracts.impactAssessment.riskLevel,
         framework: conv.framework ?? 'unknown',
+        ...telemetryScopeProps,
       });
     }
 
@@ -6797,6 +7027,7 @@ No markdown, no explanation outside the JSON.`;
           reason: verifyCompletenessCheck.reason,
           verifyRequired,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
         });
       }
 
@@ -6825,6 +7056,7 @@ No markdown, no explanation outside the JSON.`;
           releaseGateCompletionBlocked,
           releaseGateBlockedReasonCount: releaseGateBlockedReasons.length,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
           errors: doctorEvidence?.errors ?? 0,
           warnings: doctorEvidence?.warnings ?? 0,
           passed: doctorEvidence?.passed ?? 0,
@@ -6850,6 +7082,7 @@ No markdown, no explanation outside the JSON.`;
             releaseGateBlocked: releaseGateCompletionBlocked,
             memorySuggestionReady: Boolean(memorySuggestion),
             replayReady: Boolean(incidentReproPackEvidence),
+            ...telemetryScopeProps,
           }
         );
       }
@@ -6868,6 +7101,7 @@ No markdown, no explanation outside the JSON.`;
             warningId: wave2Contracts.predictiveWarning.warningId,
             verifySuccess: completionSuccess,
             framework: conv.framework ?? 'unknown',
+            ...telemetryScopeProps,
           }
         );
       }
@@ -6891,6 +7125,7 @@ No markdown, no explanation outside the JSON.`;
           redactionApplied: incidentReproPackEvidence.redaction.applied,
           verifySuccess,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
         });
 
         this._trackStudioEvent('workspai.studio.incident_replay_ready', conv.workspacePath, {
@@ -6901,6 +7136,7 @@ No markdown, no explanation outside the JSON.`;
           blockedReasonCount: incidentReproPackEvidence.summary.blockedReasonCount,
           verifyChecklistCount: incidentReproPackEvidence.replayPayload.verifyChecklist.length,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
         });
       }
 
@@ -6937,12 +7173,42 @@ No markdown, no explanation outside the JSON.`;
               actionType,
               packId: conv.importedIncidentReplay.packId,
               framework: conv.framework ?? 'unknown',
+              ...telemetryScopeProps,
             }
           );
         }
 
         delete conv.importedIncidentReplay;
         this._chatBrainConversations.set(conversationId, conv);
+      } else if (completionSuccess && conv.workspacePath) {
+        // Non-imported verified outcomes should also enrich team-reuse memory.
+        // Without this, reuse enrichment is biased toward imported replay flows only.
+        const replayMemorySaved = await this._persistIncidentReplayLearning({
+          workspacePath: conv.workspacePath,
+          packId: incidentReproPackEvidence?.packId || `verified-outcome-${actionId}`,
+          actionType,
+          riskLevel: wave2Contracts.impactAssessment.riskLevel,
+          likelyFailureMode: wave2Contracts.impactAssessment.likelyFailureMode,
+          verifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
+          blockedReasons: wave2Contracts.releaseGateEvidence.blockedReasons,
+          relatedFiles: wave2Contracts.impactAssessment.affectedFiles,
+        });
+
+        if (replayMemorySaved) {
+          this._trackStudioEvent(
+            'workspai.studio.incident_replay_memory_enriched',
+            conv.workspacePath,
+            {
+              conversationId,
+              actionId,
+              actionType,
+              packId: incidentReproPackEvidence?.packId || `verified-outcome-${actionId}`,
+              framework: conv.framework ?? 'unknown',
+              source: 'verified_outcome',
+              ...telemetryScopeProps,
+            }
+          );
+        }
       }
 
       if (rollbackEvidence?.attempted) {
@@ -6962,6 +7228,7 @@ No markdown, no explanation outside the JSON.`;
           restoredCount: rollbackEvidence.restoredFiles.length,
           failedCount: rollbackEvidence.failedFiles.length,
           framework: conv.framework ?? 'unknown',
+          ...telemetryScopeProps,
         });
 
         this._trackStudioEvent(
@@ -6979,6 +7246,7 @@ No markdown, no explanation outside the JSON.`;
             restoredCount: rollbackEvidence.restoredFiles.length,
             failedCount: rollbackEvidence.failedFiles.length,
             framework: conv.framework ?? 'unknown',
+            ...telemetryScopeProps,
           }
         );
       }
@@ -6997,6 +7265,7 @@ No markdown, no explanation outside the JSON.`;
             actionType,
             verifyChecklistCount: wave2Contracts.impactAssessment.verifyChecklist.length,
             framework: conv.framework ?? 'unknown',
+            ...telemetryScopeProps,
           }
         );
 
@@ -7597,13 +7866,23 @@ No markdown, no explanation outside the JSON.`;
     });
   }
 
-  private async _sendIncidentStudioTelemetry(explicitWorkspacePath?: string, forceRefresh = false) {
+  private async _sendIncidentStudioTelemetry(
+    explicitWorkspacePath?: string,
+    explicitProjectPath?: string,
+    forceRefresh = false
+  ) {
     const workspacePath = explicitWorkspacePath || this._resolveTelemetryWorkspacePath();
     const tracker = WorkspaceUsageTracker.getInstance();
     const doctorSummary = await this._readDoctorEvidenceSnapshot(workspacePath);
 
     // Check cache first (5 minute TTL)
-    const cacheKey = `incident-studio-telemetry-${workspacePath}`;
+    const normalizedProjectPath =
+      typeof explicitProjectPath === 'string' && explicitProjectPath.trim().length > 0
+        ? explicitProjectPath.trim()
+        : undefined;
+    const cacheKey = normalizedProjectPath
+      ? `incident-studio-telemetry-${workspacePath}::${normalizedProjectPath}`
+      : `incident-studio-telemetry-${workspacePath}`;
     const cachedData = this._context.globalState.get<{
       commandSummary: any;
       onboardingSummary: any;
@@ -7642,15 +7921,21 @@ No markdown, no explanation outside the JSON.`;
       studioStabilizationKpiStatus,
       studioReproPackKpiStatus,
       releaseReadinessValidationKpiStatus,
+      enterpriseStabilizationGateStatus,
     ] = await Promise.all([
       tracker.getCommandTelemetrySummary(workspacePath, 'last7d'),
       tracker.getOnboardingExperimentStats(workspacePath, 'last7d'),
-      tracker.getStudioCtaVariantBreakdown(workspacePath, 'last7d'),
-      tracker.getStudioHardGateStatus(workspacePath, 'last7d'),
-      tracker.getStudioRollbackKpiStatus(workspacePath, 'last7d'),
-      tracker.getStudioStabilizationKpiStatus(workspacePath, 'last7d'),
-      tracker.getStudioReproPackKpiStatus(workspacePath, 'last7d'),
-      tracker.getReleaseReadinessValidationKpiStatus(workspacePath, 'last30d'),
+      tracker.getStudioCtaVariantBreakdown(workspacePath, 'last7d', normalizedProjectPath),
+      tracker.getStudioHardGateStatus(workspacePath, 'last7d', {}, normalizedProjectPath),
+      tracker.getStudioRollbackKpiStatus(workspacePath, 'last7d', {}, normalizedProjectPath),
+      tracker.getStudioStabilizationKpiStatus(workspacePath, 'last7d', {}, normalizedProjectPath),
+      tracker.getStudioReproPackKpiStatus(workspacePath, 'last7d', {}, normalizedProjectPath),
+      tracker.getReleaseReadinessValidationKpiStatus(
+        workspacePath,
+        'last30d',
+        normalizedProjectPath
+      ),
+      tracker.getEnterpriseStabilizationGateStatus(workspacePath, normalizedProjectPath),
     ]);
 
     const telemetryData = buildIncidentStudioTelemetryPayload(
@@ -7662,7 +7947,8 @@ No markdown, no explanation outside the JSON.`;
       studioRollbackKpiStatus,
       studioStabilizationKpiStatus,
       studioReproPackKpiStatus,
-      releaseReadinessValidationKpiStatus
+      releaseReadinessValidationKpiStatus,
+      enterpriseStabilizationGateStatus
     );
 
     // Store in cache

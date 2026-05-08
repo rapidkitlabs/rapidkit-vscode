@@ -24,6 +24,10 @@ describe('releaseStopGate manifest mode', () => {
       {
         cwd: repoRoot,
         encoding: 'utf-8',
+        env: {
+          ...process.env,
+          WORKSPAI_GATE_MARKER_MAX_AGE_HOURS: '0',
+        },
       }
     );
 
@@ -47,6 +51,10 @@ describe('releaseStopGate manifest mode', () => {
       {
         cwd: repoRoot,
         encoding: 'utf-8',
+        env: {
+          ...process.env,
+          WORKSPAI_GATE_MARKER_MAX_AGE_HOURS: '0',
+        },
       }
     );
 
@@ -125,6 +133,7 @@ describe('releaseStopGate manifest mode', () => {
         encoding: 'utf-8',
         env: {
           ...process.env,
+          WORKSPAI_GATE_MARKER_MAX_AGE_HOURS: '0',
           WORKSPAI_GATE_PREDICTIVE_CALIBRATION_MODE: 'production',
           WORKSPAI_GATE_PROD_WINDOWS: '3',
           WORKSPAI_GATE_PROD_WINDOWS_MIN: '3',
@@ -161,6 +170,7 @@ describe('releaseStopGate manifest mode', () => {
         encoding: 'utf-8',
         env: {
           ...process.env,
+          WORKSPAI_GATE_MARKER_MAX_AGE_HOURS: '0',
           WORKSPAI_GATE_PREDICTIVE_CALIBRATION_MODE: 'production',
           WORKSPAI_GATE_PROD_WINDOWS: '3',
           WORKSPAI_GATE_PROD_WINDOWS_MIN: '3',
@@ -749,5 +759,286 @@ describe('releaseStopGate manifest mode', () => {
     expect(output).toContain('"enforced": false');
     expect(output).toContain('"releaseReadinessValidationPass": true');
     expect(output).toContain('All release stop conditions passed.');
+  });
+
+  it('enforces enterprise freeze rule and release posture label when both are provided', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-enterprise-freeze-go-'));
+    const gatePath = path.join(tempDir, 'enterprise-gate.json');
+    const releaseNotesPath = path.join(tempDir, 'release-notes.md');
+
+    fs.writeFileSync(
+      gatePath,
+      JSON.stringify(
+        {
+          enterpriseStabilizationGateStatus: {
+            consecutiveWindowsPass: 2,
+            expansionFrozen: false,
+            freezeReason: null,
+            last7d: { overallPass: true },
+            last30d: { overallPass: true },
+          },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    fs.writeFileSync(releaseNotesPath, '# Release notes\n\nPosture: expansion-eligible\n', 'utf-8');
+
+    try {
+      const output = execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--enterprise-gate',
+          gatePath,
+          '--enforce-enterprise-freeze',
+          '--release-notes',
+          releaseNotesPath,
+          '--enforce-release-posture-label',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      expect(output).toContain('Enterprise stabilization gate result');
+      expect(output).toContain('Release notes posture result');
+      expect(output).toContain('expansion-eligible');
+      expect(output).toContain('KPI check skipped by --skip-kpi.');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks when open issue report contains blocking P0/P1 issues', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-open-issues-fail-'));
+    const issueReportPath = path.join(tempDir, 'open-issues.json');
+
+    fs.writeFileSync(
+      issueReportPath,
+      JSON.stringify(
+        {
+          issues: [
+            {
+              id: 'INC-101',
+              title: 'Critical verify regression',
+              severity: 'p0',
+              state: 'open',
+            },
+            {
+              id: 'INC-102',
+              title: 'Minor docs drift',
+              severity: 'p3',
+              state: 'open',
+            },
+          ],
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--issue-report',
+          issueReportPath,
+          '--enforce-open-issues',
+          '--block-severities',
+          'p0,p1',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      throw new Error('Expected release gate to block on open P0/P1 issues.');
+    } catch (error) {
+      const failure = error as { status?: number; stderr?: string | Buffer };
+      const stderr = String(failure.stderr || '');
+
+      expect(failure.status).toBe(1);
+      expect(stderr).toContain('Release blocked: Found 1 blocking open issue(s)');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes open-issue enforcement when P0/P1 issues are closed and only lower severities remain', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-open-issues-pass-'));
+    const issueReportPath = path.join(tempDir, 'open-issues-clean.json');
+
+    fs.writeFileSync(
+      issueReportPath,
+      JSON.stringify(
+        [
+          {
+            number: 201,
+            title: 'Closed high severity issue',
+            labels: [{ name: 'p1' }],
+            state: 'closed',
+          },
+          {
+            number: 202,
+            title: 'Open low severity issue',
+            labels: [{ name: 'p3' }],
+            state: 'open',
+          },
+        ],
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    try {
+      const output = execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--issue-report',
+          issueReportPath,
+          '--enforce-open-issues',
+          '--block-severities',
+          'p0,p1',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      expect(output).toContain('Open-issue severity result');
+      expect(output).toContain('No blocking open issues found for configured severities.');
+      expect(output).toContain('KPI check skipped by --skip-kpi.');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks open-issue enforcement for common severity label variants', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-open-issues-variant-fail-'));
+    const issueReportPath = path.join(tempDir, 'open-issues-variants.json');
+
+    fs.writeFileSync(
+      issueReportPath,
+      JSON.stringify(
+        [
+          {
+            number: 301,
+            title: 'Critical production incident',
+            labels: [{ name: 'priority:p0-blocker' }],
+            state: 'open',
+          },
+          {
+            number: 302,
+            title: 'High severity reliability risk',
+            labels: [{ name: 'severity_high' }],
+            state: 'open',
+          },
+        ],
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--issue-report',
+          issueReportPath,
+          '--enforce-open-issues',
+          '--block-severities',
+          'p0,p1',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      throw new Error('Expected release gate to block on severity label variants for P0/P1.');
+    } catch (error) {
+      const failure = error as { status?: number; stderr?: string | Buffer };
+      const stderr = String(failure.stderr || '');
+
+      expect(failure.status).toBe(1);
+      expect(stderr).toContain('Release blocked: Found 2 blocking open issue(s)');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks when enterprise freeze rule is enforced but gate status is frozen', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspai-enterprise-freeze-fail-'));
+    const gatePath = path.join(tempDir, 'enterprise-gate-frozen.json');
+
+    fs.writeFileSync(
+      gatePath,
+      JSON.stringify(
+        {
+          enterpriseStabilizationGateStatus: {
+            consecutiveWindowsPass: 1,
+            expansionFrozen: true,
+            freezeReason: 'last7d window failing',
+            last7d: { overallPass: false },
+            last30d: { overallPass: true },
+          },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          'scripts/release-stop-gate.mjs',
+          '--skip-kpi',
+          '--skip-contract-checks',
+          '--enterprise-gate',
+          gatePath,
+          '--enforce-enterprise-freeze',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      throw new Error('Expected release gate to block when freeze rule is not satisfied.');
+    } catch (error) {
+      const failure = error as { status?: number; stderr?: string | Buffer };
+      const stderr = String(failure.stderr || '');
+      expect(failure.status).toBe(1);
+      expect(stderr).toContain('Release blocked: Enterprise stabilization freeze rule failed');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

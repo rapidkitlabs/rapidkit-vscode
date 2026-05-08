@@ -15,7 +15,18 @@ export interface WorkspaiWorkspace {
 export interface WorkspaiProject {
   name: string;
   path: string;
-  type: 'fastapi' | 'nestjs' | 'go' | 'springboot' | 'unknown';
+  type:
+    | 'fastapi'
+    | 'django'
+    | 'flask'
+    | 'nestjs'
+    | 'express'
+    | 'koa'
+    | 'go'
+    | 'springboot'
+    | 'rails'
+    | 'dotnet'
+    | 'unknown';
   kit: string;
   managed?: boolean;
   modules: string[];
@@ -41,7 +52,17 @@ export interface WorkspaiTemplate {
   name: string;
   displayName: string;
   description: string;
-  framework: 'fastapi' | 'nestjs' | 'go' | 'springboot';
+  framework:
+    | 'fastapi'
+    | 'django'
+    | 'flask'
+    | 'nestjs'
+    | 'express'
+    | 'koa'
+    | 'go'
+    | 'springboot'
+    | 'rails'
+    | 'dotnet';
   category: string;
   files: string[];
 }
@@ -69,7 +90,17 @@ export interface WorkspaceConfig {
 
 export interface ProjectConfig {
   name: string;
-  framework: 'fastapi' | 'nestjs' | 'go' | 'springboot';
+  framework:
+    | 'fastapi'
+    | 'django'
+    | 'flask'
+    | 'nestjs'
+    | 'express'
+    | 'koa'
+    | 'go'
+    | 'springboot'
+    | 'rails'
+    | 'dotnet';
   kit: string; // Kit name (e.g., 'fastapi.standard', 'fastapi.ddd', 'nestjs.standard', 'gofiber.standard', 'gogin.standard', 'springboot.standard')
   packageManager?: string; // For NestJS: npm, yarn, pnpm
 }

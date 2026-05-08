@@ -194,7 +194,10 @@ export type IncidentStudioTelemetryPayload = {
   verifiedOutcomeLoopStatus?: {
     workspacePath: string | null;
     timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d' | null;
+    loopStarted: number;
     verifiedOutcomes: number;
+    /** verifiedOutcomes / loopStarted * 100; null when loopStarted === 0 */
+    verifiedOutcomeRate: number | null;
     reusableArtifacts: {
       reproPacksExported: number;
       replayReady: number;
@@ -211,6 +214,41 @@ export type IncidentStudioTelemetryPayload = {
       releaseEvidencePass: boolean;
       overallPass: boolean;
     };
+  } | null;
+  enterpriseStabilizationGateStatus?: {
+    workspacePath: string;
+    evaluatedAt: string;
+    last7d: {
+      window: 'last7d' | 'last30d';
+      windowStartAt: string | null;
+      windowEndAt: string;
+      routePrecisionPass: boolean;
+      verifyPathCompletionPass: boolean;
+      falseConfidencePass: boolean;
+      rollbackRecoveryPass: boolean;
+      repeatVerifiedResolutionPass: boolean;
+      reproPackSharePass: boolean;
+      releaseReadinessEvidencePass: boolean;
+      hardGatePass: boolean;
+      overallPass: boolean;
+    } | null;
+    last30d: {
+      window: 'last7d' | 'last30d';
+      windowStartAt: string | null;
+      windowEndAt: string;
+      routePrecisionPass: boolean;
+      verifyPathCompletionPass: boolean;
+      falseConfidencePass: boolean;
+      rollbackRecoveryPass: boolean;
+      repeatVerifiedResolutionPass: boolean;
+      reproPackSharePass: boolean;
+      releaseReadinessEvidencePass: boolean;
+      hardGatePass: boolean;
+      overallPass: boolean;
+    } | null;
+    consecutiveWindowsPass: number;
+    expansionFrozen: boolean;
+    freezeReason: string | null;
   } | null;
   doctorSummary?: unknown | null;
 };
@@ -238,8 +276,12 @@ function buildVerifiedOutcomeLoopStatus(
   studioReproPackKpiStatus: IncidentStudioTelemetryPayload['studioReproPackKpiStatus'],
   releaseReadinessValidationKpiStatus: IncidentStudioTelemetryPayload['releaseReadinessValidationKpiStatus']
 ): IncidentStudioTelemetryPayload['verifiedOutcomeLoopStatus'] {
+  const loopStarted =
+    ctaVariantBreakdown?.variants.reduce((sum, variant) => sum + variant.loopStarted, 0) ?? 0;
   const verifiedOutcomes =
     ctaVariantBreakdown?.variants.reduce((sum, variant) => sum + variant.verifyPassed, 0) ?? 0;
+  const verifiedOutcomeRate =
+    loopStarted > 0 ? Number(((verifiedOutcomes / loopStarted) * 100).toFixed(2)) : null;
 
   if (!ctaVariantBreakdown && !studioReproPackKpiStatus && !releaseReadinessValidationKpiStatus) {
     return null;
@@ -259,7 +301,9 @@ function buildVerifiedOutcomeLoopStatus(
   return {
     workspacePath,
     timeWindow,
+    loopStarted,
     verifiedOutcomes,
+    verifiedOutcomeRate,
     reusableArtifacts: {
       reproPacksExported: studioReproPackKpiStatus?.metrics.reproPackExported ?? 0,
       replayReady: studioReproPackKpiStatus?.metrics.incidentReplayReady ?? 0,
@@ -317,6 +361,7 @@ export function buildIncidentStudioTelemetryFromCache(
     studioReproPackKpiStatus: cachedData.studioReproPackKpiStatus ?? null,
     releaseReadinessValidationKpiStatus,
     verifiedOutcomeLoopStatus,
+    enterpriseStabilizationGateStatus: cachedData.enterpriseStabilizationGateStatus ?? null,
     // Always prefer the doctor snapshot freshly read from disk.
     doctorSummary: attachCtaVariantBreakdownToDoctorSummary(
       doctorSummary,
@@ -365,7 +410,8 @@ export function buildIncidentStudioTelemetryPayload(
   studioRollbackKpiStatus?: IncidentStudioTelemetryPayload['studioRollbackKpiStatus'],
   studioStabilizationKpiStatus?: IncidentStudioTelemetryPayload['studioStabilizationKpiStatus'],
   studioReproPackKpiStatus?: IncidentStudioTelemetryPayload['studioReproPackKpiStatus'],
-  releaseReadinessValidationKpiStatus?: IncidentStudioTelemetryPayload['releaseReadinessValidationKpiStatus']
+  releaseReadinessValidationKpiStatus?: IncidentStudioTelemetryPayload['releaseReadinessValidationKpiStatus'],
+  enterpriseStabilizationGateStatus?: IncidentStudioTelemetryPayload['enterpriseStabilizationGateStatus']
 ): IncidentStudioTelemetryPayload {
   const nextCtaVariantBreakdown = ctaVariantBreakdown
     ? {
@@ -410,6 +456,7 @@ export function buildIncidentStudioTelemetryPayload(
     studioReproPackKpiStatus: studioReproPackKpiStatus ?? null,
     releaseReadinessValidationKpiStatus: releaseReadinessValidationKpiStatus ?? null,
     verifiedOutcomeLoopStatus: nextVerifiedOutcomeLoopStatus,
+    enterpriseStabilizationGateStatus: enterpriseStabilizationGateStatus ?? null,
     doctorSummary: attachCtaVariantBreakdownToDoctorSummary(doctorSummary, nextCtaVariantBreakdown),
   };
 }

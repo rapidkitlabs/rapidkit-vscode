@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   deriveProjectNameFromGitUrl,
+  detectProjectStackFromByopDiscovery,
   detectProjectStackFromSignals,
   normalizeProjectName,
 } from '../commands/importProjectUtils';
 
 describe('importProjectUtils', () => {
   describe('detectProjectStackFromSignals', () => {
-    it('prefers fastapi when pyproject is present', () => {
+    it('treats pyproject-only projects as unknown medium in fallback mode', () => {
       const result = detectProjectStackFromSignals({
         hasPyProject: true,
         hasGoMod: true,
@@ -19,7 +20,7 @@ describe('importProjectUtils', () => {
         hasNestDependency: true,
       });
 
-      expect(result).toEqual({ stack: 'fastapi', confidence: 'high' });
+      expect(result).toEqual({ stack: 'unknown', confidence: 'medium' });
     });
 
     it('detects nestjs when nest dependency exists', () => {
@@ -86,6 +87,48 @@ describe('importProjectUtils', () => {
       });
 
       expect(result).toEqual({ stack: 'unknown', confidence: 'low' });
+    });
+  });
+
+  describe('detectProjectStackFromByopDiscovery', () => {
+    it('maps direct framework hits from BYOP discovery', () => {
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'fastapi',
+          runtime: 'python',
+          confidenceLevel: 'high',
+        })
+      ).toEqual({ stack: 'fastapi', confidence: 'high' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'express',
+          runtime: 'nodejs',
+          confidenceLevel: 'medium',
+        })
+      ).toEqual({ stack: 'express', confidence: 'medium' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'spring',
+          runtime: 'java',
+          confidenceLevel: 'high',
+        })
+      ).toEqual({ stack: 'springboot', confidence: 'high' });
+    });
+
+    it('maps runtime-level go/ruby/csharp discovery when framework is generic', () => {
+      expect(
+        detectProjectStackFromByopDiscovery({ runtime: 'go', confidenceLevel: 'medium' })
+      ).toEqual({ stack: 'go', confidence: 'medium' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({ runtime: 'ruby', confidenceLevel: 'low' })
+      ).toEqual({ stack: 'rails', confidence: 'low' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({ runtime: 'csharp', confidenceLevel: 'high' })
+      ).toEqual({ stack: 'dotnet', confidence: 'high' });
     });
   });
 

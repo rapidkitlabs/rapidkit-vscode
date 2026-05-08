@@ -9,7 +9,9 @@ import { upsertImportedProjectsRegistry } from '../utils/importedProjectsRegistr
 import { writeWorkspaceMarker } from '../utils/workspaceMarker';
 import { WorkspaceUsageTracker } from '../utils/workspaceUsageTracker';
 import { evaluateWorkspaiContractRuntime } from '../core/workspaiContractRuntime';
+import { ByopDiscoveryEngine } from '../core/byopDiscovery';
 import {
+  detectProjectStackFromByopDiscovery,
   detectProjectStackFromSignals,
   deriveProjectNameFromGitUrl,
   normalizeProjectName,
@@ -142,14 +144,32 @@ function stackLabel(stack: DetectedStack): string {
   if (stack === 'fastapi') {
     return 'FastAPI';
   }
+  if (stack === 'django') {
+    return 'Django';
+  }
+  if (stack === 'flask') {
+    return 'Flask';
+  }
   if (stack === 'nestjs') {
     return 'NestJS';
+  }
+  if (stack === 'express') {
+    return 'Express';
+  }
+  if (stack === 'koa') {
+    return 'Koa';
   }
   if (stack === 'springboot') {
     return 'Spring Boot';
   }
   if (stack === 'go') {
-    return 'Go';
+    return 'Go (Gin/Echo/Go HTTP)';
+  }
+  if (stack === 'rails') {
+    return 'Rails';
+  }
+  if (stack === 'dotnet') {
+    return '.NET';
   }
   return 'Unknown';
 }
@@ -178,6 +198,16 @@ function toInvocationSeed(seed: unknown): ImportProjectInvocationSeed | null {
 }
 
 async function detectProjectStack(projectPath: string): Promise<StackDetection> {
+  try {
+    const discovery = await new ByopDiscoveryEngine(projectPath).discover();
+    const byopDetection = detectProjectStackFromByopDiscovery(discovery);
+    if (byopDetection.stack !== 'unknown') {
+      return byopDetection;
+    }
+  } catch {
+    // Fall back to lightweight marker-based detection below.
+  }
+
   const packageJsonPath = path.join(projectPath, 'package.json');
 
   let hasNestDependency = false;

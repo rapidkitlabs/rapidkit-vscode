@@ -190,7 +190,7 @@ describe('contract drift guard', () => {
       '"release:stop-gate": "node scripts/release-stop-gate.mjs"'
     );
     expect(packageJsonSource).toContain(
-      '"release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --marker releases/fixtures/wave2-kpi-marker.json"'
+      '"release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --enforce-claim-checklist --marker releases/fixtures/wave2-kpi-marker.json"'
     );
     expect(workflowSource).toContain('Release stop gate (contract/parity)');
     expect(workflowSource).toContain('npm run release:stop-gate -- --skip-kpi');
@@ -198,6 +198,8 @@ describe('contract drift guard', () => {
     expect(wave2WorkflowSource).toContain('npm run release:stop-gate:wave2');
     expect(wave2WorkflowSource).toContain('WORKSPAI_GATE_PREDICTIVE_PRECISION_MIN');
     expect(wave2WorkflowSource).toContain('WORKSPAI_GATE_FALSE_ALARM_RATE_MAX');
+    expect(wave2WorkflowSource).toContain('WORKSPAI_GATE_RELEASE_READINESS_VALIDATION_MODE');
+    expect(wave2WorkflowSource).toContain('WORKSPAI_GATE_MARKER_MAX_AGE_HOURS');
     expect(gateManifestSource).toContain('WAVE2_FOUNDATION_GATE');
     expect(gateManifestSource).toContain('docs/WAVE2_ENGINEERING_BREAKDOWN.md');
     expect(gateManifestSource).toContain('releases/fixtures/wave2-kpi-marker.json');

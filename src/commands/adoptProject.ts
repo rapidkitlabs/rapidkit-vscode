@@ -4,9 +4,9 @@ import * as path from 'path';
 import { Logger } from '../utils/logger';
 import { getExtensionVersion } from '../utils/constants';
 import { WorkspaceUsageTracker } from '../utils/workspaceUsageTracker';
-import { detectProjectStackFromSignals } from './importProjectUtils';
+import { detectProjectStackFromSignals, type DetectedStack } from './importProjectUtils';
 
-type AdoptableProjectType = 'fastapi' | 'nestjs' | 'go' | 'springboot' | 'unknown';
+type AdoptableProjectType = DetectedStack;
 
 interface AdoptProjectInput {
   projectPath: string;
@@ -19,8 +19,20 @@ function normalizeProjectType(projectType?: string): AdoptableProjectType {
   if (projectType === 'fastapi') {
     return 'fastapi';
   }
+  if (projectType === 'django') {
+    return 'django';
+  }
+  if (projectType === 'flask') {
+    return 'flask';
+  }
   if (projectType === 'nestjs') {
     return 'nestjs';
+  }
+  if (projectType === 'express') {
+    return 'express';
+  }
+  if (projectType === 'koa') {
+    return 'koa';
   }
   if (projectType === 'go') {
     return 'go';
@@ -28,16 +40,22 @@ function normalizeProjectType(projectType?: string): AdoptableProjectType {
   if (projectType === 'springboot') {
     return 'springboot';
   }
+  if (projectType === 'rails') {
+    return 'rails';
+  }
+  if (projectType === 'dotnet') {
+    return 'dotnet';
+  }
   return 'unknown';
 }
 
 function runtimeForType(
   projectType: AdoptableProjectType
-): 'python' | 'node' | 'go' | 'java' | 'unknown' {
-  if (projectType === 'fastapi') {
+): 'python' | 'node' | 'go' | 'java' | 'ruby' | 'dotnet' | 'unknown' {
+  if (projectType === 'fastapi' || projectType === 'django' || projectType === 'flask') {
     return 'python';
   }
-  if (projectType === 'nestjs') {
+  if (projectType === 'nestjs' || projectType === 'express' || projectType === 'koa') {
     return 'node';
   }
   if (projectType === 'go') {
@@ -45,6 +63,12 @@ function runtimeForType(
   }
   if (projectType === 'springboot') {
     return 'java';
+  }
+  if (projectType === 'rails') {
+    return 'ruby';
+  }
+  if (projectType === 'dotnet') {
+    return 'dotnet';
   }
   return 'unknown';
 }
@@ -65,7 +89,9 @@ function kitForType(projectType: AdoptableProjectType): string {
   return 'generic.imported';
 }
 
-function engineForRuntime(runtime: 'python' | 'node' | 'go' | 'java' | 'unknown'): string {
+function engineForRuntime(
+  runtime: 'python' | 'node' | 'go' | 'java' | 'ruby' | 'dotnet' | 'unknown'
+): string {
   if (runtime === 'python') {
     return 'python';
   }
@@ -78,6 +104,12 @@ function engineForRuntime(runtime: 'python' | 'node' | 'go' | 'java' | 'unknown'
   if (runtime === 'java') {
     return 'maven';
   }
+  if (runtime === 'ruby') {
+    return 'bundler';
+  }
+  if (runtime === 'dotnet') {
+    return 'dotnet';
+  }
   return 'unknown';
 }
 
@@ -89,14 +121,32 @@ function projectTypeLabel(projectType: AdoptableProjectType): string {
   if (projectType === 'fastapi') {
     return 'FastAPI';
   }
+  if (projectType === 'django') {
+    return 'Django';
+  }
+  if (projectType === 'flask') {
+    return 'Flask';
+  }
   if (projectType === 'nestjs') {
     return 'NestJS';
+  }
+  if (projectType === 'express') {
+    return 'Express';
+  }
+  if (projectType === 'koa') {
+    return 'Koa';
   }
   if (projectType === 'go') {
     return 'Go';
   }
   if (projectType === 'springboot') {
     return 'Spring Boot';
+  }
+  if (projectType === 'rails') {
+    return 'Rails';
+  }
+  if (projectType === 'dotnet') {
+    return '.NET';
   }
   return 'Generic';
 }

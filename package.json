@@ -1,8 +1,8 @@
 {
   "name": "rapidkit-vscode",
-  "displayName": "Workspai (by RapidKit)",
+  "displayName": "Workspai",
   "description": "The AI workspace for backend teams. Build backend systems with AI that knows your workspace, generate projects and modules from intent, debug with full context, and ship faster — all inside VS Code. FastAPI, NestJS, Spring Boot, Go/Fiber & Go/Gin.",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "publisher": "rapidkit",
   "icon": "media/icons/icon.png",
   "galleryBanner": {
@@ -1435,7 +1435,7 @@
     "test:stress:incident-studio": "vitest run src/test/incidentStudioLifecycle.test.ts src/test/incidentStudioStressGate.test.ts src/test/debounceWatchers.test.ts",
     "test:vscode": "vscode-test",
     "release:stop-gate": "node scripts/release-stop-gate.mjs",
-    "release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --marker releases/fixtures/wave2-kpi-marker.json",
+    "release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --enforce-claim-checklist --marker releases/fixtures/wave2-kpi-marker.json",
     "release:stop-gate:wave3": "node scripts/release-stop-gate.mjs --manifest releases/wave3-foundation-gate.json --claim-checklist releases/wave3-claim-checklist.md --enforce-claim-checklist --marker releases/fixtures/wave3-kpi-marker.json",
     "sync:modules": "node scripts/sync-modules.mjs",
     "package": "vsce package",

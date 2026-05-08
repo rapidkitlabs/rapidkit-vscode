@@ -16,7 +16,7 @@
     "requiredContents": [
         {
             "path": "package.json",
-            "contains": "\"release:stop-gate:wave2\": \"node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --marker releases/fixtures/wave2-kpi-marker.json\""
+            "contains": "\"release:stop-gate:wave2\": \"node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --enforce-claim-checklist --marker releases/fixtures/wave2-kpi-marker.json\""
         },
         {
             "path": ".github/workflows/release-gate-wave2.yml",
