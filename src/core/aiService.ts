@@ -94,20 +94,82 @@ export async function streamAIResponse(
 ): Promise<{ modelId: string }> {
   const logger = Logger.getInstance();
 
+  const normalizeModelLookupKey = (value: string | undefined): string =>
+    (value ?? '').trim().toLowerCase();
+
+  const isRetryableModelRequestError = (err: unknown): boolean => {
+    const raw = err instanceof Error ? `${err.name} ${err.message}` : String(err ?? '');
+    return /\b(429|rate\s*limit|quota|resource\s*exhausted|temporar(?:y|ily)|unavailable|overloaded|busy|too\s*many\s*requests|service\s*unavailable|model\s*not\s*available|model\s*unavailable)\b/i.test(
+      raw
+    );
+  };
+
+  const isSameModel = (
+    a: { id: string; name?: string },
+    b: { id: string; name?: string }
+  ): boolean => {
+    const aId = normalizeModelLookupKey(a.id);
+    const bId = normalizeModelLookupKey(b.id);
+    const aName = normalizeModelLookupKey(a.name);
+    const bName = normalizeModelLookupKey(b.name);
+    return (aId.length > 0 && aId === bId) || (aName.length > 0 && aName === bName);
+  };
+
+  const selectFallbackModelForFailure = async (
+    failedModel: vscode.LanguageModelChat
+  ): Promise<{ model: vscode.LanguageModelChat; modelId: string } | undefined> => {
+    // Force re-evaluation to avoid sticky cache repeatedly selecting the failed model.
+    resetModelSelectionCache();
+
+    try {
+      const auto = await selectModelAuto();
+      if (!isSameModel(auto.model, failedModel)) {
+        return auto;
+      }
+    } catch {
+      // Continue to raw model registry fallback.
+    }
+
+    const all = await vscode.lm.selectChatModels();
+    const alternative = all.find((candidate) => !isSameModel(candidate, failedModel));
+    if (!alternative) {
+      return undefined;
+    }
+
+    return {
+      model: alternative,
+      modelId: alternative.name ?? alternative.id,
+    };
+  };
+
+  const normalizePreferredModelId = (raw?: string): string | undefined => {
+    if (typeof raw !== 'string') {
+      return undefined;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return trimmed;
+  };
+  const normalizedPreferredModelId = normalizePreferredModelId(preferredModelId);
+
   let model: vscode.LanguageModelChat;
   let modelId: string;
   try {
-    if (preferredModelId) {
+    if (normalizedPreferredModelId) {
       const all = await vscode.lm.selectChatModels();
       const found = all.find(
-        (m) => m.id === preferredModelId || (m.name ?? '') === preferredModelId
+        (m) => m.id === normalizedPreferredModelId || (m.name ?? '') === normalizedPreferredModelId
       );
       if (found) {
         model = found;
         modelId = found.name ?? found.id;
         logger.info(`[AI] Using user-selected model: ${model.id}`);
       } else {
-        logger.warn(`[AI] Requested model "${preferredModelId}" not found, falling back to auto`);
+        logger.warn(
+          `[AI] Requested model "${normalizedPreferredModelId}" not found, falling back to auto`
+        );
         ({ model, modelId } = await selectModelAuto());
       }
     } else {
@@ -126,19 +188,60 @@ export async function streamAIResponse(
       : vscode.LanguageModelChatMessage.Assistant(sanitizePromptText(m.content, 20000))
   );
 
-  const response = await model.sendRequest(lmMessages, {}, token);
+  const streamWithModel = async (
+    selected: vscode.LanguageModelChat,
+    onEmitChunk?: () => void
+  ): Promise<boolean> => {
+    const response = await selected.sendRequest(lmMessages, {}, token);
+    let emittedAnyChunk = false;
 
-  for await (const part of response.stream) {
-    if (part instanceof vscode.LanguageModelTextPart) {
-      onChunk({ text: part.value, done: false });
+    for await (const part of response.stream) {
+      if (part instanceof vscode.LanguageModelTextPart) {
+        emittedAnyChunk = true;
+        onEmitChunk?.();
+        onChunk({ text: part.value, done: false });
+      }
+      if (token?.isCancellationRequested) {
+        break;
+      }
     }
-    if (token?.isCancellationRequested) {
-      break;
+
+    return emittedAnyChunk;
+  };
+
+  let selectedModel = model;
+  let selectedModelId = modelId;
+  let emittedFromPrimary = false;
+
+  try {
+    await streamWithModel(selectedModel, () => {
+      emittedFromPrimary = true;
+    });
+  } catch (err) {
+    const retryable = isRetryableModelRequestError(err);
+    if (token?.isCancellationRequested || !retryable || emittedFromPrimary) {
+      throw err;
     }
+
+    logger.warn(
+      `[AI] Model request failed for ${selectedModel.id}; retrying with fallback auto model. reason=${err instanceof Error ? err.message : String(err)}`
+    );
+
+    const fallback = await selectFallbackModelForFailure(selectedModel);
+    if (!fallback) {
+      throw err;
+    }
+
+    selectedModel = fallback.model;
+    selectedModelId = fallback.modelId;
+    logger.info(
+      `[AI] Retrying stream with fallback model: ${selectedModel.id} (${selectedModelId})`
+    );
+    await streamWithModel(selectedModel);
   }
 
   onChunk({ text: '', done: true });
-  return { modelId };
+  return { modelId: selectedModelId };
 }
 
 /**

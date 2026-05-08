@@ -349,7 +349,7 @@ describe('aiService', () => {
 
     expect(first.modelId).toBe('GPT-4o');
     expect(second.modelId).toBe('GPT-4o');
-    expect(mockSelectChatModels).toHaveBeenCalledTimes(1);
+    expect(mockSelectChatModels).toHaveBeenCalledTimes(2);
   });
 
   it('stops streaming when cancellation is requested mid-response', async () => {
@@ -386,6 +386,51 @@ describe('aiService', () => {
 
     expect(chunks).toEqual(['first chunk']);
     expect(done).toBe(1);
+  });
+
+  it('falls back to another model when initial request fails with retryable rate-limit error', async () => {
+    const autoModel = {
+      id: 'auto',
+      name: 'Auto (copilot)',
+      sendRequest: vi.fn(async () => {
+        throw new Error('429 Too Many Requests: rate limit exceeded');
+      }),
+    };
+
+    const fallbackModel = {
+      id: 'gpt-4o',
+      name: 'GPT-4o',
+      sendRequest: vi.fn(async () => ({
+        stream: (async function* () {
+          yield new vscode.LanguageModelTextPart('fallback response');
+        })(),
+      })),
+    };
+
+    mockSelectChatModels.mockResolvedValue([autoModel, fallbackModel]);
+
+    const chunks: string[] = [];
+    let done = 0;
+
+    const result = await streamAIResponse(
+      [{ role: 'user', content: 'hello' }],
+      (chunk) => {
+        if (chunk.text) {
+          chunks.push(chunk.text);
+        }
+        if (chunk.done) {
+          done += 1;
+        }
+      },
+      undefined,
+      'auto'
+    );
+
+    expect(autoModel.sendRequest).toHaveBeenCalledTimes(1);
+    expect(fallbackModel.sendRequest).toHaveBeenCalledTimes(1);
+    expect(chunks).toEqual(['fallback response']);
+    expect(done).toBe(1);
+    expect(result.modelId).toBe('GPT-4o');
   });
 
   it('uses project-detect contract to resolve the canonical project root and kit', async () => {

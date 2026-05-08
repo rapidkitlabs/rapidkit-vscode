@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-05-08
+
+### Added
+
+- **Browser smoke test action** — new `browser-smoke-test` action type in Incident Studio, aligned with VS Code 1.119 browser agent tools. The action enables AI-guided smoke testing of web applications by opening the project's running dev server in VS Code's simple browser and asking the AI to verify key UI surfaces, endpoints, and HTTP status codes. Fully integrated across all four contract layers: action matrix, prompt policy, payload contracts, and routing logic.
+
+- **Smart rate-limit fallback** — implements one-shot intelligent fallback on retryable model errors (429, rate limit, quota, service unavailable, overloaded). Fallback only triggers before first chunk is streamed (prevents duplicate partial responses), includes automatic model selection cache reset via `resetModelSelectionCache()`, and falls back to raw model registry if auto-selection picks the same model again. Adds `emittedFromPrimary` guard and returns updated `modelId` on successful fallback.
+
+- **Regression test for fallback** — new test in `aiService.test.ts`: `"falls back to another model when initial request fails with retryable rate-limit error"`. Validates that when autoModel throws 429, fallbackModel is called and streamed response is returned with correct fallback modelId.
+
+### Changed
+
+- **Model selection normalization semantics** — fixes v0.25.0 regression where literal string `'auto'` was being converted to null/undefined. All three normalize helpers (`normalizeSelectedModelId` in App.tsx, `normalizeRequestedModelId` in welcomePanel.ts, `normalizePreferredModelId` in aiService.ts) now preserve `'auto'` as a real model value and only convert truly empty strings/whitespace to null/undefined. This ensures the Auto model selection UI state doesn't collapse when users explicitly request Auto model.
+
+- **Incident Studio View controls styling** — improved readability of Maximize and Lite/Full view toggle buttons by increasing font-size to 10.2px for labels, 12px for icon symbols, adding letter-spacing 0.01em, and setting font-weight 800 for bold emphasis. Used dedicated `.incident-header-group--view` CSS context selector to isolate sizing to View toggles only, preventing impact on other header chips.
+
+### Fixed
+
+- **driftGuard test assertion** — updated `keeps AI modal stop-generation contract aligned across webview and panel` test to split the assertion for `context: ctx, requestId` into two separate checks (`context: ctx,` and `requestId,`) matching the actual multi-line object formatting in `App.tsx`. This was a pre-existing formatting drift from earlier refactoring with no functional impact to the modal stop-generation contract itself.
+
 ## [0.25.0] - 2026-05-07
 
 ### Added

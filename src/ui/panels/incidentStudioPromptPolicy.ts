@@ -32,6 +32,8 @@ const INCIDENT_ACTION_ALLOWLIST = new Set<string>([
   'apply-debug-patch',
   // KF9: release readiness decision artifact (go/no-go)
   'release-readiness-commander',
+  // VSC-1119: browser-driven UI smoke test using VS Code browser agent tools
+  'browser-smoke-test',
 ]);
 
 export function isIncidentActionAllowlisted(actionType: string): boolean {
@@ -64,6 +66,7 @@ export function classifyIncidentActionPolicy(actionType: string): IncidentAction
     case 'verify-pack-autopilot':
     case 'incident-repro-pack':
     case 'release-readiness-commander':
+    case 'browser-smoke-test':
       return {
         actionType: normalized,
         riskClass: 'non-mutating-executable',

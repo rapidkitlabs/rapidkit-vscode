@@ -70,6 +70,19 @@ import { CreateProjectModal } from '@/components/CreateProjectModal';
 import { InstallModuleModal } from '@/components/InstallModuleModal';
 import { ModuleDetailsModal } from '@/components/ModuleDetailsModal';
 
+function normalizeSelectedModelId(raw: unknown): string | null {
+    if (typeof raw !== 'string') {
+        return null;
+    }
+
+    const trimmed = raw.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    return trimmed;
+}
+
 export function App() {
     type ChatBrainBoardAction = {
         id: string;
@@ -629,7 +642,42 @@ export function App() {
                     break;
                 case 'aiModelsList':
                     if (Array.isArray(message.data?.models)) {
-                        setAIAvailableModels(message.data.models);
+                        const incomingModels = message.data.models as Array<unknown>;
+                        const normalizedModels = incomingModels
+                            .filter(
+                                (model: unknown): model is { id: string; name: string; vendor: string } =>
+                                    Boolean(model) &&
+                                    typeof (model as { id?: unknown }).id === 'string' &&
+                                    ((model as { id: string }).id).trim().length > 0
+                            )
+                            .map((model: { id: string; name: string; vendor: string }) => ({
+                                id: model.id,
+                                name:
+                                    typeof model.name === 'string' && model.name.trim().length > 0
+                                        ? model.name
+                                        : model.id,
+                                vendor: typeof model.vendor === 'string' ? model.vendor : '',
+                            }));
+
+                        setAIAvailableModels(normalizedModels);
+                        setAISelectedModelId((current) => {
+                            const normalizedCurrent = normalizeSelectedModelId(current);
+                            if (!normalizedCurrent) {
+                                return null;
+                            }
+                            return normalizedModels.some((model) => model.id === normalizedCurrent)
+                                ? normalizedCurrent
+                                : null;
+                        });
+                        setIncidentSelectedModelId((current) => {
+                            const normalizedCurrent = normalizeSelectedModelId(current);
+                            if (!normalizedCurrent) {
+                                return null;
+                            }
+                            return normalizedModels.some((model) => model.id === normalizedCurrent)
+                                ? normalizedCurrent
+                                : null;
+                        });
                     }
                     break;
                 // ── AI Create events ────────────────────────────────────────
@@ -1168,7 +1216,14 @@ export function App() {
         setAIStreamError(null);
         setAIIsStreaming(true);
         setAIModelId(null);
-        vscode.postMessage('aiQuery', { mode, question, context: ctx, requestId, history: aiConversationHistory, modelId: aiSelectedModelId ?? undefined });
+        vscode.postMessage('aiQuery', {
+            mode,
+            question,
+            context: ctx,
+            requestId,
+            history: aiConversationHistory,
+            modelId: normalizeSelectedModelId(aiSelectedModelId) ?? undefined,
+        });
     };
 
     const handleAICancelQuery = () => {
@@ -1203,6 +1258,9 @@ export function App() {
             selectedWorkspaceForAnalysisObj?.name ||
             workspaceStatus.workspaceName ||
             workspacePath;
+
+        // Refresh model selector from Copilot LM API on each studio refresh.
+        vscode.postMessage('aiGetModels');
 
         // Refresh = restart analysis loop from the current scope (workspace/project)
         bootstrapIncidentStudioForWorkspace(
@@ -1315,7 +1373,7 @@ export function App() {
                         conversationId,
                         workspacePath,
                         requestId,
-                        modelId: incidentSelectedModelId ?? undefined,
+                        modelId: normalizeSelectedModelId(incidentSelectedModelId) ?? undefined,
                         projectSelection,
                         message:
                             initialQuery ||
@@ -1414,7 +1472,7 @@ export function App() {
                 workspacePath,
                 projectSelection: selectedProjectForAnalysis,
                 requestId: `cbq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                modelId: incidentSelectedModelId ?? undefined,
+                modelId: normalizeSelectedModelId(incidentSelectedModelId) ?? undefined,
                 message: trimmedQuery,
             })
         );
@@ -1440,7 +1498,7 @@ export function App() {
                 actionType,
                 workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
                 projectSelection: selectedProjectForAnalysis,
-                modelId: incidentSelectedModelId ?? undefined,
+                modelId: normalizeSelectedModelId(incidentSelectedModelId) ?? undefined,
                 requestId: `cba-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             })
         );
@@ -1710,7 +1768,9 @@ export function App() {
                         modelId={incidentModelId || incidentSelectedModelId}
                         availableModels={aiAvailableModels}
                         selectedModelId={incidentSelectedModelId}
-                        onModelChange={setIncidentSelectedModelId}
+                        onModelChange={(modelId) =>
+                            setIncidentSelectedModelId(normalizeSelectedModelId(modelId))
+                        }
                         autoLearningEnabled={incidentAutoLearningPrompt}
                         onToggleAutoLearning={updateIncidentAutoLearningPrompt}
                         isRefreshing={isIncidentRefreshing}
@@ -1740,6 +1800,14 @@ export function App() {
                         onRunChangeImpact={() => runIncidentAction('aiChangeImpactLite')}
                         onRunMemoryWizard={() => runIncidentAction('aiWorkspaceMemoryWizard')}
                         onRunDoctorChecks={() => runIncidentAction('runDoctorChecks', {
+                            workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
+                            workspaceName: activeWorkspaceName,
+                        })}
+                        onRunDoctorFix={() => runIncidentAction('runDoctorFix', {
+                            workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
+                            workspaceName: activeWorkspaceName,
+                        })}
+                        onViewComplianceReport={() => runIncidentAction('viewComplianceReport', {
                             workspacePath: selectedWorkspaceForAnalysis || workspaceStatus.workspacePath,
                             workspaceName: activeWorkspaceName,
                         })}
@@ -1856,7 +1924,9 @@ export function App() {
                 modelId={aiModelId}
                 availableModels={aiAvailableModels}
                 selectedModelId={aiSelectedModelId}
-                onModelChange={setAISelectedModelId}
+                onModelChange={(modelId) =>
+                    setAISelectedModelId(normalizeSelectedModelId(modelId))
+                }
                 onClose={() => {
                     if (!aiIsStreaming) {
                         aiRequestIdRef.current = 0;

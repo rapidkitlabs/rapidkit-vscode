@@ -169,6 +169,22 @@ describe('incidentStudioPromptPolicy', () => {
     expect(source).toContain("normalized.includes('fix') &&");
   });
 
+  it('workspace candidate block includes marker + evidence-source transparency', () => {
+    const source = readWelcomePanelSource();
+
+    expect(source).toContain('Workspace marker: signature=');
+    expect(source).toContain('evidence: ${candidate.evidenceSources.join');
+    expect(source).toContain('Scope confidence: ambiguous; avoid definitive per-project claims');
+  });
+
+  it('scope resolver uses doctor evidence + recursive rapidkit project discovery signals', () => {
+    const source = readWelcomePanelSource();
+
+    expect(source).toContain('_discoverRapidkitProjectPaths(');
+    expect(source).toContain('doctor-evidence');
+    expect(source).toContain('installed-modules');
+  });
+
   it('release gate verify path uses actionable verify completeness (not checklist length only)', () => {
     const source = readWelcomePanelSource();
 

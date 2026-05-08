@@ -343,7 +343,8 @@ describe('contract drift guard', () => {
     expect(appSource).toContain(
       "vscode.postMessage('aiCancelQuery', { requestId: aiRequestIdRef.current });"
     );
-    expect(appSource).toContain('context: ctx, requestId');
+    expect(appSource).toContain('context: ctx,');
+    expect(appSource).toContain('requestId,');
     expect(appSource).toContain('onCancel={handleAICancelQuery}');
 
     expect(aiModalSource).toContain('onCancel: () => void;');

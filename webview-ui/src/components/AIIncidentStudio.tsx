@@ -31,12 +31,22 @@ import {
     buildIncidentArchitectureNavigator,
     type IncidentArchitectureNavigatorItem,
 } from '../lib/incidentImpactNavigator';
+import {
+    buildDashboardSection51FromSnapshotJson,
+    buildDashboardSection51FromSnapshotMarkdown,
+} from '../lib/incidentStudioDashboardExport';
+import {
+    buildIncidentCliActionMatrix,
+    resolveIncidentCliActionByActionType,
+    resolveIncidentCliActionIdByActionType,
+} from '../lib/incidentCliActionMatrix';
 import type {
     NormalizedIncidentActionResultPayload,
     NormalizedIncidentImpactAssessmentPayload,
     NormalizedIncidentPredictiveWarningPayload,
     NormalizedIncidentReleaseGateEvidencePayload,
     NormalizedIncidentSystemGraphSnapshotPayload,
+    IncidentStudioStabilizationKpiStatus,
     MultiFilePatchResult,
     FilePatch,
 } from '../lib/incidentStudioPayload';
@@ -134,56 +144,7 @@ interface IncidentTelemetrySnapshot {
             overallPass: boolean;
         };
     } | null;
-    studioStabilizationKpiStatus?: {
-        workspacePath: string;
-        timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d';
-        windowStartAt: string | null;
-        windowEndAt: string;
-        thresholds: {
-            routePrecisionMin: number;
-            verifyPathCompletionRateMin: number;
-            falseConfidenceRateMax: number;
-            rollbackRecoverySuccessRateMin: number;
-            repeatVerifiedResolutionRateMin: number;
-        };
-        metrics: {
-            nextActionClicked: number;
-            routeMatchedWithoutFallback: number;
-            routeFallbackCount: number;
-            routePrecision: number | null;
-            verifyRequired: number;
-            verifyPathPresent: number;
-            verifyPathCompletionRate: number | null;
-            verifyFailed: number;
-            rollbackAttempted: number;
-            rollbackSucceeded: number;
-            falseConfidenceRate: number | null;
-            rollbackRecoverySuccessRate: number | null;
-            repeatedIncidentDetected: number;
-            repeatVerifiedResolved: number;
-            repeatVerifiedResolutionRate: number | null;
-            fallbackReasonBreakdown?: {
-                success: number;
-                bare_keyword_only: number;
-                fix_preview_fallback: number;
-                orchestrate_default: number;
-                other: number;
-            };
-            verifyPathReasonTop?: Array<{
-                reason: string;
-                count: number;
-            }>;
-        };
-        gates: {
-            telemetryEvidencePass: boolean;
-            routePrecisionPass: boolean;
-            verifyPathCompletionRatePass: boolean;
-            falseConfidenceRatePass: boolean;
-            rollbackRecoverySuccessRatePass: boolean;
-            repeatVerifiedResolutionRatePass: boolean;
-            overallPass: boolean;
-        };
-    } | null;
+    studioStabilizationKpiStatus?: IncidentStudioStabilizationKpiStatus | null;
     studioReproPackKpiStatus?: {
         workspacePath: string;
         timeWindow: 'all' | 'last24h' | 'last7d';
@@ -272,6 +233,14 @@ interface IncidentTelemetrySnapshot {
             framework?: string;
             issues: number;
             depsInstalled?: boolean;
+            modulesCount?: number;
+            modulesHealthy?: boolean;
+            vulnerabilities?: number;
+            installedModules?: Array<{
+                slug: string;
+                version: string;
+                display_name: string;
+            }>;
         }>;
         fixCommands: string[];
     } | null;
@@ -350,6 +319,8 @@ interface AIIncidentStudioProps {
     onRunChangeImpact: () => void;
     onRunMemoryWizard: () => void;
     onRunDoctorChecks: () => void;
+    onRunDoctorFix?: () => void;
+    onViewComplianceReport?: () => void;
     onRunInlineCommand?: (command: string) => void;
     onRevealArchitectureTarget?: (target: {
         path: string;
@@ -464,6 +435,10 @@ function riskPriority(riskLevel?: string): number {
 }
 
 function actionExecutionHint(actionType: string): string {
+    const linkedCliAction = resolveIncidentCliActionByActionType(actionType, true);
+    if (linkedCliAction) {
+        return `${linkedCliAction.detail} CLI: ${linkedCliAction.command}`;
+    }
     if (actionType === 'terminal-bridge') {
         return 'Use this when you have runtime errors, stack traces, or failing logs.';
     }
@@ -520,6 +495,27 @@ function normalizeCommandText(raw: string): string {
     return normalized;
 }
 
+function normalizeBlockerReason(raw: string): string {
+    let text = raw.trim();
+
+    // Expand common abbreviations and rewrite for user clarity
+    text = text.replace(/^Verify-path completion/, 'Verify evidence completion');
+    text = text.replace(/^False-confidence rate/, 'Unrecovered verification failures');
+    text = text.replace(/^Rollback recovery/, 'Rollback success rate');
+    text = text.replace(/^Repeat verified resolution/, 'Resolution pattern reuse');
+
+    // Fix grammar: "is below threshold" -> "is below target"
+    text = text.replace(/is below threshold/g, 'below target');
+    text = text.replace(/is above threshold/g, 'above target');
+
+    // Ensure proper capitalization and punctuation
+    if (text && !text.endsWith('.')) {
+        text = text + '.';
+    }
+
+    return text;
+}
+
 function isThreadNearBottom(element: HTMLDivElement, threshold = 72): boolean {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
     return remaining <= threshold;
@@ -557,6 +553,116 @@ function commandScopeLabel(scope: CommandExecutionScope): string {
     return 'Run in project root';
 }
 
+type BlockerSeverity = 'hard' | 'soft';
+
+function classifyBlockerSeverity(
+    blockerText: string,
+    releaseReadinessBlockers: string[],
+    verifyPackBlockers: string[]
+): BlockerSeverity {
+    // Hard blockers: release-readiness decision NO-GO or verify pack critical blockedReasons
+    const isFromReleaseReadiness = releaseReadinessBlockers.some(
+        (reason) => normalizeBlockerReason(reason) === blockerText
+    );
+    const isFromVerifyPack = verifyPackBlockers.some(
+        (reason) => normalizeBlockerReason(reason) === blockerText
+    );
+
+    if (isFromReleaseReadiness || isFromVerifyPack) {
+        return 'hard';
+    }
+    // Soft blockers: KPI gate failures
+    return 'soft';
+}
+
+/**
+ * Format fallback-mix breakdown for operational runbooks and weekly KPI dashboard.
+ * Calculates non-success share and provides human-readable summary.
+ */
+function formatFallbackMixBreakdown(breakdown?: {
+    success: number;
+    bare_keyword_only: number;
+    fix_preview_fallback: number;
+    orchestrate_default: number;
+    other: number;
+}): {
+    readable: string;
+    table: string;
+    nonSuccessShare: number;
+} {
+    if (!breakdown) {
+        return {
+            readable: 'No fallback data',
+            table: '| Reason | Count | Share |\n| --- | ---: | ---: |\n',
+            nonSuccessShare: 0,
+        };
+    }
+
+    const total = breakdown.success + breakdown.bare_keyword_only + breakdown.fix_preview_fallback + breakdown.orchestrate_default + breakdown.other;
+    const nonSuccess = breakdown.bare_keyword_only + breakdown.fix_preview_fallback + breakdown.orchestrate_default + breakdown.other;
+    const nonSuccessShare = total > 0 ? Math.round((nonSuccess / total) * 100) : 0;
+
+    const tableRows = [
+        `| success (correct route) | ${breakdown.success} | ${total > 0 ? Math.round((breakdown.success / total) * 100) : 0}% |`,
+        `| bare_keyword_only | ${breakdown.bare_keyword_only} | ${total > 0 ? Math.round((breakdown.bare_keyword_only / total) * 100) : 0}% |`,
+        `| fix_preview_fallback | ${breakdown.fix_preview_fallback} | ${total > 0 ? Math.round((breakdown.fix_preview_fallback / total) * 100) : 0}% |`,
+        `| orchestrate_default | ${breakdown.orchestrate_default} | ${total > 0 ? Math.round((breakdown.orchestrate_default / total) * 100) : 0}% |`,
+        `| other | ${breakdown.other} | ${total > 0 ? Math.round((breakdown.other / total) * 100) : 0}% |`,
+    ];
+
+    const readable = `success=${breakdown.success}, bare_keyword_only=${breakdown.bare_keyword_only}, fix_preview_fallback=${breakdown.fix_preview_fallback}, orchestrate_default=${breakdown.orchestrate_default}, other=${breakdown.other} [non-success: ${nonSuccessShare}%]`;
+
+    return {
+        readable,
+        table: `| Reason | Count | Share |\n| --- | ---: | ---: |\n${tableRows.join('\n')}`,
+        nonSuccessShare,
+    };
+}
+
+/**
+ * Format S02 verify-path miss reasons for operational runbooks.
+ * Lists top reasons and calculates dominance metrics.
+ */
+function formatVerifyPathMissReasons(reasons?: Array<{ reason: string; count: number }>): {
+    readable: string;
+    listMarkdown: string;
+    topReason: { reason: string; count: number; share: number } | null;
+} {
+    if (!reasons || reasons.length === 0) {
+        return {
+            readable: 'No verify-path misses',
+            listMarkdown: 'No miss data available.',
+            topReason: null,
+        };
+    }
+
+    const totalMisses = reasons.reduce((sum, r) => sum + r.count, 0);
+    const readable = reasons
+        .map((r) => `${r.reason} (${r.count})`)
+        .join(', ');
+
+    const listMarkdown = reasons
+        .map((r) => {
+            const share = totalMisses > 0 ? Math.round((r.count / totalMisses) * 100) : 0;
+            return `- ${r.reason}: ${r.count} miss${r.count === 1 ? '' : 'es'} (${share}% of misses)`;
+        })
+        .join('\n');
+
+    const topReason = reasons.length > 0
+        ? {
+            reason: reasons[0].reason,
+            count: reasons[0].count,
+            share: totalMisses > 0 ? Math.round((reasons[0].count / totalMisses) * 100) : 0,
+        }
+        : null;
+
+    return {
+        readable,
+        listMarkdown,
+        topReason,
+    };
+}
+
 function buildReplayQueryFromIncidentReproPack(
     reproPack: NonNullable<NormalizedIncidentActionResultPayload['incidentReproPack']>
 ): string {
@@ -565,7 +671,7 @@ function buildReplayQueryFromIncidentReproPack(
         ? replay.verifyChecklist.map((item, index) => `${index + 1}. ${item}`).join('\n')
         : '1. Run deterministic verification checks for this flow.';
     const blockedReasons = replay.blockedReasons.length > 0
-        ? replay.blockedReasons.map((item, index) => `${index + 1}. ${item}`).join('\n')
+        ? replay.blockedReasons.map((item, index) => `${index + 1}. ${normalizeBlockerReason(item)}`).join('\n')
         : '1. No blocked reasons were captured in this pack.';
     const relatedFiles = replay.relatedFiles.length > 0
         ? replay.relatedFiles.join(', ')
@@ -790,6 +896,18 @@ function intentLabelFromQuestion(question: string): { label: string; detail: str
 }
 
 function intentFromBoardAction(action: { id: string; label: string; actionType: string }): Omit<IncidentIntentChip, 'isPrimary'> {
+    const linkedCliAction = resolveIncidentCliActionByActionType(action.actionType, true);
+    if (linkedCliAction) {
+        return {
+            id: action.id,
+            label: linkedCliAction.label,
+            detail: `${linkedCliAction.detail} (${linkedCliAction.command})`,
+            kind: 'board-action',
+            actionType: action.actionType,
+            actionId: action.id,
+        };
+    }
+
     if (action.actionType === 'terminal-bridge') {
         return {
             id: action.id,
@@ -911,6 +1029,8 @@ export function AIIncidentStudio({
     onRunChangeImpact: _onRunChangeImpact,
     onRunMemoryWizard: _onRunMemoryWizard,
     onRunDoctorChecks,
+    onRunDoctorFix,
+    onViewComplianceReport,
     onRunInlineCommand,
     onRevealArchitectureTarget,
     onPredictiveWarningAccepted,
@@ -934,8 +1054,12 @@ export function AIIncidentStudio({
     const [expandedConversationIds, setExpandedConversationIds] = useState<Record<string, boolean>>({});
     const [isMaximized, setIsMaximized] = useState(false);
     const [showAllSidebarIssues, setShowAllSidebarIssues] = useState(false);
+    const [showAllDoctorProjects, setShowAllDoctorProjects] = useState(false);
+    const [moduleGraphFrameworkFilter, setModuleGraphFrameworkFilter] = useState<string>('all');
+    const [moduleGraphSeverityFilter, setModuleGraphSeverityFilter] = useState<'all' | 'healthy' | 'warning' | 'critical'>('all');
+    const [moduleGraphSearch, setModuleGraphSearch] = useState('');
     const [shouldAutoScrollThread, setShouldAutoScrollThread] = useState(true);
-    const [stabilizationSnapshotCopiedFormat, setStabilizationSnapshotCopiedFormat] = useState<'markdown' | 'json' | null>(null);
+    const [stabilizationSnapshotCopiedFormat, setStabilizationSnapshotCopiedFormat] = useState<'markdown' | 'json' | 'dashboard-5-1' | null>(null);
     const [releaseReadinessCopiedFormat, setReleaseReadinessCopiedFormat] = useState<ReleaseReadinessShareFormat | null>(null);
     const [releaseReadinessCopiedArtifactId, setReleaseReadinessCopiedArtifactId] = useState<string | null>(null);
     const [architectureLensViewMode, setArchitectureLensViewMode] = useState<ArchitectureLensViewMode>('tree');
@@ -987,6 +1111,26 @@ export function AIIncidentStudio({
     ]);
 
     const aiUnavailable = isNetworkFailure(lastError);
+    const selectedModelOption =
+        selectedModelId && selectedModelId.trim().length > 0
+            ? availableModels.find((model) => model.id === selectedModelId)
+            : undefined;
+    const selectedModelLabel = selectedModelOption
+        ? `${selectedModelOption.name}${selectedModelOption.vendor ? ` (${selectedModelOption.vendor})` : ''}`
+        : 'Auto';
+    const runtimeModelLabel =
+        typeof modelId === 'string' && modelId.trim().length > 0 ? modelId.trim() : null;
+    const runtimeModelDiffersFromSelection = Boolean(
+        runtimeModelLabel &&
+        selectedModelOption &&
+        runtimeModelLabel !== selectedModelOption.id &&
+        runtimeModelLabel !== selectedModelOption.name
+    );
+    const modelEntitlementLabel = aiUnavailable
+        ? 'Copilot unavailable'
+        : availableModels.length === 0
+            ? 'No model entitlement detected'
+            : `${availableModels.length} entitled model(s) available`;
     const commandSummary = telemetry?.commandSummary ?? null;
     const onboardingSummary = telemetry?.onboardingSummary ?? null;
     const ctaVariantBreakdown = telemetry?.ctaVariantBreakdown ?? null;
@@ -998,6 +1142,77 @@ export function AIIncidentStudio({
     const verifiedOutcomeLoopStatus = telemetry?.verifiedOutcomeLoopStatus ?? null;
     const doctorSummary = telemetry?.doctorSummary ?? null;
     const hasDoctorSnapshot = Boolean(doctorSummary);
+    const doctorProjects = doctorSummary?.projects ?? [];
+    const doctorVisibleProjects = showAllDoctorProjects
+        ? doctorProjects
+        : doctorProjects.slice(0, 4);
+    const hiddenDoctorProjectsCount = Math.max(doctorProjects.length - doctorVisibleProjects.length, 0);
+    const cliActionMatrix = useMemo(
+        () => buildIncidentCliActionMatrix(hasProjectSelected),
+        [hasProjectSelected]
+    );
+    const doctorModuleGraphByFramework = useMemo(() => {
+        const grouped = new Map<
+            string,
+            Array<{
+                name: string;
+                severity: 'healthy' | 'warning' | 'critical';
+                modules: Array<{ slug: string; version: string; display_name: string }>;
+            }>
+        >();
+
+        for (const project of doctorVisibleProjects) {
+            const installedModules = project.installedModules || [];
+            if (installedModules.length === 0) {
+                continue;
+            }
+            const framework = (project.framework || 'unknown framework').trim() || 'unknown framework';
+            const existing = grouped.get(framework) || [];
+            existing.push({
+                name: project.name,
+                severity: doctorProjectSeverity(project),
+                modules: installedModules,
+            });
+            grouped.set(framework, existing);
+        }
+
+        return Array.from(grouped.entries())
+            .map(([framework, projects]) => ({ framework, projects }))
+            .sort((a, b) => a.framework.localeCompare(b.framework));
+    }, [doctorVisibleProjects]);
+    const doctorModuleGraphFrameworkOptions = useMemo(
+        () => doctorModuleGraphByFramework.map((group) => group.framework),
+        [doctorModuleGraphByFramework]
+    );
+    const filteredDoctorModuleGraph = useMemo(() => {
+        const searchNeedle = moduleGraphSearch.trim().toLowerCase();
+        return doctorModuleGraphByFramework
+            .filter((group) => moduleGraphFrameworkFilter === 'all' || group.framework === moduleGraphFrameworkFilter)
+            .map((group) => ({
+                framework: group.framework,
+                projects: group.projects
+                    .filter((project) => moduleGraphSeverityFilter === 'all' || project.severity === moduleGraphSeverityFilter)
+                    .map((project) => ({
+                        ...project,
+                        modules: searchNeedle
+                            ? project.modules.filter((mod) => {
+                                const moduleLabel = `${mod.display_name || ''} ${mod.slug || ''} ${mod.version || ''}`.toLowerCase();
+                                return moduleLabel.includes(searchNeedle);
+                            })
+                            : project.modules,
+                    }))
+                    .filter((project) => project.modules.length > 0),
+            }))
+            .filter((group) => group.projects.length > 0);
+    }, [doctorModuleGraphByFramework, moduleGraphFrameworkFilter, moduleGraphSearch, moduleGraphSeverityFilter]);
+    useEffect(() => {
+        if (
+            moduleGraphFrameworkFilter !== 'all' &&
+            !doctorModuleGraphFrameworkOptions.includes(moduleGraphFrameworkFilter)
+        ) {
+            setModuleGraphFrameworkFilter('all');
+        }
+    }, [doctorModuleGraphFrameworkOptions, moduleGraphFrameworkFilter]);
     // null = no real data yet; shown as 'N/A' rather than fabricated numbers.
     const snapshotHealthPercent = hasDoctorSnapshot ? doctorSummary!.health.percent : null;
     const projectsWithIssuesRatio =
@@ -1044,32 +1259,85 @@ export function AIIncidentStudio({
             return '';
         }
 
+        const fallbackMixData = formatFallbackMixBreakdown(stabilizationFallbackMix);
+        const verifyPathMissData = formatVerifyPathMissReasons(stabilizationVerifyPathReasonTop);
+        const totalRecoveryAttempts = (stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0) +
+            (stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0) +
+            (stabilizationRecoveryClassBreakdown?.unspecified ?? 0);
+
         return [
-            '## Workspai Stabilization KPI Snapshot (S01-S05)',
+            '# Workspai Stabilization KPI Snapshot',
+            '',
+            '## Metadata',
             '',
             `- Generated at: ${new Date().toISOString()}`,
             `- Workspace: ${studioStabilizationKpiStatus.workspacePath}`,
             `- Window: ${studioStabilizationKpiStatus.timeWindow}`,
             `- Window start: ${formatIsoUtc(studioStabilizationKpiStatus.windowStartAt)}`,
             `- Window end: ${formatIsoUtc(studioStabilizationKpiStatus.windowEndAt)}`,
-            `- Overall gate: ${studioStabilizationKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}`,
             '',
-            '| KPI | Current | Target |',
-            '| --- | --- | --- |',
-            `| S01 Route Precision | ${formatPercentValue(stabilizationRoutePrecision)} | >= ${studioStabilizationKpiStatus.thresholds.routePrecisionMin}% |`,
-            `| S02 Verify Path Completion | ${formatPercentValue(stabilizationVerifyPathCompletion)} | >= ${studioStabilizationKpiStatus.thresholds.verifyPathCompletionRateMin}% |`,
-            `| S03 False Confidence | ${formatPercentValue(stabilizationFalseConfidence)} | <= ${studioStabilizationKpiStatus.thresholds.falseConfidenceRateMax}% |`,
-            `| S04 Rollback Recovery Success | ${formatPercentValue(stabilizationRollbackRecovery)} | >= ${studioStabilizationKpiStatus.thresholds.rollbackRecoverySuccessRateMin}% |`,
-            `| S05 Repeat Verified Resolution | ${formatPercentValue(stabilizationRepeatResolution)} | >= ${studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}% |`,
-            `| S05-Cohort Repeat With Artifact | ${formatPercentValue(stabilizationRepeatWithArtifact)} | >= ${studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}% |`,
+            '## KPI Scorecard',
             '',
-            '### Supporting counts',
-            `- Routes: ${studioStabilizationKpiStatus.metrics.routeMatchedWithoutFallback} success / ${studioStabilizationKpiStatus.metrics.routeFallbackCount} fallback`,
-            `- S01 fallback mix: success=${stabilizationFallbackMix?.success ?? 0}, bare_keyword_only=${stabilizationFallbackMix?.bare_keyword_only ?? 0}, fix_preview_fallback=${stabilizationFallbackMix?.fix_preview_fallback ?? 0}, orchestrate_default=${stabilizationFallbackMix?.orchestrate_default ?? 0}, other=${stabilizationFallbackMix?.other ?? 0}`,
-            `- Verify path: ${studioStabilizationKpiStatus.metrics.verifyPathPresent} present / ${studioStabilizationKpiStatus.metrics.verifyRequired} required`,
-            `- S02 verify-path misses (top reasons): ${stabilizationVerifyPathReasonTopText}`,
-            `- S04 recovery class mix: auto_rollback=${stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0}, manual_recovery=${stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0}, unspecified=${stabilizationRecoveryClassBreakdown?.unspecified ?? 0}`,
-            `- Repeat incidents: ${studioStabilizationKpiStatus.metrics.repeatVerifiedResolved} verified / ${studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0} with artifact / ${studioStabilizationKpiStatus.metrics.repeatedIncidentDetected} detected`,
+            `**Overall gate: ${studioStabilizationKpiStatus.gates.overallPass ? '✅ PASS' : '❌ FAIL'}**`,
+            '',
+            '| KPI | Current | Target | Status |',
+            '| --- | --- | --- | --- |',
+            `| Route Precision | ${formatPercentValue(stabilizationRoutePrecision)} | >= ${studioStabilizationKpiStatus.thresholds.routePrecisionMin}% | ${studioStabilizationKpiStatus.gates.routePrecisionPass ? '✅' : '❌'} |`,
+            `| Verify Path Completion | ${formatPercentValue(stabilizationVerifyPathCompletion)} | >= ${studioStabilizationKpiStatus.thresholds.verifyPathCompletionRateMin}% | ${studioStabilizationKpiStatus.gates.verifyPathCompletionRatePass ? '✅' : '❌'} |`,
+            `| False Confidence | ${formatPercentValue(stabilizationFalseConfidence)} | <= ${studioStabilizationKpiStatus.thresholds.falseConfidenceRateMax}% | ${studioStabilizationKpiStatus.gates.falseConfidenceRatePass ? '✅' : '❌'} |`,
+            `| Rollback Recovery | ${formatPercentValue(stabilizationRollbackRecovery)} | >= ${studioStabilizationKpiStatus.thresholds.rollbackRecoverySuccessRateMin}% | ${studioStabilizationKpiStatus.gates.rollbackRecoverySuccessRatePass ? '✅' : '❌'} |`,
+            `| Repeat Verified Resolution | ${formatPercentValue(stabilizationRepeatResolution)} | >= ${studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}% | ${studioStabilizationKpiStatus.gates.repeatVerifiedResolutionRatePass ? '✅' : '❌'} |`,
+            `| Repeat with Artifact (Cohort) | ${formatPercentValue(stabilizationRepeatWithArtifact)} | >= ${studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}% | ${studioStabilizationKpiStatus.gates.repeatVerifiedResolutionRatePass ? '✅' : '❌'} |`,
+            '',
+            '## Route Precision Breakdown',
+            '',
+            `**Non-success share: ${fallbackMixData.nonSuccessShare}%**`,
+            '',
+            fallbackMixData.table,
+            '',
+            '',
+            '## Verify Path Miss Reasons',
+            '',
+            `- Verify-required actions: ${studioStabilizationKpiStatus.metrics.verifyRequired}`,
+            `- Verify-path present: ${studioStabilizationKpiStatus.metrics.verifyPathPresent}`,
+            `- Verify-incomplete warnings: ${Math.max(studioStabilizationKpiStatus.metrics.verifyRequired - studioStabilizationKpiStatus.metrics.verifyPathPresent, 0)}`,
+            `- Verify-path completion rate: ${formatPercentValue(stabilizationVerifyPathCompletion)}`,
+            '',
+            verifyPathMissData.listMarkdown || 'No miss data available.',
+            '',
+            verifyPathMissData.topReason
+                ? `**Top miss reason: ${verifyPathMissData.topReason.reason} (${verifyPathMissData.topReason.share}% of misses)**`
+                : '**No miss patterns detected.**',
+            '',
+            '',
+            '## Recovery Class Breakdown',
+            '',
+            `- Verify failures: ${studioStabilizationKpiStatus.metrics.verifyFailed}`,
+            `- False confidence rate: ${formatPercentValue(stabilizationFalseConfidence)}`,
+            `- Rollback attempts: ${studioStabilizationKpiStatus.metrics.rollbackAttempted}`,
+            `- Rollback recovery success rate: ${formatPercentValue(stabilizationRollbackRecovery)}`,
+            '',
+            `Total recovery attempts: ${totalRecoveryAttempts}`,
+            '',
+            '| Recovery Class | Count | Share |',
+            '| --- | ---: | ---: |',
+            `| auto_rollback (high confidence) | ${stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0} | ${totalRecoveryAttempts > 0 ? Math.round(((stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0) / totalRecoveryAttempts) * 100) : 0}% |`,
+            `| manual_recovery (assisted) | ${stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0} | ${totalRecoveryAttempts > 0 ? Math.round(((stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0) / totalRecoveryAttempts) * 100) : 0}% |`,
+            `| unspecified (unknown) | ${stabilizationRecoveryClassBreakdown?.unspecified ?? 0} | ${totalRecoveryAttempts > 0 ? Math.round(((stabilizationRecoveryClassBreakdown?.unspecified ?? 0) / totalRecoveryAttempts) * 100) : 0}% |`,
+            '',
+            '',
+            '## Repeat Resolution & Artifact Readiness',
+            '',
+            `- Repeated incidents detected: ${studioStabilizationKpiStatus.metrics.repeatedIncidentDetected}`,
+            `- Repeat incidents verified-resolved: ${studioStabilizationKpiStatus.metrics.repeatVerifiedResolved}`,
+            `- Repeat incidents with artifact ready: ${studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0}`,
+            `- S05 resolution rate: ${formatPercentValue(stabilizationRepeatResolution)}`,
+            `- S05-Cohort artifact rate: ${formatPercentValue(stabilizationRepeatWithArtifact)}`,
+            '',
+            '---',
+            '',
+            '> **For weekly runbook:** Use fallback-mix non-success share and top verify-path miss reason to guide remediation priorities.',
+            '> **For release gate:** Both 7-day and 30-day snapshots must show all KPIs passing before enterprise claim.',
         ].join('\n');
     }, [
         studioStabilizationKpiStatus,
@@ -1081,26 +1349,105 @@ export function AIIncidentStudio({
         stabilizationRepeatWithArtifact,
         stabilizationFallbackMix,
         stabilizationRecoveryClassBreakdown,
-        stabilizationVerifyPathReasonTopText,
+        stabilizationVerifyPathReasonTop,
     ]);
     const stabilizationSnapshotJson = useMemo(() => {
         if (!studioStabilizationKpiStatus) {
             return '';
         }
 
+        const fallbackMixData = formatFallbackMixBreakdown(stabilizationFallbackMix);
+        const verifyPathMissData = formatVerifyPathMissReasons(stabilizationVerifyPathReasonTop);
+        const totalRecoveryAttempts = (stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0) +
+            (stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0) +
+            (stabilizationRecoveryClassBreakdown?.unspecified ?? 0);
+
         return JSON.stringify(
             {
+                version: '1.0',
                 generatedAt: new Date().toISOString(),
+                purpose: 'Enterprise Stabilization Gate evidence snapshot for weekly KPI dashboard and release decisions',
                 workspacePath: studioStabilizationKpiStatus.workspacePath,
-                timeWindow: studioStabilizationKpiStatus.timeWindow,
+                window: {
+                    timeWindow: studioStabilizationKpiStatus.timeWindow,
+                    windowStartAt: studioStabilizationKpiStatus.windowStartAt,
+                    windowEndAt: studioStabilizationKpiStatus.windowEndAt,
+                },
+                kpiScorecard: {
+                    overallPass: studioStabilizationKpiStatus.gates.overallPass,
+                    gates: studioStabilizationKpiStatus.gates,
+                },
                 thresholds: studioStabilizationKpiStatus.thresholds,
                 metrics: studioStabilizationKpiStatus.metrics,
-                gates: studioStabilizationKpiStatus.gates,
+                operationalMetrics: {
+                    routePrecisionFallbackMix: {
+                        breakdown: stabilizationFallbackMix,
+                        nonSuccessShare: fallbackMixData.nonSuccessShare,
+                        interpretation: fallbackMixData.nonSuccessShare > 20
+                            ? '⚠️ Non-success share exceeds 20% threshold; requires remediation'
+                            : '✅ Non-success share within target',
+                    },
+                    verifyPathMisses: {
+                        topReasons: stabilizationVerifyPathReasonTop,
+                        topReason: verifyPathMissData.topReason,
+                        interpretation: verifyPathMissData.topReason && verifyPathMissData.topReason.share > 30
+                            ? '⚠️ Top miss reason exceeds 30% of misses; requires wording/checklist improvement'
+                            : '✅ Miss pattern distribution reasonable',
+                    },
+                    recoveryClassMix: {
+                        breakdown: stabilizationRecoveryClassBreakdown,
+                        totalAttempts: totalRecoveryAttempts,
+                        autoRollbackShare: totalRecoveryAttempts > 0
+                            ? Math.round(((stabilizationRecoveryClassBreakdown?.auto_rollback ?? 0) / totalRecoveryAttempts) * 100)
+                            : 0,
+                        interpretation: (stabilizationRecoveryClassBreakdown?.manual_recovery ?? 0) > (totalRecoveryAttempts * 0.3)
+                            ? '⚠️ Manual recovery exceeds 30% of attempts; automation UX needs review'
+                            : '✅ Auto-rollback dominates recovery mix',
+                    },
+                    repeatResolutionCohort: {
+                        repeatedIncidentsDetected: studioStabilizationKpiStatus.metrics.repeatedIncidentDetected,
+                        repeatVerifiedResolved: studioStabilizationKpiStatus.metrics.repeatVerifiedResolved,
+                        repeatWithArtifactReady: studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0,
+                        cohortGapPercent: studioStabilizationKpiStatus.metrics.repeatedIncidentDetected > 0
+                            ? Math.round(((studioStabilizationKpiStatus.metrics.repeatedIncidentDetected - (studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0)) / studioStabilizationKpiStatus.metrics.repeatedIncidentDetected) * 100)
+                            : 0,
+                        interpretation: (studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0) < (studioStabilizationKpiStatus.metrics.repeatedIncidentDetected * 0.7)
+                            ? '⚠️ Artifact cohort gap >30%; debug replay capture'
+                            : '✅ Most repeats have artifact backing',
+                    },
+                },
+                releaseGateDecision: {
+                    canClaim: studioStabilizationKpiStatus.gates.overallPass &&
+                        fallbackMixData.nonSuccessShare <= 20 &&
+                        (!verifyPathMissData.topReason || verifyPathMissData.topReason.share <= 30),
+                    blockers: [
+                        !studioStabilizationKpiStatus.gates.overallPass ? 'KPI gates do not all pass' : null,
+                        fallbackMixData.nonSuccessShare > 20 ? `Fallback non-success share (${fallbackMixData.nonSuccessShare}%) exceeds 20%` : null,
+                        verifyPathMissData.topReason && verifyPathMissData.topReason.share > 30
+                            ? `Top verify-path miss (${verifyPathMissData.topReason.reason}: ${verifyPathMissData.topReason.share}%) exceeds 30%`
+                            : null,
+                    ].filter((b): b is string => b !== null),
+                },
             },
             null,
             2
         );
-    }, [studioStabilizationKpiStatus]);
+    }, [studioStabilizationKpiStatus, stabilizationFallbackMix, stabilizationVerifyPathReasonTop, stabilizationRecoveryClassBreakdown]);
+    const stabilizationDashboardSection51Markdown = useMemo(() => {
+        if (stabilizationSnapshotJson) {
+            return buildDashboardSection51FromSnapshotJson(
+                stabilizationSnapshotJson,
+                stabilizationWindowLabel
+            );
+        }
+        if (!stabilizationSnapshotMarkdown) {
+            return '';
+        }
+        return buildDashboardSection51FromSnapshotMarkdown(
+            stabilizationSnapshotMarkdown,
+            stabilizationWindowLabel
+        );
+    }, [stabilizationSnapshotJson, stabilizationSnapshotMarkdown, stabilizationWindowLabel]);
     const releaseDecisionAccuracy = releaseReadinessValidationKpiStatus?.metrics.releaseReadinessDecisionAccuracy ?? null;
     const noGoPreventedIncidentRate = releaseReadinessValidationKpiStatus?.metrics.noGoPreventedIncidentRate ?? null;
     const releaseDecisionAccuracyMeter = Math.max(0, Math.min(100, releaseDecisionAccuracy ?? 0));
@@ -1178,14 +1525,30 @@ export function AIIncidentStudio({
 
     const sortedBoardActions = useMemo(() => {
         const rawActions = chatBrainBoard?.actions || [];
-        return [...rawActions].sort((a, b) => {
+        const idCounts = new Map<string, number>();
+        const normalizedActions = rawActions.map((action) => {
+            const matrixActionId = resolveIncidentCliActionIdByActionType(action.actionType, hasProjectSelected);
+            const linkedCliAction = resolveIncidentCliActionByActionType(action.actionType, hasProjectSelected);
+            const baseId = matrixActionId ? `matrix:${matrixActionId}` : action.id;
+            const duplicateCount = idCounts.get(baseId) ?? 0;
+            idCounts.set(baseId, duplicateCount + 1);
+            const stableId = duplicateCount > 0 ? `${baseId}:${duplicateCount + 1}` : baseId;
+
+            return {
+                ...action,
+                id: stableId,
+                label: linkedCliAction?.label || action.label,
+            };
+        });
+
+        return [...normalizedActions].sort((a, b) => {
             const byRisk = riskPriority(a.riskLevel) - riskPriority(b.riskLevel);
             if (byRisk !== 0) {
                 return byRisk;
             }
             return a.label.localeCompare(b.label);
         });
-    }, [chatBrainBoard?.actions]);
+    }, [chatBrainBoard?.actions, hasProjectSelected]);
     const primaryBoardAction = sortedBoardActions[0];
     const rawSecondaryBoardActions = sortedBoardActions.slice(1);
     const advancedBoardActionLabels = sortedBoardActions
@@ -1468,24 +1831,92 @@ export function AIIncidentStudio({
         ? 'chatBrainBoard.actions (risk-priority sort)'
         : 'fallback: no-action-board';
 
-    const litePrimaryActionSource = primaryBoardAction
+    const litePrimaryActionSourceDefault = primaryBoardAction
         ? 'chatBrainBoard.actions[0]'
         : 'fallback: guided-next-query';
     const litePrimaryActionLabel = primaryBoardAction?.label || 'Ask AI for the single safest next step';
 
+    const releaseReadinessBlockers =
+        chatBrainActionResult?.releaseReadinessCommander?.decision === 'no-go'
+            ? chatBrainActionResult.releaseReadinessCommander.blockingReasons
+            : [];
+    const verifyPackBlockers = chatBrainActionResult?.verifyCommandPack?.blockedReasons ?? [];
+    const stabilizationBlockers: string[] = [];
+    if (studioStabilizationKpiStatus?.gates.verifyPathCompletionRatePass === false) {
+        stabilizationBlockers.push('Verify-path completion is below threshold');
+    }
+    if (studioStabilizationKpiStatus?.gates.falseConfidenceRatePass === false) {
+        stabilizationBlockers.push('False-confidence rate is above threshold');
+    }
+    if (studioStabilizationKpiStatus?.gates.rollbackRecoverySuccessRatePass === false) {
+        stabilizationBlockers.push('Rollback recovery is below threshold');
+    }
+    if (studioStabilizationKpiStatus?.gates.repeatVerifiedResolutionRatePass === false) {
+        stabilizationBlockers.push('Repeat verified resolution is below threshold');
+    }
+
+    const liteHardBlockReasons = Array.from(
+        new Set(
+            [...releaseReadinessBlockers, ...verifyPackBlockers, ...stabilizationBlockers]
+                .map((reason) => reason.trim())
+                .filter((reason) => reason.length > 0)
+                .map((reason) => normalizeBlockerReason(reason))
+        )
+    );
+    const liteBlockerSeverityMap = new Map<string, BlockerSeverity>();
+    liteHardBlockReasons.forEach((blocker) => {
+        liteBlockerSeverityMap.set(
+            blocker,
+            classifyBlockerSeverity(blocker, releaseReadinessBlockers, verifyPackBlockers)
+        );
+    });
+    const liteReleaseNoGo =
+        chatBrainActionResult?.releaseReadinessCommander?.decision === 'no-go' ||
+        liteHardBlockReasons.length > 0;
+    const liteStatusLabel = liteReleaseNoGo ? 'NO-GO' : 'READY';
+    const liteStatusSummary = liteReleaseNoGo
+        ? `Blocked by ${liteHardBlockReasons.length} signal${liteHardBlockReasons.length === 1 ? '' : 's'}`
+        : 'No hard blockers detected in current evidence';
+    const liteTopBlocker = liteHardBlockReasons[0] ?? null;
+    const blockerAwarePrimaryActionLabel = liteTopBlocker
+        ? `Resolve blocker: ${liteTopBlocker}`
+        : litePrimaryActionLabel;
+    const litePrimaryActionSource = liteTopBlocker
+        ? 'derived:blocker-priority'
+        : litePrimaryActionSourceDefault;
+
     const fallbackVerifyCommand = hasProjectSelected
         ? 'rapidkit doctor project'
         : 'rapidkit doctor workspace';
-    const liteVerifyCommand = latestStructuredResponse?.verifyCommand
-        ? normalizeCommandText(latestStructuredResponse.verifyCommand)
-        : fallbackVerifyCommand;
+    const requiredVerifyCommands = (chatBrainActionResult?.verifyCommandPack?.commands ?? []).filter(
+        (entry) => entry.required
+    );
+    const liteVerifyCommand = liteReleaseNoGo && requiredVerifyCommands.length > 0
+        ? normalizeCommandText(requiredVerifyCommands[0].command)
+        : latestStructuredResponse?.verifyCommand
+            ? normalizeCommandText(latestStructuredResponse.verifyCommand)
+            : fallbackVerifyCommand;
     const liteVerifySource = latestStructuredResponse?.verifyCommand
         ? 'latestStructuredResponse.verifyCommand'
-        : hasProjectSelected
-            ? 'default: rapidkit doctor project'
-            : 'default: rapidkit doctor workspace';
+        : liteReleaseNoGo && requiredVerifyCommands.length > 0
+            ? 'verifyCommandPack.commands[required=true][0]'
+            : hasProjectSelected
+                ? 'default: rapidkit doctor project'
+                : 'default: rapidkit doctor workspace';
 
     const runLitePrimaryAction = () => {
+        if (liteTopBlocker) {
+            if (requiredVerifyCommands.length > 0) {
+                runCommand(liteVerifyCommand);
+                return;
+            }
+
+            const blockerQuery = `Inspect this blocker and propose one deterministic remediation command: ${liteTopBlocker}`;
+            setLastUserQuery(blockerQuery);
+            onChatBrainQuery?.(blockerQuery);
+            return;
+        }
+
         if (primaryBoardAction) {
             onChatBrainExecuteAction?.(primaryBoardAction.actionType, primaryBoardAction.id);
             return;
@@ -1708,7 +2139,7 @@ export function AIIncidentStudio({
     };
 
     const copyStabilizationSnapshot = async (
-        format: 'markdown' | 'json',
+        format: 'markdown' | 'json' | 'dashboard-5-1',
         text: string
     ) => {
         if (!text) {
@@ -2024,7 +2455,6 @@ export function AIIncidentStudio({
                             <span className={`incident-studio-badge ${aiUnavailable ? 'is-risk' : 'is-ok'}`}>
                                 {aiUnavailable ? 'Needs fallback' : isAnalyzing ? 'Analyzing now' : 'Ready'}
                             </span>
-                            {modelId ? <span className="incident-studio-model">{modelId}</span> : null}
                         </div>
                     </div>
 
@@ -2066,22 +2496,24 @@ export function AIIncidentStudio({
                             {/* Maximize / Restore toggle */}
                             <button
                                 type="button"
-                                className="incident-mode-chip"
+                                className="incident-mode-chip incident-view-chip incident-view-chip--maximize"
                                 onClick={() => setIsMaximized((v) => !v)}
                                 aria-label={isMaximized ? 'Restore Studio to normal size' : 'Maximize Studio to full view'}
                                 title={isMaximized ? 'Restore normal size' : 'Maximize — full view'}
                             >
-                                {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                                {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                                <span className="incident-view-chip__label">{isMaximized ? 'Restore' : 'Maximize'}</span>
                             </button>
                             {/* Lite ↔ Full toggle — always visible so features are never hidden by default */}
                             <button
                                 type="button"
-                                className={`incident-mode-chip${isFullDisplay ? ' is-active' : ''}`}
+                                className={`incident-mode-chip incident-view-chip incident-view-chip--display${isFullDisplay ? ' is-active' : ''}`}
                                 onClick={() => onStudioDisplayModeChange?.(isLiteDisplay ? 'full' : 'lite')}
                                 aria-label={isLiteDisplay ? 'Switch to full Studio view' : 'Switch to compact Lite view'}
                                 title={isLiteDisplay ? 'Switch to full Studio view' : 'Switch to compact Lite view'}
                             >
-                                {isLiteDisplay ? '▢ Full' : '⊠ Lite'}
+                                <span className="incident-view-chip__icon" aria-hidden="true">{isLiteDisplay ? '▢' : '⊠'}</span>
+                                <span className="incident-view-chip__label">{isLiteDisplay ? 'Full' : 'Lite'}</span>
                             </button>
                         </div>
                     </div>
@@ -2124,7 +2556,16 @@ export function AIIncidentStudio({
                                     </option>
                                 ))}
                             </select>
-                            <span className="incident-header-meta">Updated: {refreshLabel || 'not yet'}</span>
+                            <span className="incident-header-meta">
+                                Selected: {selectedModelLabel}
+                                {runtimeModelLabel
+                                    ? runtimeModelDiffersFromSelection
+                                        ? ` | Current run: ${runtimeModelLabel}`
+                                        : ''
+                                    : ''}
+                            </span>
+                            <span className="incident-header-meta">Entitlement: {modelEntitlementLabel}</span>
+                            <span className="incident-header-meta">Models synced: {refreshLabel || 'not yet'}</span>
                         </div>
                     </div>
                 </div>
@@ -2920,14 +3361,14 @@ export function AIIncidentStudio({
                                     {studioStabilizationKpiStatus ? (
                                         <details className="incident-collapse incident-collapse--snapshot incident-health-section">
                                             <summary>
-                                                <span>Stabilization KPI gate (S01-S05)</span>
+                                                <span>Stabilization KPI gate</span>
                                                 <small>{studioStabilizationKpiStatus.gates.overallPass ? 'PASS' : 'FAIL'}</small>
                                             </summary>
                                             <div className="incident-cta-variant-legend">
                                                 operational window: {stabilizationWindowLabel}
                                             </div>
                                             <div className="incident-metric-card">
-                                                <span>S01 Route precision</span>
+                                                <span>Route precision</span>
                                                 <strong>
                                                     {stabilizationRoutePrecision === null ? 'N/A' : `${stabilizationRoutePrecision}%`} / min{' '}
                                                     {studioStabilizationKpiStatus.thresholds.routePrecisionMin}%
@@ -2937,7 +3378,7 @@ export function AIIncidentStudio({
                                                 </div>
                                             </div>
                                             <div className="incident-metric-card">
-                                                <span>S02 Verify path completion</span>
+                                                <span>Verify path completion</span>
                                                 <strong>
                                                     {stabilizationVerifyPathCompletion === null ? 'N/A' : `${stabilizationVerifyPathCompletion}%`} / min{' '}
                                                     {studioStabilizationKpiStatus.thresholds.verifyPathCompletionRateMin}%
@@ -2947,7 +3388,7 @@ export function AIIncidentStudio({
                                                 </div>
                                             </div>
                                             <div className="incident-metric-card">
-                                                <span>S03 False confidence</span>
+                                                <span>False confidence</span>
                                                 <strong>
                                                     {stabilizationFalseConfidence === null ? 'N/A' : `${stabilizationFalseConfidence}%`} / max{' '}
                                                     {studioStabilizationKpiStatus.thresholds.falseConfidenceRateMax}%
@@ -2957,7 +3398,7 @@ export function AIIncidentStudio({
                                                 </div>
                                             </div>
                                             <div className="incident-metric-card">
-                                                <span>S04 Rollback recovery success</span>
+                                                <span>Rollback recovery success</span>
                                                 <strong>
                                                     {stabilizationRollbackRecovery === null ? 'N/A' : `${stabilizationRollbackRecovery}%`} / min{' '}
                                                     {studioStabilizationKpiStatus.thresholds.rollbackRecoverySuccessRateMin}%
@@ -2967,7 +3408,7 @@ export function AIIncidentStudio({
                                                 </div>
                                             </div>
                                             <div className="incident-metric-card">
-                                                <span>S05 Repeat verified resolution</span>
+                                                <span>Repeat verified resolution</span>
                                                 <strong>
                                                     {stabilizationRepeatResolution === null ? 'N/A' : `${stabilizationRepeatResolution}%`} / min{' '}
                                                     {studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}%
@@ -2977,7 +3418,7 @@ export function AIIncidentStudio({
                                                 </div>
                                             </div>
                                             <div className="incident-metric-card">
-                                                <span>S05-Cohort Repeat with artifact</span>
+                                                <span>Repeat resolution with artifact</span>
                                                 <strong>
                                                     {stabilizationRepeatWithArtifact === null ? 'N/A' : `${stabilizationRepeatWithArtifact}%`} / min{' '}
                                                     {studioStabilizationKpiStatus.thresholds.repeatVerifiedResolutionRateMin}%
@@ -3026,7 +3467,8 @@ export function AIIncidentStudio({
                                                 <div>
                                                     <RotateCw size={12} />
                                                     <span>
-                                                        repeated incidents: {studioStabilizationKpiStatus.metrics.repeatVerifiedResolved} resolved /{' '}
+                                                        repeated incidents: {studioStabilizationKpiStatus.metrics.repeatVerifiedResolved} verified /{' '}
+                                                        {studioStabilizationKpiStatus.metrics.repeatVerifiedWithArtifactReady ?? 0} with artifact /{' '}
                                                         {studioStabilizationKpiStatus.metrics.repeatedIncidentDetected} detected
                                                     </span>
                                                 </div>
@@ -3045,6 +3487,15 @@ export function AIIncidentStudio({
                                                     onClick={() => copyStabilizationSnapshot('json', stabilizationSnapshotJson)}
                                                 >
                                                     {stabilizationSnapshotCopiedFormat === 'json' ? 'Copied JSON' : 'Copy as JSON'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="incident-btn secondary"
+                                                    onClick={() => copyStabilizationSnapshot('dashboard-5-1', stabilizationDashboardSection51Markdown)}
+                                                >
+                                                    {stabilizationSnapshotCopiedFormat === 'dashboard-5-1'
+                                                        ? 'Copied Section 5.1'
+                                                        : 'Copy for Dashboard Section 5.1'}
                                                 </button>
                                             </div>
                                         </details>
@@ -3264,7 +3715,7 @@ export function AIIncidentStudio({
                                                 ) : null}
                                                 {doctorSummary!.projects.length > 0 ? (
                                                     <div className="incident-doctor-projects">
-                                                        {doctorSummary!.projects.slice(0, 4).map((project) => (
+                                                        {doctorVisibleProjects.map((project) => (
                                                             <div
                                                                 key={project.name}
                                                                 className={`incident-doctor-project-item incident-doctor-project-item--${doctorProjectSeverity(project)}`}
@@ -3272,9 +3723,110 @@ export function AIIncidentStudio({
                                                                 <strong>{project.name}</strong>
                                                                 <span>
                                                                     {project.framework || 'unknown framework'} · {project.issues} issue(s)
+                                                                    {typeof project.modulesCount === 'number' ? ` · ${project.modulesCount} module(s)` : ''}
+                                                                    {typeof project.modulesHealthy === 'boolean'
+                                                                        ? ` · modules ${project.modulesHealthy ? 'healthy' : 'needs attention'}`
+                                                                        : ''}
+                                                                    {typeof project.vulnerabilities === 'number' && project.vulnerabilities > 0
+                                                                        ? ` · ${project.vulnerabilities} vuln(s)`
+                                                                        : ''}
                                                                 </span>
                                                             </div>
                                                         ))}
+                                                        {doctorModuleGraphByFramework.length > 0 ? (
+                                                            <div className="incident-doctor-fixes">
+                                                                <div className="incident-doctor-fixes-head">Installed modules graph</div>
+                                                                <div className="incident-action-row" style={{ flexWrap: 'wrap', gap: '8px' }}>
+                                                                    <select
+                                                                        value={moduleGraphFrameworkFilter}
+                                                                        onChange={(event) => setModuleGraphFrameworkFilter(event.target.value)}
+                                                                        aria-label="Filter module graph by framework"
+                                                                    >
+                                                                        <option value="all">All frameworks</option>
+                                                                        {doctorModuleGraphFrameworkOptions.map((framework) => (
+                                                                            <option key={framework} value={framework}>{framework}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <select
+                                                                        value={moduleGraphSeverityFilter}
+                                                                        onChange={(event) =>
+                                                                            setModuleGraphSeverityFilter(
+                                                                                event.target.value as 'all' | 'healthy' | 'warning' | 'critical'
+                                                                            )
+                                                                        }
+                                                                        aria-label="Filter module graph by severity"
+                                                                    >
+                                                                        <option value="all">All severities</option>
+                                                                        <option value="healthy">Healthy</option>
+                                                                        <option value="warning">Warning</option>
+                                                                        <option value="critical">Critical</option>
+                                                                    </select>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={moduleGraphSearch}
+                                                                        onChange={(event) => setModuleGraphSearch(event.target.value)}
+                                                                        placeholder="Search module"
+                                                                        aria-label="Search module graph"
+                                                                    />
+                                                                </div>
+                                                                {filteredDoctorModuleGraph.length === 0 ? (
+                                                                    <small>No modules match current filters.</small>
+                                                                ) : null}
+                                                                {filteredDoctorModuleGraph.map((frameworkGroup) => (
+                                                                    <div key={frameworkGroup.framework} className="incident-doctor-fix-item">
+                                                                        <div>
+                                                                            <strong>{frameworkGroup.framework}</strong>
+                                                                            <small style={{ display: 'block' }}>
+                                                                                {frameworkGroup.projects.length} project(s)
+                                                                            </small>
+                                                                        </div>
+                                                                        <div>
+                                                                            {frameworkGroup.projects.map((project) => (
+                                                                                <div key={`${frameworkGroup.framework}-${project.name}`} style={{ marginTop: '6px' }}>
+                                                                                    <small>
+                                                                                        {project.severity === 'critical'
+                                                                                            ? 'CRITICAL'
+                                                                                            : project.severity === 'warning'
+                                                                                                ? 'WARNING'
+                                                                                                : 'HEALTHY'}{' '}
+                                                                                        {project.name}
+                                                                                    </small>
+                                                                                    {project.modules.slice(0, 10).map((mod) => (
+                                                                                        <code
+                                                                                            key={`${project.name}-${mod.slug}-${mod.version}`}
+                                                                                            style={{ display: 'block', marginTop: '4px' }}
+                                                                                        >
+                                                                                            |- {mod.display_name || mod.slug} ({mod.version || 'unknown'})
+                                                                                        </code>
+                                                                                    ))}
+                                                                                    {project.modules.length > 10 ? (
+                                                                                        <small>+{project.modules.length - 10} more module(s)</small>
+                                                                                    ) : null}
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : null}
+                                                        {hiddenDoctorProjectsCount > 0 ? (
+                                                            <button
+                                                                type="button"
+                                                                className="incident-btn"
+                                                                onClick={() => setShowAllDoctorProjects(true)}
+                                                            >
+                                                                Show {hiddenDoctorProjectsCount} more project(s)
+                                                            </button>
+                                                        ) : null}
+                                                        {showAllDoctorProjects && doctorProjects.length > 4 ? (
+                                                            <button
+                                                                type="button"
+                                                                className="incident-btn"
+                                                                onClick={() => setShowAllDoctorProjects(false)}
+                                                            >
+                                                                Show less
+                                                            </button>
+                                                        ) : null}
                                                     </div>
                                                 ) : null}
                                                 {doctorSummary!.fixCommands.length > 0 ? (
@@ -3311,6 +3863,100 @@ export function AIIncidentStudio({
                                                         })}
                                                     </div>
                                                 ) : null}
+                                                <div className="incident-action-row">
+                                                    <button type="button" className="incident-btn" onClick={onRunDoctorChecks}>
+                                                        Run workspace checks
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn"
+                                                        onClick={() => onRunDoctorFix?.()}
+                                                        disabled={!onRunDoctorFix}
+                                                    >
+                                                        Apply doctor safe fixes
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="incident-btn"
+                                                        onClick={() => onViewComplianceReport?.()}
+                                                        disabled={!onViewComplianceReport}
+                                                    >
+                                                        View compliance report
+                                                    </button>
+                                                </div>
+                                                <div className="incident-doctor-fixes">
+                                                    <div className="incident-doctor-fixes-head">CLI action matrix (data-driven)</div>
+                                                    {cliActionMatrix.workspace.map((entry) => {
+                                                        const normalized = normalizeCommandText(entry.command);
+                                                        const isExecuting = !!(
+                                                            executingCommand && normalizeCommandText(executingCommand) === normalized
+                                                        );
+                                                        return (
+                                                            <div key={entry.id} className="incident-doctor-fix-item">
+                                                                <div>
+                                                                    <strong>{entry.label}</strong>
+                                                                    <small style={{ display: 'block' }}>{entry.detail}</small>
+                                                                    <code>{normalized}</code>
+                                                                </div>
+                                                                <div className="incident-command-actions">
+                                                                    <button
+                                                                        type="button"
+                                                                        className="incident-btn"
+                                                                        onClick={() => copyCommand(normalized)}
+                                                                        disabled={isExecuting}
+                                                                    >
+                                                                        {lastCopiedCommand === normalized ? 'Copied' : 'Copy'}
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="incident-btn primary"
+                                                                        onClick={() => runCommand(normalized)}
+                                                                        disabled={isExecuting}
+                                                                    >
+                                                                        {isExecuting ? 'Running' : 'Run'}
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {cliActionMatrix.project.length > 0 ? (
+                                                        cliActionMatrix.project.map((entry) => {
+                                                            const normalized = normalizeCommandText(entry.command);
+                                                            const isExecuting = !!(
+                                                                executingCommand && normalizeCommandText(executingCommand) === normalized
+                                                            );
+                                                            return (
+                                                                <div key={entry.id} className="incident-doctor-fix-item">
+                                                                    <div>
+                                                                        <strong>{entry.label}</strong>
+                                                                        <small style={{ display: 'block' }}>{entry.detail}</small>
+                                                                        <code>{normalized}</code>
+                                                                    </div>
+                                                                    <div className="incident-command-actions">
+                                                                        <button
+                                                                            type="button"
+                                                                            className="incident-btn"
+                                                                            onClick={() => copyCommand(normalized)}
+                                                                            disabled={isExecuting}
+                                                                        >
+                                                                            {lastCopiedCommand === normalized ? 'Copied' : 'Copy'}
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="incident-btn primary"
+                                                                            onClick={() => runCommand(normalized)}
+                                                                            disabled={isExecuting}
+                                                                        >
+                                                                            {isExecuting ? 'Running' : 'Run'}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })
+                                                    ) : (
+                                                        <small>Select a project to unlock project-level CLI actions.</small>
+                                                    )}
+                                                </div>
                                             </div>
                                         </details>
                                     ) : null}
@@ -4219,6 +4865,13 @@ export function AIIncidentStudio({
                             <p><strong>Workspace:</strong> {workspaceName || 'Unknown workspace'}</p>
                             <p><strong>Framework:</strong> {frameworkLabel}</p>
                             <p><strong>Starting point:</strong> {startingPoint || 'Not detected yet'}</p>
+                            <p>
+                                <strong>Release status:</strong>{' '}
+                                <span className={`incident-lite-status ${liteReleaseNoGo ? 'is-failed' : 'is-passed'}`}>
+                                    {liteStatusLabel}
+                                </span>
+                            </p>
+                            <p>{liteStatusSummary}</p>
                         </div>
                         {!startingPoint ? (
                             <button type="button" className="incident-btn" onClick={onRunDoctorChecks}>
@@ -4235,6 +4888,22 @@ export function AIIncidentStudio({
                             <small className="incident-lite-kicker">Card 2</small>
                             <h4>What matters now</h4>
                         </div>
+                        {liteHardBlockReasons.length > 0 ? (
+                            <ol className="incident-lite-list incident-lite-list--blocked">
+                                {liteHardBlockReasons.slice(0, 3).map((reason, index) => {
+                                    const severity = liteBlockerSeverityMap.get(reason) ?? 'soft';
+                                    return (
+                                        <li key={`blocked-${index}`}>
+                                            <span className={`incident-blocker-severity ${severity}`}>
+                                                {severity}
+                                            </span>
+                                            <strong>Blocker {index + 1}</strong>
+                                            <span>{reason}</span>
+                                        </li>
+                                    );
+                                })}
+                            </ol>
+                        ) : null}
                         {liteRiskItems.length > 0 ? (
                             <ol className="incident-lite-list">
                                 {liteRiskItems.map((item, index) => (
@@ -4260,10 +4929,14 @@ export function AIIncidentStudio({
                             <small className="incident-lite-kicker">Card 3</small>
                             <h4>Do this next</h4>
                         </div>
-                        <p className="incident-lite-single-action">{litePrimaryActionLabel}</p>
+                        <p className="incident-lite-single-action">{blockerAwarePrimaryActionLabel}</p>
                         {primaryBoardGuardHint ? <small className="incident-lite-guard">{primaryBoardGuardHint}</small> : null}
                         <button type="button" className="incident-btn primary" onClick={runLitePrimaryAction}>
-                            {primaryBoardAction ? 'Run this next action' : 'Ask AI for next action'}
+                            {liteTopBlocker
+                                ? 'Resolve top blocker'
+                                : primaryBoardAction
+                                    ? 'Run this next action'
+                                    : 'Ask AI for next action'}
                         </button>
                         <small className="incident-lite-source">Source: {litePrimaryActionSource}</small>
                     </article>
@@ -4279,7 +4952,7 @@ export function AIIncidentStudio({
                             className="incident-btn primary"
                             onClick={() => runCommand(liteVerifyCommand)}
                         >
-                            Run verify command
+                            {liteReleaseNoGo ? 'Run blocker check' : 'Run verify command'}
                         </button>
                         <small className="incident-lite-source">Source: {liteVerifySource}</small>
                     </article>

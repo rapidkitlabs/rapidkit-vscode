@@ -16,12 +16,37 @@ async function selectModelByPreference(pref: string): Promise<{
   model: vscode.LanguageModelChat;
   modelId: string;
 }> {
+  const normalizeModelKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
   if (
     modelSelectionCache &&
     modelSelectionCache.preference === pref &&
     Date.now() - modelSelectionCache.cachedAt < MODEL_SELECTION_TTL_MS
   ) {
-    return modelSelectionCache.result;
+    const cachedModel = modelSelectionCache.result.model;
+    const cachedId = normalizeModelKey(cachedModel.id);
+    const cachedName = normalizeModelKey(cachedModel.name ?? '');
+    const liveModels = await vscode.lm.selectChatModels();
+    const stillAvailable = liveModels.find((model) => {
+      const modelId = normalizeModelKey(model.id);
+      const modelName = normalizeModelKey(model.name ?? '');
+      return modelId === cachedId || modelName === cachedName;
+    });
+
+    if (stillAvailable) {
+      const result = {
+        model: stillAvailable,
+        modelId: stillAvailable.name ?? stillAvailable.id,
+      };
+      modelSelectionCache = {
+        preference: pref,
+        result,
+        cachedAt: Date.now(),
+      };
+      return result;
+    }
+
+    modelSelectionCache = null;
   }
 
   const modelMap: Record<string, string[]> = {
@@ -60,7 +85,6 @@ async function selectModelByPreference(pref: string): Promise<{
   };
 
   const allModels = await vscode.lm.selectChatModels();
-  const normalizeModelKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
 
   const findModelByAlias = (alias: string): vscode.LanguageModelChat | undefined => {
     const target = normalizeModelKey(alias);

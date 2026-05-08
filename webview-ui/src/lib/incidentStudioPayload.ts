@@ -192,6 +192,64 @@ export type IncidentDecisionClarityContract = {
   mutationReady: boolean;
 };
 
+export type IncidentStudioStabilizationKpiStatus = {
+  workspacePath: string;
+  timeWindow: 'all' | 'last24h' | 'last7d' | 'last30d';
+  windowStartAt: string | null;
+  windowEndAt: string;
+  thresholds: {
+    routePrecisionMin: number;
+    verifyPathCompletionRateMin: number;
+    falseConfidenceRateMax: number;
+    rollbackRecoverySuccessRateMin: number;
+    repeatVerifiedResolutionRateMin: number;
+  };
+  metrics: {
+    nextActionClicked: number;
+    routeMatchedWithoutFallback: number;
+    routeFallbackCount: number;
+    routePrecision: number | null;
+    verifyRequired: number;
+    verifyPathPresent: number;
+    verifyPathCompletionRate: number | null;
+    verifyFailed: number;
+    rollbackAttempted: number;
+    rollbackSucceeded: number;
+    falseConfidenceRate: number | null;
+    rollbackRecoverySuccessRate: number | null;
+    repeatedIncidentDetected: number;
+    repeatVerifiedResolved: number;
+    repeatVerifiedResolutionRate: number | null;
+    repeatVerifiedWithArtifactReady?: number;
+    repeatVerifiedWithArtifactRate?: number | null;
+    fallbackReasonBreakdown?: {
+      success: number;
+      bare_keyword_only: number;
+      fix_preview_fallback: number;
+      orchestrate_default: number;
+      other: number;
+    };
+    verifyPathReasonTop?: Array<{
+      reason: string;
+      count: number;
+    }>;
+    recoveryClassBreakdown?: {
+      auto_rollback: number;
+      manual_recovery: number;
+      unspecified: number;
+    };
+  };
+  gates: {
+    telemetryEvidencePass: boolean;
+    routePrecisionPass: boolean;
+    verifyPathCompletionRatePass: boolean;
+    falseConfidenceRatePass: boolean;
+    rollbackRecoverySuccessRatePass: boolean;
+    repeatVerifiedResolutionRatePass: boolean;
+    overallPass: boolean;
+  };
+};
+
 // ─── Multi-file patch apply/reject workflow (A02 / A03) ─────────────────────
 
 export type FilePatchStatus = 'pending' | 'accepted' | 'rejected' | 'applied' | 'failed';
@@ -1266,7 +1324,8 @@ export function buildIncidentActionExecutionMetadata(
     normalized === 'recipe-pack' ||
     normalized === 'verify-pack-autopilot' ||
     normalized === 'incident-repro-pack' ||
-    normalized === 'release-readiness-commander'
+    normalized === 'release-readiness-commander' ||
+    normalized === 'browser-smoke-test'
   ) {
     return {
       riskClass: 'non-mutating-executable',

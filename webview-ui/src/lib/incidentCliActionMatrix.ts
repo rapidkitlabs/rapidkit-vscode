@@ -1,0 +1,138 @@
+export type IncidentCliActionScope = 'workspace' | 'project';
+
+export type IncidentCliActionEntry = {
+  id: string;
+  scope: IncidentCliActionScope;
+  label: string;
+  detail: string;
+  command: string;
+  stability: 'stable' | 'advanced';
+  actionTypes?: string[];
+};
+
+// Source-driven from rapidkit-npm command surface:
+// doctor [scope], readiness, workspace <action>, init/dev/build/test/shell.
+const INCIDENT_CLI_ACTION_ENTRIES: IncidentCliActionEntry[] = [
+  {
+    id: 'workspace-doctor',
+    scope: 'workspace',
+    label: 'Run workspace doctor',
+    detail: 'Deterministic workspace health check from doctor evidence pipeline.',
+    command: 'rapidkit doctor workspace',
+    stability: 'stable',
+    actionTypes: ['doctor-workspace-check'],
+  },
+  {
+    id: 'workspace-doctor-fix',
+    scope: 'workspace',
+    label: 'Apply doctor safe fixes',
+    detail: 'Runs doctor autofix for known, safe remediation paths.',
+    command: 'rapidkit doctor workspace --fix',
+    stability: 'stable',
+    actionTypes: ['doctor-fix', 'doctor-workspace-fix'],
+  },
+  {
+    id: 'workspace-readiness-json',
+    scope: 'workspace',
+    label: 'Generate readiness JSON',
+    detail: 'Machine-readable release readiness artifact for CI and governance.',
+    command: 'rapidkit readiness --json',
+    stability: 'stable',
+  },
+  {
+    id: 'workspace-policy-show',
+    scope: 'workspace',
+    label: 'Show workspace policy',
+    detail: 'Inspect effective workspace policy and governance posture.',
+    command: 'rapidkit workspace policy show',
+    stability: 'advanced',
+    actionTypes: ['view-compliance-report'],
+  },
+  {
+    id: 'workspace-sync',
+    scope: 'workspace',
+    label: 'Sync workspace projects',
+    detail: 'Refresh workspace project inventory from filesystem state.',
+    command: 'rapidkit workspace sync',
+    stability: 'advanced',
+  },
+  {
+    id: 'project-init',
+    scope: 'project',
+    label: 'Initialize project dependencies',
+    detail: 'Install and align project dependencies for local execution.',
+    command: 'rapidkit init',
+    stability: 'stable',
+    actionTypes: ['project-init'],
+  },
+  {
+    id: 'project-test',
+    scope: 'project',
+    label: 'Run project tests',
+    detail: 'Execute project test suite as deterministic verification.',
+    command: 'rapidkit test',
+    stability: 'stable',
+    actionTypes: ['project-test', 'verify-pack-autopilot'],
+  },
+  {
+    id: 'project-build',
+    scope: 'project',
+    label: 'Build project',
+    detail: 'Compile/build project artifacts and detect build-time regressions.',
+    command: 'rapidkit build',
+    stability: 'stable',
+    actionTypes: ['project-build'],
+  },
+  {
+    id: 'project-shell-activate',
+    scope: 'project',
+    label: 'Print shell activation snippet',
+    detail: 'Shows activation snippet for current project workspace shell.',
+    command: 'rapidkit shell activate',
+    stability: 'advanced',
+    actionTypes: ['project-shell-activate'],
+  },
+  {
+    id: 'project-browser-smoke-test',
+    scope: 'project',
+    label: 'Run browser smoke test',
+    detail:
+      'Open project in VS Code browser and verify key UI surfaces with AI-guided smoke test (VS Code 1.119+ browser agent tools).',
+    command: 'rapidkit dev',
+    stability: 'advanced',
+    actionTypes: ['browser-smoke-test'],
+  },
+];
+
+export function resolveIncidentCliActionByActionType(
+  actionType: string | null | undefined,
+  hasProjectSelected: boolean
+): IncidentCliActionEntry | undefined {
+  if (!actionType || !actionType.trim()) {
+    return undefined;
+  }
+
+  const normalized = actionType.trim();
+  const matrix = buildIncidentCliActionMatrix(hasProjectSelected);
+  const all = [...matrix.workspace, ...matrix.project];
+  return all.find((entry) => (entry.actionTypes || []).includes(normalized));
+}
+
+export function resolveIncidentCliActionIdByActionType(
+  actionType: string | null | undefined,
+  hasProjectSelected: boolean
+): string | undefined {
+  return resolveIncidentCliActionByActionType(actionType, hasProjectSelected)?.id;
+}
+
+export function buildIncidentCliActionMatrix(hasProjectSelected: boolean): {
+  workspace: IncidentCliActionEntry[];
+  project: IncidentCliActionEntry[];
+} {
+  const workspace = INCIDENT_CLI_ACTION_ENTRIES.filter((entry) => entry.scope === 'workspace');
+  const project = hasProjectSelected
+    ? INCIDENT_CLI_ACTION_ENTRIES.filter((entry) => entry.scope === 'project')
+    : [];
+
+  return { workspace, project };
+}

@@ -94,6 +94,7 @@ type RoutingResult = {
     | 'recipe-pack'
     | 'incident-repro-pack'
     | 'release-readiness-commander'
+    | 'browser-smoke-test'
     | 'orchestrate';
   fallbackReason:
     | 'success'
@@ -157,6 +158,28 @@ type IncidentWorkspaceGraphSnapshot = {
   completeness: 'fresh' | 'cached' | 'partial' | 'degraded';
   lastUpdatedAt: number;
 };
+
+type WorkspaceMarkerSnapshot = {
+  signature?: string;
+  createdBy?: string;
+  version?: string;
+  name?: string;
+};
+
+type DoctorEvidenceSnapshot = Awaited<ReturnType<WelcomePanel['_readDoctorEvidenceSnapshot']>>;
+
+function normalizeRequestedModelId(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimmed;
+}
 
 export class WelcomePanel {
   private static readonly UI_PREFS_KEY = 'rapidkit.welcome.uiPreferences';
@@ -643,6 +666,403 @@ export class WelcomePanel {
     return { name: ws.name, path: ws.path };
   }
 
+  private async _readWorkspaceMarkerSnapshot(
+    workspacePath: string
+  ): Promise<WorkspaceMarkerSnapshot | undefined> {
+    try {
+      const markerPath = path.join(workspacePath, '.rapidkit-workspace');
+      if (!(await fs.pathExists(markerPath))) {
+        return undefined;
+      }
+
+      const marker = (await fs.readJSON(markerPath)) as Record<string, unknown>;
+      if (!marker || typeof marker !== 'object') {
+        return undefined;
+      }
+
+      return {
+        signature: typeof marker.signature === 'string' ? marker.signature : undefined,
+        createdBy: typeof marker.createdBy === 'string' ? marker.createdBy : undefined,
+        version: typeof marker.version === 'string' ? marker.version : undefined,
+        name: typeof marker.name === 'string' ? marker.name : undefined,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async _discoverRapidkitProjectPaths(workspacePath: string): Promise<string[]> {
+    const discovered = new Set<string>();
+    const queue: string[] = [workspacePath];
+    const visited = new Set<string>();
+    const ignoredDirNames = new Set([
+      '.git',
+      '.hg',
+      '.svn',
+      'node_modules',
+      'dist',
+      'build',
+      'target',
+      'coverage',
+      'htmlcov',
+      '.next',
+      '.nuxt',
+    ]);
+
+    while (queue.length > 0) {
+      const currentPath = queue.shift();
+      if (!currentPath || visited.has(currentPath)) {
+        continue;
+      }
+      visited.add(currentPath);
+
+      let entries: Array<{ isDirectory: () => boolean; name: string }> = [];
+      try {
+        entries = await fs.readdir(currentPath, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        if (entry.name.startsWith('.') && entry.name !== '.rapidkit') {
+          continue;
+        }
+        if (ignoredDirNames.has(entry.name)) {
+          continue;
+        }
+
+        const candidatePath = path.resolve(path.join(currentPath, entry.name));
+        if (!isWorkspacePathAncestor(workspacePath, candidatePath)) {
+          continue;
+        }
+
+        const [hasProjectJson, hasContextJson] = await Promise.all([
+          fs.pathExists(path.join(candidatePath, '.rapidkit', 'project.json')),
+          fs.pathExists(path.join(candidatePath, '.rapidkit', 'context.json')),
+        ]);
+
+        if (hasProjectJson || hasContextJson) {
+          discovered.add(candidatePath);
+        }
+
+        queue.push(candidatePath);
+      }
+    }
+
+    return [...discovered].sort((a, b) => a.localeCompare(b));
+  }
+
+  private async _rankWorkspaceProjectCandidates(
+    workspacePath: string,
+    doctorSnapshot?: DoctorEvidenceSnapshot
+  ): Promise<
+    Array<{
+      name: string;
+      path: string;
+      type?: string;
+      score: number;
+      hasRegistry: boolean;
+      fromWorkspaceRegistry: boolean;
+      modulesCount?: number;
+      evidenceSources: string[];
+    }>
+  > {
+    const selectedWorkspace = WelcomePanel._workspaceExplorer?.getSelectedWorkspace();
+    const workspaceRecord =
+      selectedWorkspace?.path === workspacePath
+        ? selectedWorkspace
+        : WelcomePanel._workspaceExplorer?.getWorkspaceByPath(workspacePath);
+
+    const candidateMap = new Map<
+      string,
+      {
+        name: string;
+        path: string;
+        fromWorkspaceRegistry: boolean;
+      }
+    >();
+
+    for (const project of workspaceRecord?.projects || []) {
+      if (!isWorkspacePathAncestor(workspacePath, project.path)) {
+        continue;
+      }
+      const normalizedPath = path.resolve(project.path);
+      candidateMap.set(normalizedPath, {
+        name: project.name || path.basename(normalizedPath),
+        path: normalizedPath,
+        fromWorkspaceRegistry: true,
+      });
+    }
+
+    for (const project of doctorSnapshot?.projects || []) {
+      if (!project.path || !isWorkspacePathAncestor(workspacePath, project.path)) {
+        continue;
+      }
+      const normalizedPath = path.resolve(project.path);
+      if (!candidateMap.has(normalizedPath)) {
+        candidateMap.set(normalizedPath, {
+          name: project.name || path.basename(normalizedPath),
+          path: normalizedPath,
+          fromWorkspaceRegistry: false,
+        });
+      }
+    }
+
+    const discoveredProjectPaths = await this._discoverRapidkitProjectPaths(workspacePath);
+    for (const discoveredPath of discoveredProjectPaths) {
+      if (!candidateMap.has(discoveredPath)) {
+        candidateMap.set(discoveredPath, {
+          name: path.basename(discoveredPath),
+          path: discoveredPath,
+          fromWorkspaceRegistry: false,
+        });
+      }
+    }
+
+    try {
+      const entries = await fs.readdir(workspacePath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) {
+          continue;
+        }
+        const projectPath = path.resolve(path.join(workspacePath, entry.name));
+        if (!candidateMap.has(projectPath)) {
+          candidateMap.set(projectPath, {
+            name: entry.name,
+            path: projectPath,
+            fromWorkspaceRegistry: false,
+          });
+        }
+      }
+    } catch {
+      // Ignore unreadable workspace directories.
+    }
+
+    const ranked: Array<{
+      name: string;
+      path: string;
+      type?: string;
+      score: number;
+      hasRegistry: boolean;
+      fromWorkspaceRegistry: boolean;
+      modulesCount?: number;
+      evidenceSources: string[];
+    }> = [];
+
+    for (const candidate of candidateMap.values()) {
+      const candidatePath = candidate.path;
+      const doctorProjectMatch = (doctorSnapshot?.projects || []).find(
+        (project) =>
+          (project.path && path.resolve(project.path) === candidatePath) ||
+          project.name.toLowerCase() === candidate.name.toLowerCase()
+      );
+
+      const [
+        hasPrimaryRegistry,
+        hasLegacyRegistry,
+        hasProjectJson,
+        hasContextJson,
+        hasPyproject,
+        hasPackageJson,
+        hasGoMod,
+        hasPom,
+        hasGradle,
+        hasGradleKts,
+        hasSrcDir,
+        hasRapidkitScript,
+        hasVenv,
+        hasNodeModules,
+      ] = await Promise.all([
+        fs.pathExists(path.join(candidatePath, 'registry.json')),
+        fs.pathExists(path.join(candidatePath, '.rapidkit', 'registry.json')),
+        fs.pathExists(path.join(candidatePath, '.rapidkit', 'project.json')),
+        fs.pathExists(path.join(candidatePath, '.rapidkit', 'context.json')),
+        fs.pathExists(path.join(candidatePath, 'pyproject.toml')),
+        fs.pathExists(path.join(candidatePath, 'package.json')),
+        fs.pathExists(path.join(candidatePath, 'go.mod')),
+        fs.pathExists(path.join(candidatePath, 'pom.xml')),
+        fs.pathExists(path.join(candidatePath, 'build.gradle')),
+        fs.pathExists(path.join(candidatePath, 'build.gradle.kts')),
+        fs.pathExists(path.join(candidatePath, 'src')),
+        fs.pathExists(path.join(candidatePath, 'rapidkit')),
+        fs.pathExists(path.join(candidatePath, '.venv')),
+        fs.pathExists(path.join(candidatePath, 'node_modules')),
+      ]);
+
+      const hasRegistry = hasPrimaryRegistry || hasLegacyRegistry;
+      const hasFrameworkMarkers =
+        hasPyproject || hasPackageJson || hasGoMod || hasPom || hasGradle || hasGradleKts;
+      const hasRuntimeReadyMarkers = hasVenv || hasNodeModules;
+      const inferredType =
+        (await WelcomePanel._detectProjectTypeStatic(candidatePath)) || undefined;
+      const modulesCount =
+        hasRegistry && !doctorProjectMatch?.modulesCount
+          ? (await WelcomePanel._readInstalledModules(candidatePath)).length
+          : doctorProjectMatch?.modulesCount;
+      const evidenceSources = new Set<string>();
+
+      let score = 0;
+      if (candidate.fromWorkspaceRegistry) {
+        score += 20;
+        evidenceSources.add('workspace-registry');
+      }
+      if (hasRegistry) {
+        score += 40;
+        evidenceSources.add('project-registry');
+      }
+      if (hasProjectJson || hasContextJson) {
+        score += 25;
+        evidenceSources.add('rapidkit-context');
+      }
+      if (inferredType) {
+        score += 30;
+      }
+      if (hasFrameworkMarkers) {
+        score += 15;
+        evidenceSources.add('framework-markers');
+      }
+      if (hasSrcDir) {
+        score += 5;
+      }
+      if (hasRapidkitScript) {
+        score += 5;
+        evidenceSources.add('rapidkit-launcher');
+      }
+      if (hasRuntimeReadyMarkers) {
+        score += 5;
+      }
+      if (typeof modulesCount === 'number' && modulesCount > 0) {
+        score += Math.min(20, modulesCount * 2);
+        evidenceSources.add('installed-modules');
+      }
+      if (doctorProjectMatch) {
+        score += 35;
+        evidenceSources.add('doctor-evidence');
+        if (doctorProjectMatch.modulesHealthy) {
+          score += 10;
+        }
+      }
+
+      if (score <= 0) {
+        continue;
+      }
+
+      ranked.push({
+        name: candidate.name,
+        path: candidatePath,
+        type: inferredType,
+        score,
+        hasRegistry,
+        fromWorkspaceRegistry: candidate.fromWorkspaceRegistry,
+        modulesCount,
+        evidenceSources: [...evidenceSources].sort((a, b) => a.localeCompare(b)),
+      });
+    }
+
+    return ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  }
+
+  private async _buildWorkspaceProjectCandidatesBlock(
+    workspacePath: string,
+    doctorSnapshot?: DoctorEvidenceSnapshot
+  ): Promise<string | undefined> {
+    const markerSnapshot = await this._readWorkspaceMarkerSnapshot(workspacePath);
+    const ranked = await this._rankWorkspaceProjectCandidates(workspacePath, doctorSnapshot);
+    if (ranked.length === 0) {
+      return undefined;
+    }
+
+    const lines = ['WORKSPACE PROJECT CANDIDATES:'];
+    if (markerSnapshot?.signature || markerSnapshot?.createdBy) {
+      lines.push(
+        `- Workspace marker: signature=${markerSnapshot.signature || 'unknown'}, createdBy=${markerSnapshot.createdBy || 'unknown'}`
+      );
+    }
+    for (const candidate of ranked.slice(0, 4)) {
+      lines.push(
+        `- ${candidate.name} (${candidate.type || 'unknown'}) — path: ${candidate.path} | score: ${candidate.score} | registry: ${candidate.hasRegistry ? 'yes' : 'no'} | modules: ${candidate.modulesCount ?? 'n/a'} | evidence: ${candidate.evidenceSources.join(', ') || 'none'}`
+      );
+    }
+
+    if (ranked.length > 1) {
+      const top = ranked[0];
+      const second = ranked[1];
+      const gap = top.score - second.score;
+      lines.push(
+        gap >= 15
+          ? '- Scope confidence: clear winner detected from project signals.'
+          : '- Scope confidence: ambiguous; avoid definitive per-project claims until a target path is confirmed.'
+      );
+    }
+
+    return lines.join('\n');
+  }
+
+  private async _resolveScopedProjectForWorkspace(options?: {
+    workspacePath?: string;
+    projectPath?: string;
+    projectName?: string;
+    projectType?: string;
+    doctorSnapshot?: DoctorEvidenceSnapshot;
+  }): Promise<{ name: string; path: string; type?: string } | null> {
+    const workspacePath = options?.workspacePath;
+    if (!workspacePath) {
+      return null;
+    }
+
+    if (options?.projectPath && isWorkspacePathAncestor(workspacePath, options.projectPath)) {
+      const inferredType =
+        options.projectType ||
+        (await WelcomePanel._detectProjectTypeStatic(options.projectPath)) ||
+        undefined;
+      return {
+        name: options.projectName || path.basename(options.projectPath),
+        path: options.projectPath,
+        type: inferredType,
+      };
+    }
+
+    if (
+      WelcomePanel._selectedProject &&
+      isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
+    ) {
+      return WelcomePanel._selectedProject;
+    }
+
+    const rankedCandidates = await this._rankWorkspaceProjectCandidates(
+      workspacePath,
+      options?.doctorSnapshot
+    );
+    if (rankedCandidates.length === 0) {
+      return null;
+    }
+
+    const chooseByConfidence = () => {
+      if (rankedCandidates.length === 1) {
+        return rankedCandidates[0].score >= 35 ? rankedCandidates[0] : null;
+      }
+      const top = rankedCandidates[0];
+      const second = rankedCandidates[1];
+      const scoreGap = top.score - second.score;
+      const clearWinner = top.score >= 45 && scoreGap >= 15;
+      return clearWinner ? top : null;
+    };
+
+    const candidate = chooseByConfidence();
+    if (!candidate) {
+      return null;
+    }
+
+    return {
+      name: candidate.name || path.basename(candidate.path),
+      path: candidate.path,
+      type: candidate.type,
+    };
+  }
+
   /**
    * Read installed modules from registry.json
    */
@@ -1057,8 +1477,9 @@ No markdown, no explanation outside the JSON.`;
               context: aiCtx,
               requestId,
               history,
-              modelId: requestedModelId,
+              modelId: requestedModelIdRaw,
             } = message.data || {};
+            const requestedModelId = normalizeRequestedModelId(requestedModelIdRaw);
             const panel = this._panel;
             const queryRequestId = typeof requestId === 'number' ? requestId : Date.now();
             const normalizedMode = mode === 'debug' ? 'debug' : 'ask';
@@ -1250,7 +1671,7 @@ No markdown, no explanation outside the JSON.`;
                   };
                 })(),
                 tokenSource.token,
-                typeof requestedModelId === 'string' ? requestedModelId : undefined
+                requestedModelId
               );
 
               if (tokenSource.token.isCancellationRequested) {
@@ -1751,6 +2172,134 @@ No markdown, no explanation outside the JSON.`;
                 actionType: 'doctor-workspace-check',
                 workspaceName: workspaceName || path.basename(workspacePath),
               });
+            }
+            break;
+          case 'runDoctorFix':
+            {
+              const explicitWorkspacePath =
+                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
+                  ? message.data.workspacePath.trim()
+                  : undefined;
+              const selectedWorkspace = this._getSelectedWorkspaceInfo();
+              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
+              const workspaceName =
+                (typeof message.data?.workspaceName === 'string' &&
+                  message.data.workspaceName.trim()) ||
+                selectedWorkspace?.name ||
+                (workspacePath ? path.basename(workspacePath) : undefined);
+
+              if (!workspacePath) {
+                vscode.window.showWarningMessage('Select a workspace first.');
+                break;
+              }
+
+              runRapidkitCommandsInTerminal({
+                name: `Workspai: Doctor Fix - ${workspaceName}`,
+                cwd: workspacePath,
+                commands: [['doctor', 'workspace', '--fix']],
+              });
+
+              this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+                actionType: 'doctor-workspace-fix',
+                workspaceName: workspaceName || path.basename(workspacePath),
+              });
+            }
+            break;
+          case 'viewComplianceReport':
+            {
+              const explicitWorkspacePath =
+                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
+                  ? message.data.workspacePath.trim()
+                  : undefined;
+              const selectedWorkspace = this._getSelectedWorkspaceInfo();
+              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
+              const workspaceName =
+                (typeof message.data?.workspaceName === 'string' &&
+                  message.data.workspaceName.trim()) ||
+                selectedWorkspace?.name ||
+                (workspacePath ? path.basename(workspacePath) : undefined);
+
+              if (!workspacePath) {
+                vscode.window.showWarningMessage('Select a workspace first.');
+                break;
+              }
+
+              const reportsDir = path.join(workspacePath, '.rapidkit', 'reports');
+              try {
+                if (!(await fs.pathExists(reportsDir))) {
+                  vscode.window.showInformationMessage(
+                    `No compliance reports found for "${workspaceName}". Run bootstrap to generate one.`
+                  );
+                  break;
+                }
+
+                const files = await fs.readdir(reportsDir);
+                const complianceFiles = files
+                  .filter((f: string) => f.startsWith('bootstrap-compliance'))
+                  .sort()
+                  .reverse();
+
+                if (complianceFiles.length === 0) {
+                  vscode.window.showInformationMessage(
+                    'No bootstrap-compliance reports found. Run Bootstrap Workspace to generate one.'
+                  );
+                  break;
+                }
+
+                const reportPath = path.join(reportsDir, complianceFiles[0]);
+                const reportData = await fs.readJSON(reportPath).catch(() => null);
+
+                const output = vscode.window.createOutputChannel(
+                  `Workspai: Compliance — ${workspaceName}`
+                );
+                output.clear();
+                output.appendLine(`=== Bootstrap Compliance Report: ${workspaceName} ===`);
+                output.appendLine(`File: ${reportPath}`);
+                output.appendLine('');
+
+                if (reportData) {
+                  const rawResult =
+                    reportData.result ||
+                    reportData.status ||
+                    reportData.overall_status ||
+                    'unknown';
+                  const statusLabel =
+                    rawResult === 'ok'
+                      ? 'PASSING'
+                      : rawResult === 'ok_with_warnings'
+                        ? 'PASSING (with warnings)'
+                        : rawResult === 'failed'
+                          ? 'FAILING'
+                          : String(rawResult).toUpperCase();
+                  const statusIcon =
+                    rawResult === 'ok' || rawResult === 'ok_with_warnings' ? '✅' : '❌';
+
+                  output.appendLine(`Status:   ${statusIcon} ${statusLabel}`);
+                  output.appendLine(
+                    `Generated: ${reportData.generated_at || reportData.timestamp || 'unknown'}`
+                  );
+                  output.appendLine(
+                    `Profile:  ${reportData.profile || reportData.bootstrap_profile || 'unknown'}`
+                  );
+                } else {
+                  output.appendLine('(Could not parse report JSON — file may be malformed)');
+                }
+
+                output.appendLine('');
+                output.appendLine(`All reports: ${reportsDir}`);
+                output.show();
+
+                this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+                  actionType: 'view-compliance-report',
+                  workspaceName: workspaceName || path.basename(workspacePath),
+                });
+              } catch (error) {
+                vscode.window.showErrorMessage(
+                  `Failed to read compliance reports: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                );
+              }
             }
             break;
           case 'openIncidentNavigatorTarget':
@@ -2403,6 +2952,11 @@ No markdown, no explanation outside the JSON.`;
       }
     }
 
+    const scopedProject = await this._resolveScopedProjectForWorkspace({ workspacePath });
+    if (scopedProject && scopedProject.path !== workspacePath) {
+      return this._inferFrameworkFromWorkspace(scopedProject.path);
+    }
+
     return 'unknown';
   }
 
@@ -2413,28 +2967,29 @@ No markdown, no explanation outside the JSON.`;
     const tracker = WorkspaceUsageTracker.getInstance();
     const memoryService = WorkspaceMemoryService.getInstance();
 
-    const selectedProject =
-      WelcomePanel._selectedProject &&
-      isWorkspacePathAncestor(resolvedWorkspacePath, WelcomePanel._selectedProject.path)
-        ? WelcomePanel._selectedProject
-        : null;
+    const doctorSnapshot = await this._readDoctorEvidenceSnapshot(resolvedWorkspacePath);
+
+    const selectedProject = await this._resolveScopedProjectForWorkspace({
+      workspacePath: resolvedWorkspacePath,
+      doctorSnapshot,
+    });
     const graphScanPath = selectedProject?.path || resolvedWorkspacePath;
 
     const [
       commandSummary,
       onboardingSummary,
       framework,
-      doctorSnapshot,
       workspaceMemory,
       gitDiffStat,
       installedModules,
     ] = await Promise.all([
       tracker.getCommandTelemetrySummary(resolvedWorkspacePath, 'last7d'),
       tracker.getOnboardingExperimentStats(resolvedWorkspacePath, 'last7d'),
-      resolvedWorkspacePath
-        ? this._inferFrameworkFromWorkspace(resolvedWorkspacePath)
-        : Promise.resolve('unknown'),
-      this._readDoctorEvidenceSnapshot(resolvedWorkspacePath),
+      selectedProject?.path
+        ? this._inferFrameworkFromWorkspace(selectedProject.path)
+        : resolvedWorkspacePath
+          ? this._inferFrameworkFromWorkspace(resolvedWorkspacePath)
+          : Promise.resolve('unknown'),
       resolvedWorkspacePath
         ? memoryService.readNearest(resolvedWorkspacePath)
         : Promise.resolve(undefined),
@@ -2745,6 +3300,18 @@ No markdown, no explanation outside the JSON.`;
       return { actionType: 'verify-pack-autopilot', fallbackReason: 'success' };
     }
     if (
+      normalized.includes('browser smoke') ||
+      normalized.includes('smoke test') ||
+      normalized.includes('ui smoke') ||
+      normalized.includes('browser test') ||
+      normalized.includes('browser check') ||
+      normalized.includes('verify ui') ||
+      normalized.includes('verify browser') ||
+      normalized.includes('open browser')
+    ) {
+      return { actionType: 'browser-smoke-test', fallbackReason: 'success' };
+    }
+    if (
       normalized.includes('repro') ||
       normalized.includes('replay') ||
       normalized.includes('incident pack') ||
@@ -2844,21 +3411,13 @@ No markdown, no explanation outside the JSON.`;
     projectType?: string;
   }): Promise<import('../../core/aiService').AIModalContext> {
     const resolvedWorkspacePath = options?.workspacePath || this._resolveTelemetryWorkspacePath();
-    const explicitProject =
-      options?.projectPath &&
-      (!resolvedWorkspacePath ||
-        isWorkspacePathAncestor(resolvedWorkspacePath, options.projectPath))
-        ? {
-            path: options.projectPath,
-            name: options.projectName,
-            type: options.projectType,
-          }
-        : undefined;
-    const selectedProject = explicitProject || WelcomePanel._selectedProject;
-    const selectedProjectBelongsToWorkspace = isWorkspacePathAncestor(
-      resolvedWorkspacePath,
-      selectedProject?.path
-    );
+    const selectedProject = await this._resolveScopedProjectForWorkspace({
+      workspacePath: resolvedWorkspacePath,
+      projectPath: options?.projectPath,
+      projectName: options?.projectName,
+      projectType: options?.projectType,
+    });
+    const selectedProjectBelongsToWorkspace = Boolean(selectedProject);
     const effectiveContextPath =
       selectedProjectBelongsToWorkspace && selectedProject
         ? selectedProject.path
@@ -3051,19 +3610,19 @@ No markdown, no explanation outside the JSON.`;
     }
   ): Promise<string> {
     const resolvedWorkspacePath = options?.workspacePath || this._resolveTelemetryWorkspacePath();
-    const selectedProject = options?.projectPath
-      ? {
-          path: options.projectPath,
-          name: options.projectName,
-          type: options.projectType,
-        }
-      : WelcomePanel._selectedProject;
-    const selectedProjectBelongsToWorkspace = isWorkspacePathAncestor(
-      resolvedWorkspacePath,
-      selectedProject?.path
-    );
-
     const doctorSnapshot = await this._readDoctorEvidenceSnapshot(resolvedWorkspacePath);
+    const selectedProject = await this._resolveScopedProjectForWorkspace({
+      workspacePath: resolvedWorkspacePath,
+      projectPath: options?.projectPath,
+      projectName: options?.projectName,
+      projectType: options?.projectType,
+      doctorSnapshot,
+    });
+    const selectedProjectBelongsToWorkspace = Boolean(selectedProject);
+
+    const projectCandidatesBlock = resolvedWorkspacePath
+      ? await this._buildWorkspaceProjectCandidatesBlock(resolvedWorkspacePath, doctorSnapshot)
+      : undefined;
     const workspaceArchitectureBlock = this._buildWorkspaceArchitectureBlock(
       doctorSnapshot,
       resolvedWorkspacePath
@@ -3086,6 +3645,11 @@ No markdown, no explanation outside the JSON.`;
             'If `rapidkit init` may be quiet, explain what it prepares and how the user can verify readiness for `rapidkit dev`.',
           ]
         : []),
+      ...(!selectedProjectBelongsToWorkspace
+        ? [
+            'If workspace project scope is ambiguous, do not produce definitive project-level root-cause claims. Ask for target project path first and provide a safe workspace-level next step.',
+          ]
+        : []),
       ...buildIncidentFirstResponseRules({
         projectScoped: selectedProjectBelongsToWorkspace,
         hasDoctorEvidence: Boolean(doctorSnapshot),
@@ -3096,6 +3660,7 @@ No markdown, no explanation outside the JSON.`;
     return [
       message,
       '',
+      ...(projectCandidatesBlock ? [projectCandidatesBlock, ''] : []),
       ...(projectExecutionBlock ? [projectExecutionBlock, ''] : []),
       workspaceArchitectureBlock,
       '',
@@ -3112,7 +3677,7 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private _buildWorkspaceArchitectureBlock(
-    snapshot: Awaited<ReturnType<typeof this._readDoctorEvidenceSnapshot>>,
+    snapshot: DoctorEvidenceSnapshot,
     workspacePath?: string
   ): string {
     const lines: string[] = ['WORKSPACE ARCHITECTURE (from doctor evidence):'];
@@ -4632,6 +5197,11 @@ No markdown, no explanation outside the JSON.`;
           modulesHealthy?: boolean;
           vulnerabilities?: number;
           depsInstalled?: boolean;
+          installedModules?: Array<{
+            slug: string;
+            version: string;
+            display_name: string;
+          }>;
         }>;
         fixCommands: string[];
       }
@@ -4665,37 +5235,53 @@ No markdown, no explanation outside the JSON.`;
         modulesHealthy?: boolean;
         vulnerabilities?: number;
         depsInstalled?: boolean;
+        installedModules: Array<{ slug: string; version: string; display_name: string }>;
         fixCommands: string[];
       };
 
       const projectsRaw = Array.isArray(raw?.projects) ? raw.projects : [];
-      const projects: ParsedDoctorProject[] = projectsRaw
-        .map((project: any) => {
-          const issues = Array.isArray(project?.issues) ? project.issues.length : 0;
-          const modulesCountRaw = Number(project?.stats?.modules);
-          const modulesCount = Number.isFinite(modulesCountRaw) ? modulesCountRaw : undefined;
-          const vulnerabilitiesRaw = Number(project?.vulnerabilities);
-          const vulnerabilities = Number.isFinite(vulnerabilitiesRaw)
-            ? vulnerabilitiesRaw
-            : undefined;
-          return {
-            name: typeof project?.name === 'string' ? project.name : 'unknown',
-            path: typeof project?.path === 'string' ? project.path : undefined,
-            framework: typeof project?.framework === 'string' ? project.framework : undefined,
-            kit: typeof project?.kit === 'string' ? project.kit : undefined,
-            issues,
-            modulesCount,
-            modulesHealthy:
-              typeof project?.modulesHealthy === 'boolean' ? project.modulesHealthy : undefined,
-            vulnerabilities,
-            depsInstalled:
-              typeof project?.depsInstalled === 'boolean' ? project.depsInstalled : undefined,
-            fixCommands: Array.isArray(project?.fixCommands)
-              ? project.fixCommands.filter((cmd: unknown) => typeof cmd === 'string')
-              : [],
-          };
-        })
-        .filter((project: ParsedDoctorProject) => project.name.length > 0);
+      const projects: ParsedDoctorProject[] = (
+        await Promise.all(
+          projectsRaw.map(async (project: any) => {
+            const issues = Array.isArray(project?.issues) ? project.issues.length : 0;
+            const projectPath = typeof project?.path === 'string' ? project.path : undefined;
+            const installedModules = projectPath
+              ? await WelcomePanel._readInstalledModules(projectPath)
+              : [];
+            const modulesCountRaw = Number(project?.stats?.modules);
+            const modulesCountFromDoctor = Number.isFinite(modulesCountRaw)
+              ? modulesCountRaw
+              : undefined;
+            const modulesCount =
+              typeof modulesCountFromDoctor === 'number'
+                ? modulesCountFromDoctor
+                : installedModules.length > 0
+                  ? installedModules.length
+                  : undefined;
+            const vulnerabilitiesRaw = Number(project?.vulnerabilities);
+            const vulnerabilities = Number.isFinite(vulnerabilitiesRaw)
+              ? vulnerabilitiesRaw
+              : undefined;
+            return {
+              name: typeof project?.name === 'string' ? project.name : 'unknown',
+              path: projectPath,
+              framework: typeof project?.framework === 'string' ? project.framework : undefined,
+              kit: typeof project?.kit === 'string' ? project.kit : undefined,
+              issues,
+              modulesCount,
+              modulesHealthy:
+                typeof project?.modulesHealthy === 'boolean' ? project.modulesHealthy : undefined,
+              vulnerabilities,
+              depsInstalled:
+                typeof project?.depsInstalled === 'boolean' ? project.depsInstalled : undefined,
+              installedModules,
+              fixCommands: Array.isArray(project?.fixCommands)
+                ? project.fixCommands.filter((cmd: unknown) => typeof cmd === 'string')
+                : [],
+            };
+          })
+        )
+      ).filter((project: ParsedDoctorProject) => project.name.length > 0);
 
       const frameworkMap = new Map<string, number>();
       for (const project of projects) {
@@ -4744,6 +5330,7 @@ No markdown, no explanation outside the JSON.`;
             modulesHealthy,
             vulnerabilities,
             depsInstalled,
+            installedModules,
           }: ParsedDoctorProject) => ({
             name,
             path,
@@ -4754,6 +5341,7 @@ No markdown, no explanation outside the JSON.`;
             modulesHealthy,
             vulnerabilities,
             depsInstalled,
+            installedModules,
           })
         ),
         fixCommands,
@@ -4961,8 +5549,7 @@ No markdown, no explanation outside the JSON.`;
     const message = typeof data?.message === 'string' ? data.message.trim() : '';
     const normalizedRequestId =
       typeof requestId === 'string' && requestId.trim() ? requestId.trim() : undefined;
-    const requestedModelId =
-      typeof data?.modelId === 'string' && data.modelId.trim() ? data.modelId.trim() : undefined;
+    const requestedModelId = normalizeRequestedModelId(data?.modelId);
 
     if (!conversationId || !message) {
       this._panel.webview.postMessage({
@@ -5683,6 +6270,46 @@ No markdown, no explanation outside the JSON.`;
         '2) Blocking reasons',
         '3) Evidence summary (verify/sandbox/doctor/scope)',
         '4) Recommended next safe step',
+      ].join('\n');
+    }
+
+    // ── browser-smoke-test (VSC-1119 browser agent tools) ───────────────────
+    if (actionType === 'browser-smoke-test') {
+      const targetPath = typeof payload?.projectPath === 'string' ? payload.projectPath.trim() : '';
+      let devUrl = 'http://localhost:8000';
+
+      // Detect running dev server port from the runningServers registry
+      if (targetPath) {
+        const runningTerminal = runningServers.get(targetPath);
+        if (runningTerminal) {
+          const portMatch = runningTerminal.name.match(/:([0-9]+)/);
+          if (portMatch) {
+            devUrl = `http://localhost:${portMatch[1]}`;
+          }
+        }
+      }
+
+      // Open VS Code simple browser to the dev URL (best-effort)
+      try {
+        await vscode.commands.executeCommand('simpleBrowser.show', devUrl);
+      } catch {
+        // simpleBrowser unavailable — browser tools will handle navigation
+      }
+
+      return [
+        `Run a browser smoke test against the project at: ${devUrl}`,
+        '',
+        'Using VS Code browser agent tools (VS Code 1.119+), verify the following:',
+        '1) The root URL loads without errors and returns HTTP 2xx',
+        '2) Key UI surfaces render: main page, API docs (/docs or /swagger), and health endpoint (/health or /actuator/health)',
+        '3) No JavaScript console errors on initial load',
+        '4) Critical interactive elements are visible and not broken',
+        '',
+        'Return exactly these sections:',
+        '1) Smoke result: PASS or FAIL',
+        '2) Verified endpoints (URL → status code → pass/fail)',
+        '3) Detected issues (if any)',
+        '4) Recommended next step',
       ].join('\n');
     }
 

@@ -1,6 +1,146 @@
 # Release Notes
 
-## Latest Release: v0.25.0 (May 7, 2026)
+## v0.26.0 (May 8, 2026)
+
+### ✦ Stability & Strategic Alignment Release
+
+**Summary:** Completes four independent hardening initiatives from the v0.25.0 session:
+1. Browser smoke test action — new Incident Studio action type for AI-guided web application verification, aligned with VS Code 1.119 browser agent tools
+2. Auto model selection regression fix — preserves literal `'auto'` string through all normalize helpers so Auto model UI state doesn't collapse
+3. Smart rate-limit fallback — one-shot intelligent fallback on 429/quota/overloaded errors with cache reset before first streamed chunk
+4. View controls UI polish — improved header button readability with larger icons/labels and dedicated CSS context
+
+**Quality gates:** typecheck ✓ | build ✓ | 736/736 tests ✓
+
+---
+
+### Added
+
+#### Browser Smoke Test Action (VS Code 1.119 Alignment)
+
+New `browser-smoke-test` action type in Incident Studio enables AI-guided smoke testing of web applications. Opens project's dev server in VS Code simple browser and generates structured verification checklist:
+
+**User trigger keywords:**
+- `browser smoke`, `smoke test`, `ui smoke`
+- `browser test`, `browser check`
+- `verify ui`, `verify browser`, `open browser`
+
+**AI generates report with:**
+1. Smoke result (PASS/FAIL)
+2. Verified endpoints (URL → HTTP status → pass/fail)
+3. Detected issues
+4. Recommended next step
+
+**Implementation across four contract layers:**
+
+1. **Action Matrix** (`incidentCliActionMatrix.ts`):
+   - Entry ID: `project-browser-smoke-test`
+   - Scope: `project` (project-scoped incidents only)
+   - Stability: `advanced`
+   - Command: `rapidkit dev`
+
+2. **Prompt Policy** (`incidentStudioPromptPolicy.ts`):
+   - Added to `INCIDENT_ACTION_ALLOWLIST`
+   - Risk class: `non-mutating-executable` (read-only, no mutations)
+   - Risk level: `low` (safe to execute automatically)
+   - No impact review required
+   - No verify-path required
+   - Can complete incident without external verification
+
+3. **Payload Contracts** (`incidentStudioPayload.ts`):
+   - Integrated into `buildIncidentActionExecutionMetadata` non-mutating branch
+   - Consistent risk classification across all layers
+
+4. **Action Routing** (`welcomePanel.ts`):
+   - New `RoutingResult` type variant: `'browser-smoke-test'`
+   - Keyword matching for natural-language routing
+   - Inline query builder that:
+     - Detects running dev server port from `runningServers` registry
+     - Opens VS Code simple browser with detected URL (graceful fallback if unavailable)
+     - Generates AI-driven endpoint verification checklist
+
+#### Model Selection Regression Fix
+
+Fixed v0.25.0 regression where literal string `'auto'` was being normalized to null/undefined, breaking Auto model selection flow. All three normalize helpers now preserve `'auto'` as a real model value:
+
+- `normalizeSelectedModelId(raw)` in `App.tsx`: converts only empty string → null; `'auto'` preserved
+- `normalizeRequestedModelId(raw)` in `welcomePanel.ts`: converts only non-string or empty → undefined; `'auto'` preserved
+- `normalizePreferredModelId(raw)` in `aiService.ts`: converts only empty string → undefined; any other string (including `'auto'`) preserved
+
+**Impact:** Auto model selection now flows correctly through all three layers without collapsing to no-selection state.
+
+#### Smart Rate-Limit Fallback
+
+Implements intelligent one-shot fallback on retryable model errors (429, rate limit, quota, service unavailable, overloaded, busy):
+
+**Error detection:**
+- `isRetryableModelRequestError(err)`: regex matches 429, rate limit, quota, unavailable, overloaded, busy, service unavailable, model unavailable
+
+**Fallback flow:**
+1. `selectFallbackModelForFailure(failedModel)`: resets model selection cache and calls `selectModelAuto()` for alternative
+2. If auto-select picks same model, falls back to raw model registry for different option
+3. `emittedFromPrimary` guard: only retries if zero chunks streamed from primary (prevents duplicate partial responses)
+4. Returns updated `modelId` if fallback succeeds
+
+**Regression test:** new test validates that when autoModel throws 429, fallbackModel is called and full response is returned with correct fallback modelId. All 15 tests in aiService.test.ts passing.
+
+#### Incident Studio View Controls UI
+
+Improved readability of Maximize and Lite/Full view toggle buttons in header:
+
+- Font-size: 10.2px for labels, 12px for icon symbols
+- Font-weight: 800 (bold)
+- Letter-spacing: 0.01em for visual clarity
+- Min-height: 24px, padding: 4px 10px, gap: 6px
+- CSS context `.incident-header-group--view` isolates sizing to View toggles only
+
+---
+
+### Fixed
+
+- **driftGuard test assertion:** Updated `context: ctx, requestId` check to match multi-line object formatting in `App.tsx` (split into two separate assertions). Pre-existing formatting drift from earlier refactoring, no behavioral change to stop-generation contract.
+
+---
+
+### Quality Gates
+
+- ✓ `npm run typecheck`: 0 TypeScript errors
+- ✓ `npm run build`: esbuild main + webview build clean
+- ✓ `npm run test`: **736/736 tests passing**
+  - aiService.test.ts: 15/15 (includes new fallback test)
+  - driftGuard.test.ts: 11/11 (updated assertion)
+  - incidentStudioPromptPolicy.test.ts: policy checks passing
+
+---
+
+### Files Changed
+
+**v0.25.0 hot-fixes + browser-smoke-test action:**
+- src/core/aiService.ts — smart fallback + normalize helper
+- src/ui/panels/incidentStudioPromptPolicy.ts — browser-smoke-test allowlist + policy
+- src/ui/panels/welcomePanel.ts — model normalization + routing + inline query builder
+- webview-ui/src/App.tsx — model normalization + View controls styles
+- webview-ui/src/components/AIIncidentStudio.tsx — View controls UI
+- webview-ui/src/lib/incidentCliActionMatrix.ts — browser-smoke-test action entry
+- webview-ui/src/lib/incidentStudioPayload.ts — browser-smoke-test payload contracts
+- webview-ui/src/styles-tailwind.css — View controls CSS
+- src/test/aiService.test.ts — new fallback test
+- src/test/driftGuard.test.ts — assertion fix
+- package.json — version 0.25.0 → 0.26.0
+- CHANGELOG.md, RELEASE_NOTES.md — documentation updates
+
+---
+
+### Compatibility
+
+- ✓ No breaking changes (all changes backward-compatible)
+- ✓ VS Code 1.119+ recommended for full browser agent tools integration
+- ✓ Graceful fallback if VS Code simple browser unavailable
+- ✓ Model normalization preserves existing behavior (only converts truly empty values)
+
+---
+
+## v0.25.0 (May 7, 2026)
 
 ### ✦ S01–S05 Full Stabilization Loop — Telemetry Breakdowns + Cohort Validation
 

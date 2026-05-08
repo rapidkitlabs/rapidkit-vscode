@@ -2506,6 +2506,35 @@
     font-size: 8.6px;
   }
 
+  .incident-header-group--view .incident-view-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .incident-header-group--view .incident-view-chip svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .incident-view-chip__icon {
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 900;
+  }
+
+  .incident-view-chip__label {
+    font-size: 10.2px;
+    line-height: 1;
+    letter-spacing: 0.01em;
+  }
+
   .incident-studio-badge {
     font-size: 8px;
     font-weight: 700;
@@ -2654,6 +2683,60 @@
     font-size: 9.5px;
     line-height: 1.4;
     color: var(--vscode-descriptionForeground);
+  }
+
+  .incident-lite-list--blocked {
+    border: 1px solid color-mix(in srgb, #f87171 65%, var(--vscode-panel-border));
+    border-radius: 8px;
+    padding: 6px 8px 6px 22px;
+    background: color-mix(in srgb, #f87171 10%, transparent);
+  }
+
+  /* Blocker severity badges */
+  .incident-blocker-severity {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 7px;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-right: 4px;
+  }
+
+  .incident-blocker-severity.hard {
+    background: color-mix(in srgb, #f87171 22%, transparent);
+    color: #f87171;
+    border: 1px solid color-mix(in srgb, #f87171 55%, transparent);
+  }
+
+  .incident-blocker-severity.soft {
+    background: color-mix(in srgb, #facc15 22%, transparent);
+    color: #facc15;
+    border: 1px solid color-mix(in srgb, #facc15 55%, transparent);
+  }
+
+  .incident-lite-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 8px;
+    letter-spacing: 0.05em;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .incident-lite-status.is-passed {
+    color: #4ade80;
+    background: color-mix(in srgb, #4ade80 14%, transparent);
+    border: 1px solid color-mix(in srgb, #4ade80 50%, transparent);
+  }
+
+  .incident-lite-status.is-failed {
+    color: #f87171;
+    background: color-mix(in srgb, #f87171 14%, transparent);
+    border: 1px solid color-mix(in srgb, #f87171 55%, transparent);
   }
 
   .incident-lite-empty {
