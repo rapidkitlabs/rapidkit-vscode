@@ -190,7 +190,7 @@ describe('contract drift guard', () => {
       '"release:stop-gate": "node scripts/release-stop-gate.mjs"'
     );
     expect(packageJsonSource).toContain(
-      '"release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --enforce-claim-checklist --marker releases/fixtures/wave2-kpi-marker.json"'
+      '"release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --claim-checklist releases/fixtures/wave2-claim-checklist.md --enforce-claim-checklist --marker releases/fixtures/wave2-kpi-marker.json"'
     );
     expect(workflowSource).toContain('Release stop gate (contract/parity)');
     expect(workflowSource).toContain('npm run release:stop-gate -- --skip-kpi');
