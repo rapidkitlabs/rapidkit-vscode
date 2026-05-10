@@ -2,7 +2,7 @@
   "name": "rapidkit-vscode",
   "displayName": "Workspai",
   "description": "The AI workspace for backend teams. Build backend systems with AI that knows your workspace, generate projects and modules from intent, debug with full context, and ship faster — all inside VS Code. FastAPI, NestJS, Spring Boot, Go/Fiber & Go/Gin.",
-  "version": "0.27.0",
+  "version": "0.27.1",
   "publisher": "rapidkit",
   "icon": "media/icons/icon.png",
   "galleryBanner": {
@@ -226,9 +226,39 @@
       },
       {
         "command": "workspai.workspaceInit",
-        "title": "Initialize Workspace (npx rapidkit init)",
+        "title": "Initialize Workspace (init | workspace init | workspace run init)",
         "category": "Workspai",
         "icon": "$(run-all)"
+      },
+      {
+        "command": "workspai.workspaceRunStage",
+        "title": "Workspace Run: Select Stage",
+        "category": "Workspai",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "workspai.workspaceRunInit",
+        "title": "Workspace Run: Init",
+        "category": "Workspai",
+        "icon": "$(play)"
+      },
+      {
+        "command": "workspai.workspaceRunTest",
+        "title": "Workspace Run: Test",
+        "category": "Workspai",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "workspai.workspaceRunBuild",
+        "title": "Workspace Run: Build",
+        "category": "Workspai",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "workspai.workspaceRunStart",
+        "title": "Workspace Run: Start",
+        "category": "Workspai",
+        "icon": "$(debug-start)"
       },
       {
         "command": "workspai.workspacePolicyShow",
@@ -411,6 +441,12 @@
         "icon": "$(beaker)"
       },
       {
+        "command": "workspai.projectDoctor",
+        "title": "Project Health Check (Doctor)",
+        "category": "Workspai",
+        "icon": "$(pulse)"
+      },
+      {
         "command": "workspai.projectBrowser",
         "title": "Open in Browser",
         "category": "Workspai",
@@ -565,6 +601,12 @@
         "title": "Guided Workspace Memory Setup",
         "category": "Workspai",
         "icon": "$(book)"
+      },
+      {
+        "command": "workspai.aiWorkspaceCommandCenter",
+        "title": "AI Workspace Command Center",
+        "category": "Workspai",
+        "icon": "$(tools)"
       },
       {
         "command": "workspai.aiRecipePacks",
@@ -749,6 +791,21 @@
           "command": "workspai.workspacePolicyShow"
         },
         {
+          "command": "workspai.workspaceRunStage"
+        },
+        {
+          "command": "workspai.workspaceRunInit"
+        },
+        {
+          "command": "workspai.workspaceRunTest"
+        },
+        {
+          "command": "workspai.workspaceRunBuild"
+        },
+        {
+          "command": "workspai.workspaceRunStart"
+        },
+        {
           "command": "workspai.workspacePolicySet"
         },
         {
@@ -804,6 +861,9 @@
         },
         {
           "command": "workspai.aiWorkspaceMemoryWizard"
+        },
+        {
+          "command": "workspai.aiWorkspaceCommandCenter"
         },
         {
           "command": "workspai.aiRecipePacks"
@@ -923,6 +983,26 @@
           "group": "inline@0"
         },
         {
+          "command": "workspai.openWorkspace",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@1"
+        },
+        {
+          "command": "workspai.checkWorkspaceHealth",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@2"
+        },
+        {
+          "command": "workspai.workspaceBootstrap",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@3"
+        },
+        {
+          "command": "workspai.workspaceRunTest",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "inline@4"
+        },
+        {
           "command": "workspai.openIncidentStudio",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "ai_studio@1"
@@ -948,19 +1028,9 @@
           "group": "ai_studio@5"
         },
         {
-          "command": "workspai.exportWorkspace",
+          "command": "workspai.aiWorkspaceCommandCenter",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
-          "group": "inline@5"
-        },
-        {
-          "command": "workspai.checkWorkspaceHealth",
-          "when": "view == rapidkitWorkspaces && viewItem == workspace",
-          "group": "inline@6"
-        },
-        {
-          "command": "workspai.workspaceInit",
-          "when": "view == rapidkitWorkspaces && viewItem == workspace",
-          "group": "inline@7"
+          "group": "ai_studio@6"
         },
         {
           "command": "workspai.openWorkspace",
@@ -968,24 +1038,34 @@
           "group": "navigation@1"
         },
         {
-          "command": "workspai.openWorkspaceFolder",
+          "command": "workspai.workspaceInit",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "navigation@2"
         },
         {
-          "command": "workspai.editWorkspaceMemory",
+          "command": "workspai.openWorkspaceFolder",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "navigation@3"
         },
         {
-          "command": "workspai.aiWorkspaceMemoryWizard",
+          "command": "workspai.exportWorkspace",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "navigation@4"
         },
         {
-          "command": "workspai.copyWorkspacePath",
+          "command": "workspai.editWorkspaceMemory",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "navigation@5"
+        },
+        {
+          "command": "workspai.aiWorkspaceMemoryWizard",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "navigation@6"
+        },
+        {
+          "command": "workspai.copyWorkspacePath",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "navigation@7"
         },
         {
           "command": "workspai.showTelemetrySummary",
@@ -1016,6 +1096,31 @@
           "command": "workspai.workspaceSetup",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "workspace_ops@2"
+        },
+        {
+          "command": "workspai.workspaceRunStage",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_ops@3"
+        },
+        {
+          "command": "workspai.workspaceRunInit",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_run@1"
+        },
+        {
+          "command": "workspai.workspaceRunTest",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_run@2"
+        },
+        {
+          "command": "workspai.workspaceRunBuild",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_run@3"
+        },
+        {
+          "command": "workspai.workspaceRunStart",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_run@4"
         },
         {
           "command": "workspai.workspacePolicyShow",
@@ -1161,6 +1266,11 @@
           "command": "workspai.projectTest",
           "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
           "group": "inline@4"
+        },
+        {
+          "command": "workspai.projectDoctor",
+          "when": "view == rapidkitProjects && viewItem =~ /^project(-running)?$/",
+          "group": "inline@5"
         },
         {
           "command": "workspai.projectBrowser",
@@ -1435,8 +1545,6 @@
     "test:stress:incident-studio": "vitest run src/test/incidentStudioLifecycle.test.ts src/test/incidentStudioStressGate.test.ts src/test/debounceWatchers.test.ts",
     "test:vscode": "vscode-test",
     "release:stop-gate": "node scripts/release-stop-gate.mjs",
-    "release:stop-gate:wave2": "node scripts/release-stop-gate.mjs --manifest releases/wave2-foundation-gate.json --claim-checklist releases/fixtures/wave2-claim-checklist.md --enforce-claim-checklist --marker releases/fixtures/wave2-kpi-marker.json",
-    "release:stop-gate:wave3": "node scripts/release-stop-gate.mjs --manifest releases/wave3-foundation-gate.json --claim-checklist releases/fixtures/wave3-claim-checklist.md --enforce-claim-checklist --marker releases/fixtures/wave3-kpi-marker.json",
     "sync:modules": "node scripts/sync-modules.mjs",
     "package": "vsce package",
     "publish": "vsce publish",
@@ -1466,7 +1574,7 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/coverage-v8": "^4.0.7",
-    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.3.9",
     "@vscode/vsce": "^3.6.2",
     "concurrently": "^9.1.2",
