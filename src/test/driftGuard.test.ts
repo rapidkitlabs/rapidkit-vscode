@@ -190,7 +190,9 @@ describe('contract drift guard', () => {
     expect(workflowSource).toContain('Release stop gate (contract/parity)');
     expect(workflowSource).toContain('Shared parity contract snapshot');
     expect(workflowSource).toContain('npm run test:parity-contract');
-    expect(workflowSource).toContain('npm run release:stop-gate -- \\');
+    expect(workflowSource).toContain(
+      'npm run release:stop-gate -- --marker releases/wave3-kpi-marker.json'
+    );
     expect(workflowSource).toContain('--marker releases/wave3-kpi-marker.json');
     expect(workflowSource).toContain('--claim-checklist releases/wave3-claim-checklist.md');
     expect(workflowSource).toContain('--enterprise-gate releases/wave3-enterprise-gate.json');

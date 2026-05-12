@@ -45,13 +45,4 @@ jobs:
         run: npm run test:parity-contract
 
       - name: Release stop gate (contract/parity)
-        run: |
-          npm run release:stop-gate -- \
-            --marker releases/wave3-kpi-marker.json \
-            --marker-max-age-hours 100000 \
-            --claim-checklist releases/wave3-claim-checklist.md \
-            --enforce-claim-checklist \
-            --enterprise-gate releases/wave3-enterprise-gate.json \
-            --enforce-enterprise-freeze \
-            --release-notes releases/release-posture-label.md \
-            --enforce-release-posture-label
+        run: npm run release:stop-gate -- --marker releases/wave3-kpi-marker.json --marker-max-age-hours 100000 --claim-checklist releases/wave3-claim-checklist.md --enforce-claim-checklist --enterprise-gate releases/wave3-enterprise-gate.json --enforce-enterprise-freeze --release-notes releases/release-posture-label.md --enforce-release-posture-label
