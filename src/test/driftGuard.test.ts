@@ -187,12 +187,23 @@ describe('contract drift guard', () => {
     expect(packageJsonSource).toContain(
       '"release:stop-gate": "node scripts/release-stop-gate.mjs"'
     );
+    expect(packageJsonSource).toContain(
+      '"release:open-issues-report": "node scripts/export-open-issues-report.mjs"'
+    );
     expect(workflowSource).toContain('Release stop gate (contract/parity)');
     expect(workflowSource).toContain('Shared parity contract snapshot');
+    expect(workflowSource).toContain('Open issue severity report');
+    expect(workflowSource).toContain('npm run release:open-issues-report -- --repo');
     expect(workflowSource).toContain('npm run test:parity-contract');
     expect(workflowSource).toContain(
       'npm run release:stop-gate -- --marker releases/wave3-kpi-marker.json'
     );
+    expect(workflowSource).toContain('--issue-report releases/open-issues-report.json');
+    expect(workflowSource).toContain('--enforce-open-issues');
+    expect(workflowSource).toContain('--block-severities p0,p1');
+    expect(workflowSource).toContain('--marker-max-age-hours 720');
+    expect(workflowSource).toContain('--release-readiness-validation-mode auto');
+    expect(workflowSource).toContain('--predictive-calibration-mode production');
     expect(workflowSource).toContain('--marker releases/wave3-kpi-marker.json');
     expect(workflowSource).toContain('--claim-checklist releases/wave3-claim-checklist.md');
     expect(workflowSource).toContain('--enterprise-gate releases/wave3-enterprise-gate.json');

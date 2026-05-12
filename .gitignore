@@ -41,3 +41,6 @@ temp/
 
 # Internal release governance fixtures (not for public repo)
 releases/fixtures/
+
+# Runtime release gate artifacts
+releases/open-issues-report.json

@@ -1562,6 +1562,7 @@
     "test:stress:incident-studio": "vitest run src/test/incidentStudioLifecycle.test.ts src/test/incidentStudioStressGate.test.ts src/test/debounceWatchers.test.ts",
     "test:vscode": "vscode-test",
     "release:stop-gate": "node scripts/release-stop-gate.mjs",
+    "release:open-issues-report": "node scripts/export-open-issues-report.mjs",
     "sync:modules": "node scripts/sync-modules.mjs",
     "package": "vsce package",
     "publish": "vsce publish",
