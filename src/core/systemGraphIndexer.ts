@@ -105,6 +105,34 @@ export interface DeterministicImpactScoringResult {
   architectureWarnings: string[];
 }
 
+export const IMPACT_SCORE_CONTRACT_SCHEMA_VERSION = 'e1-impact-score-contract.v1' as const;
+export const IMPACT_SCORE_CONTRACT_MODEL_VERSION = 'c11-deterministic.v1' as const;
+export const IMPACT_SCORE_SCOPE_MODEL_VERSION = 'graph-seed-scope.v1' as const;
+
+export interface ImpactScoreContractV1 {
+  schemaVersion: typeof IMPACT_SCORE_CONTRACT_SCHEMA_VERSION;
+  scoringModelVersion: typeof IMPACT_SCORE_CONTRACT_MODEL_VERSION;
+  scopeModelVersion: typeof IMPACT_SCORE_SCOPE_MODEL_VERSION;
+  generatedAt: string;
+  supportedTopology: string;
+  scopeKnown: boolean;
+  confidence: number;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  impactedModules: string[];
+  candidateTests: string[];
+  crossServiceBoundaryPaths: string[];
+  signalCounts: {
+    impactedNodeCount: number;
+    impactedEdgeCount: number;
+    impactedModuleCount: number;
+    candidateTestCount: number;
+    crossServiceBoundaryCount: number;
+  };
+  blockedReasons: string[];
+  architectureWarnings: string[];
+  likelyFailureMode?: string;
+}
+
 export interface ProjectSystemGraphWatcherUpdate {
   reason: 'initial' | 'fs-event' | 'manual';
   snapshot: ProjectSystemGraphSnapshot;
@@ -1163,8 +1191,70 @@ export interface SystemGraphContextPacket {
   snapshot: ProjectSystemGraphSnapshot;
   impact: SystemGraphImpactQueryResult;
   scoring: DeterministicImpactScoringResult;
+  impactScoreContract: ImpactScoreContractV1;
   /** Compact text summary ready for injection into an AI prompt context slot. */
   aiContextSummary: string;
+}
+
+function buildCrossServiceBoundaryPaths(impactNodes: SystemGraphNode[]): string[] {
+  const boundaries = Array.from(
+    new Set(
+      impactNodes
+        .filter(
+          (node) =>
+            node.type === 'route' ||
+            node.type === 'controller' ||
+            node.type === 'service' ||
+            node.type === 'datastore'
+        )
+        .map((node) => inferServiceBoundary(node))
+        .filter((boundary) => boundary.length > 0)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  const paths: string[] = [];
+  for (let i = 0; i < boundaries.length; i += 1) {
+    for (let j = i + 1; j < boundaries.length; j += 1) {
+      paths.push(`${boundaries[i]} -> ${boundaries[j]}`);
+      if (paths.length >= 6) {
+        return paths;
+      }
+    }
+  }
+  return paths;
+}
+
+export function buildImpactScoreContractV1(input: {
+  impactQuery: SystemGraphImpactQueryResult;
+  scoring: DeterministicImpactScoringResult;
+  graphSnapshot: ProjectSystemGraphSnapshot;
+  generatedAt?: string;
+}): ImpactScoreContractV1 {
+  const crossServiceBoundaryPaths = buildCrossServiceBoundaryPaths(input.impactQuery.impactedNodes);
+
+  return {
+    schemaVersion: IMPACT_SCORE_CONTRACT_SCHEMA_VERSION,
+    scoringModelVersion: IMPACT_SCORE_CONTRACT_MODEL_VERSION,
+    scopeModelVersion: IMPACT_SCORE_SCOPE_MODEL_VERSION,
+    generatedAt: input.generatedAt || new Date().toISOString(),
+    supportedTopology: input.graphSnapshot.supportedTopology || 'unknown',
+    scopeKnown: input.scoring.scopeKnown,
+    confidence: clampConfidence(input.scoring.confidence),
+    riskLevel: input.scoring.riskLevel,
+    impactedModules: uniqueStrings(input.impactQuery.impactedModules).slice(0, 8),
+    candidateTests: uniqueStrings(input.impactQuery.candidateTests).slice(0, 8),
+    crossServiceBoundaryPaths,
+    signalCounts: {
+      impactedNodeCount: input.impactQuery.impactedNodes.length,
+      impactedEdgeCount: input.impactQuery.impactedEdges.length,
+      impactedModuleCount: input.impactQuery.impactedModules.length,
+      candidateTestCount: input.impactQuery.candidateTests.length,
+      crossServiceBoundaryCount: crossServiceBoundaryPaths.length,
+    },
+    blockedReasons: uniqueStrings(input.scoring.blockedReasons).slice(0, 8),
+    architectureWarnings: uniqueStrings(input.scoring.architectureWarnings).slice(0, 8),
+    likelyFailureMode: input.scoring.likelyFailureMode,
+  };
 }
 
 function buildAiContextSummary(
@@ -1236,10 +1326,17 @@ export async function assembleSystemGraphContextPacket(
     riskClass: input.riskClass ?? 'non-mutating-executable',
   });
 
+  const impactScoreContract = buildImpactScoreContractV1({
+    impactQuery: impact,
+    scoring,
+    graphSnapshot: snapshot,
+  });
+
   return {
     snapshot,
     impact,
     scoring,
+    impactScoreContract,
     aiContextSummary: buildAiContextSummary(snapshot, impact, scoring),
   };
 }

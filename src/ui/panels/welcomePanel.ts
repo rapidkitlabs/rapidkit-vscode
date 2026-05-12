@@ -18,6 +18,8 @@ import {
   indexProjectSystemGraph,
   queryProjectSystemGraphImpact,
   scoreSystemGraphImpactDeterministic,
+  buildImpactScoreContractV1,
+  type ImpactScoreContractV1,
   createProjectSystemGraphWatcher,
   type ProjectSystemGraphWatcherHandle,
 } from '../../core/systemGraphIndexer';
@@ -4965,6 +4967,7 @@ No markdown, no explanation outside the JSON.`;
       affectedFiles: string[];
       affectedModules: string[];
       affectedTests: string[];
+      impactScoreContract: ImpactScoreContractV1;
       likelyFailureMode?: string;
       rationale: string[];
       verifyChecklist: string[];
@@ -5037,6 +5040,12 @@ No markdown, no explanation outside the JSON.`;
       requiresImpactReview: input.actionPolicy.requiresImpactReview,
       requiresVerifyPath: input.actionPolicy.requiresVerifyPath,
       riskClass: input.actionPolicy.riskClass,
+    });
+    const impactScoreContract = buildImpactScoreContractV1({
+      impactQuery,
+      scoring: deterministicScore,
+      graphSnapshot: indexedGraph,
+      generatedAt: new Date().toISOString(),
     });
 
     const nodes: Array<{
@@ -5389,6 +5398,7 @@ No markdown, no explanation outside the JSON.`;
         affectedFiles,
         affectedModules,
         affectedTests,
+        impactScoreContract,
         likelyFailureMode,
         rationale: [
           'Impact is derived from workspace graph topology and doctor/runtime evidence.',

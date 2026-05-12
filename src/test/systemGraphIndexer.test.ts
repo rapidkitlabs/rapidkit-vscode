@@ -8,6 +8,9 @@ import {
   indexProjectSystemGraph,
   queryProjectSystemGraphImpact,
   scoreSystemGraphImpactDeterministic,
+  buildImpactScoreContractV1,
+  IMPACT_SCORE_CONTRACT_SCHEMA_VERSION,
+  IMPACT_SCORE_CONTRACT_MODEL_VERSION,
   assembleSystemGraphContextPacket,
 } from '../core/systemGraphIndexer';
 
@@ -407,6 +410,83 @@ describe('systemGraphIndexer', () => {
     expect(
       score.rationale.some((line) => line.toLowerCase().includes('data-flow dependency chain'))
     ).toBe(true);
+  });
+
+  it('builds a versioned E1 impact score contract with boundary paths', () => {
+    const impact = {
+      impactedNodes: [
+        {
+          id: 'controller:src/orders/controllers/orderController.ts',
+          type: 'controller' as const,
+          label: 'OrderController',
+          filePath: 'src/orders/controllers/orderController.ts',
+          confidence: 88,
+        },
+        {
+          id: 'service:src/payments/services/paymentService.ts',
+          type: 'service' as const,
+          label: 'PaymentService',
+          filePath: 'src/payments/services/paymentService.ts',
+          confidence: 86,
+        },
+      ],
+      impactedEdges: [
+        {
+          sourceId: 'controller:src/orders/controllers/orderController.ts',
+          targetId: 'service:src/payments/services/paymentService.ts',
+          relation: 'calls' as const,
+        },
+      ],
+      candidateTests: ['tests/orders/orderController.test.ts'],
+      impactedModules: ['orders', 'payments'],
+      confidence: 78,
+      unknownScope: false,
+    };
+
+    const score = scoreSystemGraphImpactDeterministic({
+      impactQuery: impact,
+      graphSnapshot: {
+        scanRoot: '/workspace',
+        supportedTopology: 'node.backend',
+        nodes: impact.impactedNodes,
+        edges: impact.impactedEdges,
+        scannedFileCount: 2,
+        topModules: ['orders', 'payments'],
+        refreshMode: 'full',
+        changedFileCount: 0,
+        generatedAt: Date.now(),
+      },
+      doctorErrors: 0,
+      doctorWarnings: 0,
+      requiresImpactReview: true,
+      requiresVerifyPath: true,
+      riskClass: 'guarded-mutating',
+    });
+
+    const contract = buildImpactScoreContractV1({
+      impactQuery: impact,
+      scoring: score,
+      graphSnapshot: {
+        scanRoot: '/workspace',
+        supportedTopology: 'node.backend',
+        nodes: impact.impactedNodes,
+        edges: impact.impactedEdges,
+        scannedFileCount: 2,
+        topModules: ['orders', 'payments'],
+        refreshMode: 'full',
+        changedFileCount: 0,
+        generatedAt: Date.now(),
+      },
+      generatedAt: '2026-05-12T00:00:00.000Z',
+    });
+
+    expect(contract.schemaVersion).toBe(IMPACT_SCORE_CONTRACT_SCHEMA_VERSION);
+    expect(contract.scoringModelVersion).toBe(IMPACT_SCORE_CONTRACT_MODEL_VERSION);
+    expect(contract.supportedTopology).toBe('node.backend');
+    expect(contract.scopeKnown).toBe(true);
+    expect(contract.signalCounts.impactedNodeCount).toBe(2);
+    expect(contract.signalCounts.candidateTestCount).toBe(1);
+    expect(contract.crossServiceBoundaryPaths.length).toBeGreaterThan(0);
   });
 
   it('emits watcher updates on file changes', async () => {

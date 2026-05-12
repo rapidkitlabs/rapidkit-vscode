@@ -371,6 +371,29 @@ export type NormalizedIncidentImpactAssessmentPayload = {
   affectedFiles: string[];
   affectedModules: string[];
   affectedTests: string[];
+  impactScoreContract?: {
+    schemaVersion: string;
+    scoringModelVersion: string;
+    scopeModelVersion: string;
+    generatedAt?: string;
+    supportedTopology: string;
+    scopeKnown: boolean;
+    confidence: number;
+    riskLevel: IncidentActionRiskLevel;
+    impactedModules: string[];
+    candidateTests: string[];
+    crossServiceBoundaryPaths: string[];
+    signalCounts: {
+      impactedNodeCount: number;
+      impactedEdgeCount: number;
+      impactedModuleCount: number;
+      candidateTestCount: number;
+      crossServiceBoundaryCount: number;
+    };
+    blockedReasons: string[];
+    architectureWarnings: string[];
+    likelyFailureMode?: string;
+  };
   likelyFailureMode?: string;
   rationale: string[];
   verifyChecklist: string[];
@@ -1264,6 +1287,57 @@ export function normalizeIncidentImpactAssessmentPayload(
   value: unknown
 ): NormalizedIncidentImpactAssessmentPayload {
   const root = asRecord(value);
+  const impactScoreContractRoot = asRecord(root.impactScoreContract);
+
+  const impactScoreContract = Object.keys(impactScoreContractRoot).length
+    ? {
+        schemaVersion: sanitizeIncidentText(impactScoreContractRoot.schemaVersion, 80) || 'unknown',
+        scoringModelVersion:
+          sanitizeIncidentText(impactScoreContractRoot.scoringModelVersion, 80) || 'unknown',
+        scopeModelVersion:
+          sanitizeIncidentText(impactScoreContractRoot.scopeModelVersion, 80) || 'unknown',
+        generatedAt: sanitizeIncidentText(impactScoreContractRoot.generatedAt, 80),
+        supportedTopology:
+          sanitizeIncidentText(impactScoreContractRoot.supportedTopology, 120) || 'unknown',
+        scopeKnown: asBoolean(impactScoreContractRoot.scopeKnown, false),
+        confidence: clampNumber(asNumber(impactScoreContractRoot.confidence, 0), 0, 100),
+        riskLevel: normalizeIncidentRiskLevel(impactScoreContractRoot.riskLevel),
+        impactedModules: sanitizeStringArray(impactScoreContractRoot.impactedModules, 120),
+        candidateTests: sanitizeStringArray(impactScoreContractRoot.candidateTests, 180),
+        crossServiceBoundaryPaths: sanitizeStringArray(
+          impactScoreContractRoot.crossServiceBoundaryPaths,
+          160
+        ),
+        signalCounts: {
+          impactedNodeCount: Math.max(
+            0,
+            asNumber(impactScoreContractRoot.signalCounts?.impactedNodeCount, 0)
+          ),
+          impactedEdgeCount: Math.max(
+            0,
+            asNumber(impactScoreContractRoot.signalCounts?.impactedEdgeCount, 0)
+          ),
+          impactedModuleCount: Math.max(
+            0,
+            asNumber(impactScoreContractRoot.signalCounts?.impactedModuleCount, 0)
+          ),
+          candidateTestCount: Math.max(
+            0,
+            asNumber(impactScoreContractRoot.signalCounts?.candidateTestCount, 0)
+          ),
+          crossServiceBoundaryCount: Math.max(
+            0,
+            asNumber(impactScoreContractRoot.signalCounts?.crossServiceBoundaryCount, 0)
+          ),
+        },
+        blockedReasons: sanitizeStringArray(impactScoreContractRoot.blockedReasons, 220),
+        architectureWarnings: sanitizeStringArray(
+          impactScoreContractRoot.architectureWarnings,
+          240
+        ),
+        likelyFailureMode: sanitizeIncidentText(impactScoreContractRoot.likelyFailureMode, 240),
+      }
+    : undefined;
 
   return {
     requestId: cleanText(root.requestId),
@@ -1273,6 +1347,7 @@ export function normalizeIncidentImpactAssessmentPayload(
     affectedFiles: sanitizeStringArray(root.affectedFiles, 240),
     affectedModules: sanitizeStringArray(root.affectedModules, 120),
     affectedTests: sanitizeStringArray(root.affectedTests, 180),
+    ...(impactScoreContract ? { impactScoreContract } : {}),
     likelyFailureMode: sanitizeIncidentText(root.likelyFailureMode, 240),
     rationale: sanitizeStringArray(root.rationale, 280),
     verifyChecklist: sanitizeStringArray(root.verifyChecklist, 240),
