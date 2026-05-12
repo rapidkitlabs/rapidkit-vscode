@@ -52,10 +52,10 @@ Highlights:
   - smoke matrix release gate now enforced without KPI bypass
   - smoke matrix includes `format:check` (non-Windows)
   - release-stop-gate uses deterministic fixture inputs:
-  - `releases/fixtures/wave3-kpi-marker.json`
-  - `releases/fixtures/wave3-claim-checklist.md`
-  - `releases/fixtures/wave3-enterprise-gate.json`
-  - `releases/fixtures/release-posture-label.md`
+  - `releases/wave3-kpi-marker.json`
+  - `releases/wave3-claim-checklist.md`
+  - `releases/wave3-enterprise-gate.json`
+  - `releases/release-posture-label.md`
 
 - **Regression coverage added**
   - New tests: `AIIncidentStudio.component`, `AIIncidentStudio.interaction`, `findWorkspace`, `importStackParity.snapshot`, `verifyPackContractExporter`, `workspaceHygieneProbes`

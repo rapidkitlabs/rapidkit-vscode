@@ -60,10 +60,10 @@ This release is a stabilization-heavy patch focused on Incident Studio trust gua
 
 ## CI release fixtures enforced
 
-- `releases/fixtures/wave3-kpi-marker.json`
-- `releases/fixtures/wave3-claim-checklist.md`
-- `releases/fixtures/wave3-enterprise-gate.json`
-- `releases/fixtures/release-posture-label.md`
+- `releases/wave3-kpi-marker.json`
+- `releases/wave3-claim-checklist.md`
+- `releases/wave3-enterprise-gate.json`
+- `releases/release-posture-label.md`
 
 ## Governance posture
 

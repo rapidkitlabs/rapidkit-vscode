@@ -191,7 +191,10 @@ describe('contract drift guard', () => {
     expect(workflowSource).toContain('Shared parity contract snapshot');
     expect(workflowSource).toContain('npm run test:parity-contract');
     expect(workflowSource).toContain('npm run release:stop-gate -- \\');
-    expect(workflowSource).toContain('--marker releases/fixtures/wave3-kpi-marker.json');
+    expect(workflowSource).toContain('--marker releases/wave3-kpi-marker.json');
+    expect(workflowSource).toContain('--claim-checklist releases/wave3-claim-checklist.md');
+    expect(workflowSource).toContain('--enterprise-gate releases/wave3-enterprise-gate.json');
+    expect(workflowSource).toContain('--release-notes releases/release-posture-label.md');
     expect(workflowSource).toContain('--enforce-claim-checklist');
     expect(workflowSource).toContain('--enforce-enterprise-freeze');
     expect(workflowSource).toContain('--enforce-release-posture-label');
