@@ -287,7 +287,10 @@ export interface StudioRollbackKpiStatus {
 
 export interface StudioStabilizationKpiThresholds {
   routePrecisionMin: number;
+  routeFallbackNonSuccessShareMax: number;
   verifyPathCompletionRateMin: number;
+  verifyIncompleteWarningRateMax: number;
+  topVerifyPathMissReasonShareMax: number;
   falseConfidenceRateMax: number;
   rollbackRecoverySuccessRateMin: number;
   repeatVerifiedResolutionRateMin: number;
@@ -304,9 +307,12 @@ export interface StudioStabilizationKpiStatus {
     routeMatchedWithoutFallback: number;
     routeFallbackCount: number;
     routePrecision: number | null;
+    routeFallbackNonSuccessShare: number | null;
     verifyRequired: number;
     verifyPathPresent: number;
     verifyPathCompletionRate: number | null;
+    verifyIncompleteWarningCount: number;
+    verifyIncompleteWarningRate: number | null;
     verifyFailed: number;
     rollbackAttempted: number;
     rollbackSucceeded: number;
@@ -328,6 +334,7 @@ export interface StudioStabilizationKpiStatus {
       reason: string;
       count: number;
     }>;
+    topVerifyPathMissReasonShare?: number | null;
     recoveryClassBreakdown?: {
       auto_rollback: number;
       manual_recovery: number;
@@ -337,10 +344,13 @@ export interface StudioStabilizationKpiStatus {
   gates: {
     telemetryEvidencePass: boolean;
     routePrecisionPass: boolean;
+    routeFallbackNonSuccessSharePass: boolean;
     verifyPathCompletionRatePass: boolean;
+    verifyIncompleteWarningRatePass: boolean;
     falseConfidenceRatePass: boolean;
     rollbackRecoverySuccessRatePass: boolean;
     repeatVerifiedResolutionRatePass: boolean;
+    topVerifyPathMissReasonSharePass: boolean;
     overallPass: boolean;
   };
 }
@@ -2592,6 +2602,8 @@ export class WorkspaceUsageTracker {
       const rollbackSucceeded = usageMap.get('workspai.studio.rollback_succeeded') ?? 0;
       const repeatedIncidentDetected =
         usageMap.get('workspai.studio.repeated_incident_detected') ?? 0;
+      const verifyIncompleteWarningCount =
+        usageMap.get('workspai.studio.verify_incomplete_warning') ?? 0;
 
       let routeMatchedWithoutFallback = 0;
       let routeFallbackCount = 0;
@@ -2719,7 +2731,12 @@ export class WorkspaceUsageTracker {
       }
 
       const routePrecision = this.percent(routeMatchedWithoutFallback, nextActionClicked);
+      const routeFallbackNonSuccessShare = this.percent(routeFallbackCount, nextActionClicked);
       const verifyPathCompletionRate = this.percent(verifyPathPresent, verifyRequired);
+      const verifyIncompleteWarningRate = this.percent(
+        verifyIncompleteWarningCount,
+        verifyRequired
+      );
       const falseConfidenceRate =
         verifyFailed > 0
           ? Number((((verifyFailed - rollbackSucceeded) / verifyFailed) * 100).toFixed(2))
@@ -2737,14 +2754,33 @@ export class WorkspaceUsageTracker {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
         .map(([reason, count]) => ({ reason, count }));
+      const topVerifyPathMissReasonShare =
+        verifyPathReasonTop.length > 0
+          ? this.percent(
+              verifyPathReasonTop[0].count,
+              [...verifyPathReasonCount.values()].reduce((sum, count) => sum + count, 0)
+            )
+          : null;
 
       const resolvedThresholds: StudioStabilizationKpiThresholds = {
         routePrecisionMin:
           typeof thresholds.routePrecisionMin === 'number' ? thresholds.routePrecisionMin : 85,
+        routeFallbackNonSuccessShareMax:
+          typeof thresholds.routeFallbackNonSuccessShareMax === 'number'
+            ? thresholds.routeFallbackNonSuccessShareMax
+            : 20,
         verifyPathCompletionRateMin:
           typeof thresholds.verifyPathCompletionRateMin === 'number'
             ? thresholds.verifyPathCompletionRateMin
             : 60,
+        verifyIncompleteWarningRateMax:
+          typeof thresholds.verifyIncompleteWarningRateMax === 'number'
+            ? thresholds.verifyIncompleteWarningRateMax
+            : 40,
+        topVerifyPathMissReasonShareMax:
+          typeof thresholds.topVerifyPathMissReasonShareMax === 'number'
+            ? thresholds.topVerifyPathMissReasonShareMax
+            : 30,
         falseConfidenceRateMax:
           typeof thresholds.falseConfidenceRateMax === 'number'
             ? thresholds.falseConfidenceRateMax
@@ -2763,9 +2799,15 @@ export class WorkspaceUsageTracker {
         nextActionClicked > 0 || verifyPassed > 0 || verifyFailed > 0 || rollbackAttempted > 0;
       const routePrecisionPass =
         routePrecision !== null && routePrecision >= resolvedThresholds.routePrecisionMin;
+      const routeFallbackNonSuccessSharePass =
+        routeFallbackNonSuccessShare !== null &&
+        routeFallbackNonSuccessShare <= resolvedThresholds.routeFallbackNonSuccessShareMax;
       const verifyPathCompletionRatePass =
         verifyPathCompletionRate !== null &&
         verifyPathCompletionRate >= resolvedThresholds.verifyPathCompletionRateMin;
+      const verifyIncompleteWarningRatePass =
+        verifyIncompleteWarningRate === null ||
+        verifyIncompleteWarningRate <= resolvedThresholds.verifyIncompleteWarningRateMax;
       const falseConfidenceRatePass =
         falseConfidenceRate !== null &&
         falseConfidenceRate <= resolvedThresholds.falseConfidenceRateMax;
@@ -2775,6 +2817,9 @@ export class WorkspaceUsageTracker {
       const repeatVerifiedResolutionRatePass =
         repeatVerifiedResolutionRate === null ||
         repeatVerifiedResolutionRate >= resolvedThresholds.repeatVerifiedResolutionRateMin;
+      const topVerifyPathMissReasonSharePass =
+        topVerifyPathMissReasonShare === null ||
+        topVerifyPathMissReasonShare <= resolvedThresholds.topVerifyPathMissReasonShareMax;
 
       return {
         workspacePath,
@@ -2787,9 +2832,12 @@ export class WorkspaceUsageTracker {
           routeMatchedWithoutFallback,
           routeFallbackCount,
           routePrecision,
+          routeFallbackNonSuccessShare,
           verifyRequired,
           verifyPathPresent,
           verifyPathCompletionRate,
+          verifyIncompleteWarningCount,
+          verifyIncompleteWarningRate,
           verifyFailed,
           rollbackAttempted,
           rollbackSucceeded,
@@ -2802,15 +2850,19 @@ export class WorkspaceUsageTracker {
           repeatVerifiedWithArtifactRate,
           fallbackReasonBreakdown,
           verifyPathReasonTop,
+          topVerifyPathMissReasonShare,
           recoveryClassBreakdown,
         },
         gates: {
           telemetryEvidencePass,
           routePrecisionPass,
+          routeFallbackNonSuccessSharePass,
           verifyPathCompletionRatePass,
+          verifyIncompleteWarningRatePass,
           falseConfidenceRatePass,
           rollbackRecoverySuccessRatePass,
           repeatVerifiedResolutionRatePass,
+          topVerifyPathMissReasonSharePass,
           overallPass:
             telemetryEvidencePass &&
             routePrecisionPass &&

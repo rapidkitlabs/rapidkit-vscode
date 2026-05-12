@@ -1,5 +1,68 @@
 # Release Notes
 
+## v0.27.3 (May 12, 2026)
+
+### ✦ Enterprise Stability Hardening Patch
+
+Summary:
+- Hardens Incident Studio trust semantics: no false "verification passed" claims under NO-GO or blocked verify gates.
+- Makes guided flow deterministic and lower-noise (next + verify focus, dense action board hidden in guided mode).
+- Expands stabilization KPI model with actionable anti-false-positive signals.
+- Adds policy/evidence/provenance modules with dedicated unit regression suites.
+- Enforces CI release-stop and formatting gates with deterministic fixture inputs.
+- Adds parity snapshot sync/check automation and workspace boundary-safe registry fallback.
+
+Highlights:
+- **Incident Studio behavior and policy (webview + host)**
+  - `webview-ui/src/components/AIIncidentStudio.tsx`:
+    - verify-claim guard (`verificationClaimGuardReason`) added and enforced
+    - GO decision downgraded to HOLD if verify gates block completion
+    - explicit scope-truth and telemetry-truth labels rendered
+    - guided mode now shows deterministic intent chips and hides dense action board
+  - `src/ui/panels/incidentStudioPolicyGates.ts`: deterministic verify-completion gate enforcement
+  - `src/ui/panels/incidentStudioResponseValidator.ts`: response contract validator (length/sections/commands/assumptions)
+  - `src/ui/panels/incidentStudioVerifyRerun.ts`: one-click rerun state model
+  - `src/ui/panels/incidentStudioVerifyDiff.ts`: failed vs passed output diff utilities
+  - `src/ui/panels/incidentStudioEvidenceMapping.ts`, `incidentStudioEvidenceProvenance.ts`, `incidentStudioConfidenceUI.ts`, `incidentStudioExportProvenance.ts`: provenance-aware confidence and export surfaces
+
+- **Command transport and scope reliability**
+  - Portable execution command normalized to `npx --yes --package rapidkit rapidkit ...`
+  - Display layer simplified to `rapidkit ...` for readability
+  - Scope-aware execution routing and shell dispatch strengthened in `src/ui/panels/welcomePanel.ts`
+
+- **Stabilization KPI expansion**
+  - `src/utils/workspaceUsageTracker.ts` + payload contracts now include:
+    - `routeFallbackNonSuccessShare`
+    - `verifyIncompleteWarningRate`
+    - `topVerifyPathMissReasonShare`
+  - new threshold and gate fields propagated to Incident Studio card/snapshot logic
+
+- **Core contracts and tooling**
+  - New core modules:
+    - `src/core/backendFrameworkContract.ts`
+    - `src/core/verifyPackContractExporter.ts`
+    - `src/core/workspaceHygieneProbes.ts`
+  - Parity snapshot support:
+    - `contracts/backend-import-stack-parity.snapshot.json`
+    - `scripts/sync-import-stack-parity-snapshot.mjs`
+    - `npm run sync:parity-snapshot`
+    - `npm run check:parity-snapshot`
+
+- **CI and release governance**
+  - smoke matrix release gate now enforced without KPI bypass
+  - smoke matrix includes `format:check` (non-Windows)
+  - release-stop-gate uses deterministic fixture inputs:
+  - `releases/fixtures/wave3-kpi-marker.json`
+  - `releases/fixtures/wave3-claim-checklist.md`
+  - `releases/fixtures/wave3-enterprise-gate.json`
+  - `releases/fixtures/release-posture-label.md`
+
+- **Regression coverage added**
+  - New tests: `AIIncidentStudio.component`, `AIIncidentStudio.interaction`, `findWorkspace`, `importStackParity.snapshot`, `verifyPackContractExporter`, `workspaceHygieneProbes`
+  - New Incident Studio policy/evidence/provenance test suites for confidence, export, policy gates, response validation, verify diff/rerun
+
+Release posture: `stabilization-only`
+
 ## v0.27.2 (May 10, 2026)
 
 ### ✦ Webview Disposal Safety Patch

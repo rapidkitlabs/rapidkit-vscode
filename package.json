@@ -2,7 +2,7 @@
   "name": "rapidkit-vscode",
   "displayName": "Workspai",
   "description": "The AI workspace for backend teams. Build backend systems with AI that knows your workspace, generate projects and modules from intent, debug with full context, and ship faster — all inside VS Code. FastAPI, NestJS, Spring Boot, Go/Fiber & Go/Gin.",
-  "version": "0.27.2",
+  "version": "0.27.3",
   "publisher": "rapidkit",
   "icon": "media/icons/icon.png",
   "galleryBanner": {
@@ -319,6 +319,12 @@
         "title": "Export Workspace Share Bundle",
         "category": "Workspai",
         "icon": "$(export)"
+      },
+      {
+        "command": "workspai.exportVerifyPackContract",
+        "title": "Export Verify-Pack Contract",
+        "category": "Workspai",
+        "icon": "$(verified)"
       },
       {
         "command": "workspai.editWorkspaceMemory",
@@ -812,6 +818,9 @@
           "command": "workspai.exportWorkspaceShareBundle"
         },
         {
+          "command": "workspai.exportVerifyPackContract"
+        },
+        {
           "command": "workspai.cacheStatus"
         },
         {
@@ -1121,6 +1130,11 @@
           "command": "workspai.workspaceRunStart",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "workspace_run@4"
+        },
+        {
+          "command": "workspai.exportVerifyPackContract",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_run@5"
         },
         {
           "command": "workspai.workspacePolicyShow",
@@ -1541,6 +1555,9 @@
     "lint:fix": "eslint src --ext ts --fix",
     "test": "vitest run",
     "test:watch": "vitest",
+    "sync:parity-snapshot": "node scripts/sync-import-stack-parity-snapshot.mjs",
+    "check:parity-snapshot": "node scripts/sync-import-stack-parity-snapshot.mjs --check",
+    "test:parity-contract": "npm run sync:parity-snapshot && vitest run src/test/importStackParity.snapshot.test.ts",
     "test:coverage": "vitest run --coverage",
     "test:stress:incident-studio": "vitest run src/test/incidentStudioLifecycle.test.ts src/test/incidentStudioStressGate.test.ts src/test/debounceWatchers.test.ts",
     "test:vscode": "vscode-test",
@@ -1581,6 +1598,7 @@
     "esbuild": "^0.25.12",
     "eslint": "^8.57.0",
     "husky": "^9.1.7",
+    "jsdom": "^29.1.1",
     "lint-staged": "^16.2.7",
     "prettier": "^3.2.5",
     "typescript": "^5.5.0",

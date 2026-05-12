@@ -12,6 +12,7 @@ export type FrameworkName =
   | 'nestjs'
   | 'express'
   | 'koa'
+  | 'gofiber'
   | 'gin'
   | 'echo'
   | 'spring'
@@ -253,6 +254,44 @@ export const KOA_PROFILE: FrameworkProfile = {
 };
 
 // ============================================================================
+// GoFiber Profile (Go)
+// ============================================================================
+
+export const GOFIBER_PROFILE: FrameworkProfile = {
+  name: 'gofiber',
+  runtime: 'go',
+  detectionSignals: [
+    {
+      source: 'packageManager',
+      pattern: /github\.com\/gofiber\/fiber/,
+      weight: 0.99,
+    },
+    {
+      source: 'imports',
+      pattern: /"github\.com\/gofiber\/fiber(?:\/v2)?"/,
+      weight: 0.98,
+    },
+    {
+      source: 'entrypoint',
+      pattern: /fiber\.New\(\)/,
+      weight: 0.99,
+    },
+  ],
+  filePatterns: [/main\.go$/],
+  entryPointPatterns: [
+    /fiber\.New\(\)/,
+    /app\.Get|app\.Post|app\.Put|app\.Delete/,
+    /app\.Listen\(/,
+  ],
+  dependencyPatterns: [/github\.com\/gofiber\/fiber/],
+  runCommand: 'go run main.go',
+  testCommand: 'go test ./...',
+  buildCommand: 'go build',
+  description: 'Express-inspired Go web framework focused on speed, low overhead, and ergonomics',
+  popularity: 'high',
+};
+
+// ============================================================================
 // Gin Profile (Go)
 // ============================================================================
 
@@ -444,6 +483,7 @@ export const FRAMEWORK_PROFILES: Record<FrameworkName, FrameworkProfile> = {
   nestjs: NESTJS_PROFILE,
   express: EXPRESS_PROFILE,
   koa: KOA_PROFILE,
+  gofiber: GOFIBER_PROFILE,
   gin: GIN_PROFILE,
   echo: ECHO_PROFILE,
   spring: SPRING_PROFILE,

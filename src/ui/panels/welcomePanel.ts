@@ -1559,7 +1559,7 @@ No markdown, no explanation outside the JSON.`;
               if (prepared.validation.clarificationNeeded) {
                 const clarificationText =
                   prepared.validation.clarificationReason ??
-                  'Context evidence is missing. Please select a workspace and run npx rapidkit doctor workspace, then ask again.';
+                  'Context evidence is missing. Please select a workspace and run npx --yes --package rapidkit rapidkit doctor workspace, then ask again.';
 
                 if (canTrackTelemetry) {
                   try {
@@ -1892,11 +1892,19 @@ No markdown, no explanation outside the JSON.`;
             await this._sendAvailableKits();
             break;
           case 'requestIncidentStudioTelemetry':
-            await this._sendIncidentStudioTelemetry(
-              message.data?.workspacePath,
-              message.data?.projectPath,
-              message.data?.forceRefresh === true
-            );
+            try {
+              await this._sendIncidentStudioTelemetry(
+                message.data?.workspacePath,
+                message.data?.projectPath,
+                message.data?.forceRefresh === true
+              );
+            } catch (error) {
+              console.warn('[WelcomePanel] incident telemetry refresh failed:', error);
+              this._panel.webview.postMessage({
+                command: 'incidentStudioTelemetry',
+                data: null,
+              });
+            }
             break;
           case 'aiChatStart':
             await this._handleAiChatStart(message.data, protocolRequestId);
@@ -2539,7 +2547,7 @@ No markdown, no explanation outside the JSON.`;
                   let finalCommand = inlineCommand;
                   const normalizedCommand = inlineCommand.replace(/\s+/g, ' ').trim();
                   const isWorkspaceScopedRapidkitCommand =
-                    /^(?:npx\s+rapidkit|rapidkit|poetry\s+run\s+rapidkit|\.\/\.venv\/bin\/rapidkit|\.\/rapidkit)\s+(?:create(?:\s+workspace|\s+project)?|bootstrap\b|setup\b|workspace\b|cache\b|mirror\b|doctor\s+workspace\b)/.test(
+                    /^(?:(?:npx\s+(?:(?:--yes\s+--package\s+rapidkit\s+)?rapidkit))|rapidkit|poetry\s+run\s+rapidkit|\.\/\.venv\/bin\/rapidkit|\.\/rapidkit)\s+(?:create(?:\s+workspace|\s+project)?|bootstrap\b|setup\b|workspace\b|cache\b|mirror\b|readiness\b|doctor\s+workspace\b)/.test(
                       normalizedCommand
                     );
                   const effectiveCwd =
@@ -2572,8 +2580,13 @@ No markdown, no explanation outside the JSON.`;
                     }
                   }
 
-                  // Run via shell so quotes/pipes/redirects are handled natively
-                  const result = await run('sh', ['-c', finalCommand], {
+                  // Run via native shell so quotes/pipes/redirects are handled on every OS.
+                  const shellCommand =
+                    process.platform === 'win32'
+                      ? { cmd: 'cmd', args: ['/d', '/s', '/c', finalCommand] }
+                      : { cmd: 'sh', args: ['-c', finalCommand] };
+
+                  const result = await run(shellCommand.cmd, shellCommand.args, {
                     cwd: effectiveCwd,
                     shell: false,
                     timeout: 60_000,
@@ -3814,6 +3827,9 @@ No markdown, no explanation outside the JSON.`;
         'If multiple projects share a root cause (same framework issue, missing deps, config drift), name the shared pattern and address it once.',
         'Do NOT recommend project-specific commands as the primary answer unless workspace health shows a single-project bottleneck that clearly dominates.',
         'PRIORITY: Rank recommendations by workspace-wide impact, not per-project severity in isolation.',
+        'CLARITY: Keep total response length to 8-12 lines. No markdown tables. No fenced code blocks unless user explicitly asks.',
+        'COMMANDS: Recommended Action and Verification must each contain exactly one deterministic command in plain text.',
+        'CONFIDENCE: If a claim depends on inferred/partial evidence, add a single short assumption line.',
       ];
 
       return [
@@ -3826,13 +3842,12 @@ No markdown, no explanation outside the JSON.`;
         '',
         'Respond using this exact structure and headings:',
         'Workspace Status: <health score — e.g. "85% — 17 passed, 2 warnings, 1 error | 3 project(s)">',
-        'Priority Issues:',
-        '  • <project-name>: <issue or "healthy">',
-        '  (list top issues per project; if all healthy, write "No critical issues detected across all projects")',
+        'Priority Issues: <max 3 bullets; if all healthy, write "No critical issues detected across all projects">',
         'Cross-Project Risks: <shared dependencies, config drift, topology risks — or "None detected">',
         'Recommended Action: <workspace-wide next step — single most impactful command or investigation>',
         'Verification: <workspace-level check command, e.g. rapidkit doctor workspace>',
         'Affected Projects: <comma-separated project names needing attention, or "All healthy">',
+        'Assumptions: <"none" or one short confidence-qualified assumption>',
         '',
         'Keep it concise, evidence-backed, and actionable at the workspace level.',
       ].join('\n');
@@ -3868,6 +3883,8 @@ No markdown, no explanation outside the JSON.`;
       'EVIDENCE INTEGRITY: Use only facts present in WORKSPACE ARCHITECTURE and PROJECT EXECUTION STATE blocks. Do not invent missing modules, unknown kit, or missing projects.',
       'If doctor evidence shows healthy projects with zero issues, do not recommend setup/reset commands unless the user explicitly asks for reconfiguration.',
       'Never claim `kit unknown` or `no modules installed` unless those exact conditions are explicitly listed in the evidence block.',
+      'CLARITY: Keep response short (6-10 lines), concrete, and execution-first. Avoid long narrative and avoid repeating the same risk in multiple sections.',
+      'COMMANDS: Return exactly one Next command and one Verify command in plain text; do not wrap them in code fences unless user asks.',
       ...(selectedProjectBelongsToWorkspace
         ? [
             'Answer as a launch/readiness assistant for the selected project first.',
@@ -3946,6 +3963,14 @@ No markdown, no explanation outside the JSON.`;
           typeof project.modulesCount === 'number' && Number.isFinite(project.modulesCount)
             ? ` | modules: ${project.modulesCount}`
             : '';
+        const moduleSlugSample = Array.isArray(project.installedModules)
+          ? project.installedModules
+              .map((mod) => mod.slug)
+              .filter((slug) => typeof slug === 'string' && slug.trim().length > 0)
+              .slice(0, 4)
+          : [];
+        const moduleSlugText =
+          moduleSlugSample.length > 0 ? ` | moduleSlugs: ${moduleSlugSample.join(', ')}` : '';
         const modulesHealthText =
           typeof project.modulesHealthy === 'boolean'
             ? ` | modulesHealthy: ${project.modulesHealthy ? 'yes' : 'no'}`
@@ -3955,7 +3980,7 @@ No markdown, no explanation outside the JSON.`;
             ? ` | vulnerabilities: ${project.vulnerabilities}`
             : '';
         lines.push(
-          `    • ${project.name} (${framework}) — path: ${project.path || `${workspacePath}/${project.name}`}${issueText}${depsText}${kitText}${modulesText}${modulesHealthText}${vulnText}`
+          `    • ${project.name} (${framework}) — path: ${project.path || `${workspacePath}/${project.name}`}${issueText}${depsText}${kitText}${modulesText}${moduleSlugText}${modulesHealthText}${vulnText}`
         );
       }
     }
@@ -7112,7 +7137,18 @@ No markdown, no explanation outside the JSON.`;
     > = [];
     const decisionClaritySituation =
       wave2Contracts.impactAssessment.likelyFailureMode || inlineQuery.trim();
-    const hasNextStep = typeof verifyCommandPack.commands[0]?.command === 'string';
+    const primaryVerifyCommand =
+      verifyCommandPack.commands.find((entry) => entry.required)?.command ||
+      verifyCommandPack.commands[0]?.command;
+    const decisionClarityNextStep =
+      wave2Contracts.predictiveWarning?.nextSafeAction ||
+      (verifyCommandPack.blockedReasons[0]
+        ? `Resolve verify blocker: ${verifyCommandPack.blockedReasons[0]}.`
+        : undefined) ||
+      (primaryVerifyCommand
+        ? 'Run the primary verify step and inspect the result before claiming completion.'
+        : undefined);
+    const hasNextStep = Boolean(decisionClarityNextStep);
     const requiredVerifyCommandCount = verifyCommandPack.commands.filter(
       (entry) => entry.required
     ).length;
@@ -7150,9 +7186,6 @@ No markdown, no explanation outside the JSON.`;
     }
     const decisionClarityCompletionBlocked = decisionClarityMissingFields.length > 0;
     const completionSuccess = effectiveVerifySuccess && !decisionClarityCompletionBlocked;
-    const primaryVerifyCommand =
-      verifyCommandPack.commands.find((entry) => entry.required)?.command ||
-      verifyCommandPack.commands[0]?.command;
     const decisionClarityVerifyPlan =
       verifyCommandPack.commands
         .filter((entry) => entry.required)
@@ -7226,7 +7259,7 @@ No markdown, no explanation outside the JSON.`;
         confidence: diagnosisEvidence.confidence,
         mutating: isMutatingAction || actionPolicy.requiresImpactReview,
       },
-      nextStep: primaryVerifyCommand,
+      nextStep: decisionClarityNextStep,
       verifyPlan:
         decisionClarityVerifyPlan.length > 0
           ? decisionClarityVerifyPlan

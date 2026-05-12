@@ -310,7 +310,7 @@ describe('chatParticipant', () => {
     expect(streamAIResponseMock).not.toHaveBeenCalled();
     expect(stream.markdown).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Please select the workspace/project and run `npx rapidkit doctor workspace`'
+        'Please select the workspace/project and run `npx --yes --package rapidkit rapidkit doctor workspace`'
       )
     );
     expect(trackCommandEventMock).toHaveBeenCalledWith(

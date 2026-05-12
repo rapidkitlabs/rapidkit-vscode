@@ -6,6 +6,8 @@ import {
   runShellCommandInTerminal,
 } from '../utils/terminalExecutor';
 import { evaluateWorkspaiContractRuntime } from '../core/workspaiContractRuntime';
+import { exportVerifyPackContractToWorkspace } from '../core/verifyPackContractExporter';
+import { runWorkspaceHygieneProbes } from '../core/workspaceHygieneProbes';
 
 type WorkspaceExplorerLike = {
   getSelectedWorkspace?: () => { path: string; name?: string } | null | undefined;
@@ -870,7 +872,7 @@ export function registerWorkspaceOperationsCommands(options: {
                 progress.report({ increment: 100, message: 'Complete!' });
 
                 vscode.window.showInformationMessage(
-                  `Health check running for "${workspaceName}". ${c06HealthSummary}. Check the terminal for results.`,
+                  `Workspace health check running for "${workspaceName}". ${c06HealthSummary}. Check the terminal for results.`,
                   'OK'
                 );
               } catch (error) {
@@ -903,7 +905,7 @@ export function registerWorkspaceOperationsCommands(options: {
                 progress.report({ increment: 100, message: 'Complete!' });
 
                 vscode.window.showInformationMessage(
-                  `Doctor fix is running for "${workspaceName}". ${c06HealthSummary}. Check the terminal for details.`,
+                  `Workspace doctor fix is running for "${workspaceName}". ${c06HealthSummary}. Check the terminal for details.`,
                   'OK'
                 );
               } catch (error) {
@@ -1025,6 +1027,34 @@ export function registerWorkspaceOperationsCommands(options: {
               output.appendLine('(Could not parse report JSON — file may be malformed)');
             }
 
+            // ── Workspace hygiene probes ──────────────────────────────────
+            try {
+              const hygieneReport = await runWorkspaceHygieneProbes(workspacePath);
+              output.appendLine('');
+              output.appendLine('--- Workspace Hygiene ---');
+              for (const probe of hygieneReport.probes) {
+                const icon = probe.status === 'pass' ? '✅' : probe.status === 'warn' ? '⚠️' : '❌';
+                output.appendLine(`${icon} ${probe.label}`);
+                for (const finding of probe.findings) {
+                  output.appendLine(`     Finding: ${finding}`);
+                }
+                for (const suggestion of probe.suggestions) {
+                  output.appendLine(`     Suggestion: ${suggestion}`);
+                }
+              }
+              const hygieneIcon =
+                hygieneReport.overallStatus === 'pass'
+                  ? '✅'
+                  : hygieneReport.overallStatus === 'warn'
+                    ? '⚠️'
+                    : '❌';
+              output.appendLine(
+                `${hygieneIcon} Overall hygiene: ${hygieneReport.overallStatus.toUpperCase()}`
+              );
+            } catch (hygieneErr) {
+              logger.warn('Hygiene probes failed (non-fatal):', hygieneErr);
+            }
+
             output.appendLine('');
             output.appendLine('All reports: .rapidkit/reports');
             output.show();
@@ -1096,6 +1126,183 @@ export function registerWorkspaceOperationsCommands(options: {
     vscode.commands.registerCommand('workspai.checkForUpdates', async () => {
       const { forceCheckForUpdates } = await import('../utils/updateChecker.js');
       await forceCheckForUpdates(context);
+    }),
+
+    vscode.commands.registerCommand('workspai.exportVerifyPackContract', async (item?: any) => {
+      const workspaceExplorer = getWorkspaceExplorer();
+      const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
+
+      if (!workspacePath) {
+        vscode.window.showErrorMessage(
+          'No workspace selected. Select a workspace in the sidebar first.'
+        );
+        return;
+      }
+
+      const wsName = workspaceName || path.basename(workspacePath);
+
+      // Enumerate projects in the workspace using RapidKit markers.
+      const fsCompat = await import('fs-extra');
+      const projectEntries: Array<{ label: string; description: string; projectPath: string }> = [];
+
+      try {
+        const entries = await fsCompat.default.readdir(workspacePath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.name.startsWith('.')) {
+            continue;
+          }
+          const projectPath = path.join(workspacePath, entry.name);
+          const hasMarker =
+            (await fsCompat.default.pathExists(
+              path.join(projectPath, '.rapidkit', 'project.json')
+            )) ||
+            (await fsCompat.default.pathExists(
+              path.join(projectPath, '.rapidkit', 'context.json')
+            )) ||
+            (await fsCompat.default.pathExists(path.join(projectPath, 'package.json'))) ||
+            (await fsCompat.default.pathExists(path.join(projectPath, 'pyproject.toml')));
+          if (hasMarker) {
+            projectEntries.push({
+              label: entry.name,
+              description: projectPath,
+              projectPath,
+            });
+          }
+        }
+      } catch (err) {
+        logger.error('Error scanning workspace projects:', err);
+      }
+
+      if (projectEntries.length === 0) {
+        vscode.window.showWarningMessage(
+          `No projects found in workspace "${wsName}". Verify the workspace contains project directories.`
+        );
+        return;
+      }
+
+      const pickedProject =
+        projectEntries.length === 1
+          ? projectEntries[0]
+          : await vscode.window.showQuickPick(projectEntries, {
+              title: `Export Verify-Pack Contract — ${wsName}`,
+              placeHolder: 'Select a project to verify',
+              ignoreFocusOut: true,
+            });
+
+      if (!pickedProject) {
+        return;
+      }
+
+      const projectPath = pickedProject.projectPath;
+      const projectName = path.basename(projectPath);
+
+      // Detect project type from markers to pick the right verify-pack profile.
+      let projectType: string | undefined;
+      let packageManager: 'npm' | 'pnpm' | 'yarn' | undefined;
+
+      try {
+        const rapidkitContextPath = path.join(projectPath, '.rapidkit', 'context.json');
+        const rapidkitProjectPath = path.join(projectPath, '.rapidkit', 'project.json');
+
+        for (const metaPath of [rapidkitContextPath, rapidkitProjectPath]) {
+          if (await fsCompat.default.pathExists(metaPath)) {
+            const meta = await fsCompat.default.readJSON(metaPath).catch(() => null);
+            if (meta?.kit_type) {
+              projectType = String(meta.kit_type);
+              break;
+            }
+            if (meta?.projectType) {
+              projectType = String(meta.projectType);
+              break;
+            }
+          }
+        }
+
+        // Fallback: infer from package.json presence
+        if (!projectType) {
+          if (await fsCompat.default.pathExists(path.join(projectPath, 'package.json'))) {
+            const pkg = await fsCompat.default
+              .readJSON(path.join(projectPath, 'package.json'))
+              .catch(() => null);
+            if (pkg?.dependencies?.['@nestjs/core'] || pkg?.devDependencies?.['@nestjs/core']) {
+              projectType = 'nestjs.standard';
+            } else if (pkg?.dependencies?.['express'] || pkg?.devDependencies?.['express']) {
+              projectType = 'express';
+            } else {
+              projectType = 'node';
+            }
+
+            if (await fsCompat.default.pathExists(path.join(projectPath, 'pnpm-lock.yaml'))) {
+              packageManager = 'pnpm';
+            } else if (await fsCompat.default.pathExists(path.join(projectPath, 'yarn.lock'))) {
+              packageManager = 'yarn';
+            } else {
+              packageManager = 'npm';
+            }
+          } else if (await fsCompat.default.pathExists(path.join(projectPath, 'pyproject.toml'))) {
+            projectType = 'python';
+          }
+        }
+      } catch (err) {
+        logger.warn('Failed to detect project type — using generic profile:', err);
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Running verify-pack for "${projectName}"…`,
+          cancellable: false,
+        },
+        async (progress) => {
+          progress.report({ increment: 0, message: 'Building verify plan…' });
+
+          try {
+            progress.report({ increment: 10, message: 'Starting simulation…' });
+
+            const result = await exportVerifyPackContractToWorkspace({
+              workspacePath,
+              projectPath,
+              planInput: {
+                projectType,
+                packageManager,
+                projectPath,
+              },
+              commandTimeoutMs: 90_000,
+              maxTotalDurationMs: 600_000,
+            });
+
+            progress.report({ increment: 90, message: 'Writing contract…' });
+
+            const statusIcon =
+              result.status === 'passed' ? '✅' : result.status === 'failed' ? '❌' : '⏭';
+            const contractFileName = path.basename(result.contractPath);
+            const passedCount = result.contract.summary.passedCommands;
+            const totalCount = result.contract.summary.totalCommands;
+
+            logger.info(`Verify-pack contract exported: ${result.contractPath}`);
+
+            const selectedAction = await vscode.window.showInformationMessage(
+              `${statusIcon} Verify-pack complete (${passedCount}/${totalCount} passed).\nContract: .rapidkit/reports/${contractFileName}`,
+              'Copy Contract Path',
+              'Open Reports Folder'
+            );
+
+            if (selectedAction === 'Copy Contract Path') {
+              await vscode.env.clipboard.writeText(result.contractPath);
+            } else if (selectedAction === 'Open Reports Folder') {
+              await vscode.commands.executeCommand(
+                'revealFileInOS',
+                vscode.Uri.file(path.dirname(result.contractPath))
+              );
+            }
+          } catch (err) {
+            logger.error('Export verify-pack contract failed:', err);
+            vscode.window.showErrorMessage(
+              `Verify-pack export failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      );
     }),
   ];
 }

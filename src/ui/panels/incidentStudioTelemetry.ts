@@ -93,7 +93,10 @@ export type IncidentStudioTelemetryPayload = {
     windowEndAt: string;
     thresholds: {
       routePrecisionMin: number;
+      routeFallbackNonSuccessShareMax?: number;
       verifyPathCompletionRateMin: number;
+      verifyIncompleteWarningRateMax?: number;
+      topVerifyPathMissReasonShareMax?: number;
       falseConfidenceRateMax: number;
       rollbackRecoverySuccessRateMin: number;
       repeatVerifiedResolutionRateMin: number;
@@ -103,9 +106,12 @@ export type IncidentStudioTelemetryPayload = {
       routeMatchedWithoutFallback: number;
       routeFallbackCount: number;
       routePrecision: number | null;
+      routeFallbackNonSuccessShare?: number | null;
       verifyRequired: number;
       verifyPathPresent: number;
       verifyPathCompletionRate: number | null;
+      verifyIncompleteWarningCount?: number;
+      verifyIncompleteWarningRate?: number | null;
       verifyFailed: number;
       rollbackAttempted: number;
       rollbackSucceeded: number;
@@ -127,6 +133,7 @@ export type IncidentStudioTelemetryPayload = {
         reason: string;
         count: number;
       }>;
+      topVerifyPathMissReasonShare?: number | null;
       recoveryClassBreakdown?: {
         auto_rollback: number;
         manual_recovery: number;
@@ -136,10 +143,13 @@ export type IncidentStudioTelemetryPayload = {
     gates: {
       telemetryEvidencePass: boolean;
       routePrecisionPass: boolean;
+      routeFallbackNonSuccessSharePass?: boolean;
       verifyPathCompletionRatePass: boolean;
+      verifyIncompleteWarningRatePass?: boolean;
       falseConfidenceRatePass: boolean;
       rollbackRecoverySuccessRatePass: boolean;
       repeatVerifiedResolutionRatePass: boolean;
+      topVerifyPathMissReasonSharePass?: boolean;
       overallPass: boolean;
     };
   } | null;

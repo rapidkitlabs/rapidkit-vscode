@@ -1082,6 +1082,11 @@ describe('workspaceUsageTracker telemetry stability', () => {
       verifyPathPresent: false,
       verifyPathReason: 'missing_verify_step',
     });
+    await tracker.trackCommandEvent('workspai.studio.verify_incomplete_warning', workspacePath, {
+      actionType: 'terminal-bridge',
+      reason: 'missing_verify_step',
+      verifyRequired: true,
+    });
 
     await tracker.trackCommandEvent('workspai.studio.rollback_attempted', workspacePath, {
       rollbackStatus: 'succeeded',
@@ -1092,7 +1097,10 @@ describe('workspaceUsageTracker telemetry stability', () => {
 
     const status = await tracker.getStudioStabilizationKpiStatus(workspacePath, 'all', {
       routePrecisionMin: 60,
+      routeFallbackNonSuccessShareMax: 40,
       verifyPathCompletionRateMin: 60,
+      verifyIncompleteWarningRateMax: 40,
+      topVerifyPathMissReasonShareMax: 100,
       falseConfidenceRateMax: 40,
       rollbackRecoverySuccessRateMin: 60,
       repeatVerifiedResolutionRateMin: 50,
@@ -1103,9 +1111,12 @@ describe('workspaceUsageTracker telemetry stability', () => {
     expect(status?.metrics.routeMatchedWithoutFallback).toBe(2);
     expect(status?.metrics.routeFallbackCount).toBe(1);
     expect(status?.metrics.routePrecision).toBe(66.67);
+    expect(status?.metrics.routeFallbackNonSuccessShare).toBe(33.33);
     expect(status?.metrics.verifyRequired).toBe(3);
     expect(status?.metrics.verifyPathPresent).toBe(2);
     expect(status?.metrics.verifyPathCompletionRate).toBe(66.67);
+    expect(status?.metrics.verifyIncompleteWarningCount).toBe(1);
+    expect(status?.metrics.verifyIncompleteWarningRate).toBe(33.33);
     expect(status?.metrics.verifyFailed).toBe(1);
     expect(status?.metrics.rollbackAttempted).toBe(1);
     expect(status?.metrics.rollbackSucceeded).toBe(1);
@@ -1114,7 +1125,76 @@ describe('workspaceUsageTracker telemetry stability', () => {
     expect(status?.metrics.repeatedIncidentDetected).toBe(1);
     expect(status?.metrics.repeatVerifiedResolved).toBe(1);
     expect(status?.metrics.repeatVerifiedResolutionRate).toBe(100);
+    expect(status?.metrics.verifyPathReasonTop).toEqual([
+      { reason: 'missing_verify_step', count: 1 },
+    ]);
+    expect(status?.metrics.topVerifyPathMissReasonShare).toBe(100);
+    expect(status?.gates.routeFallbackNonSuccessSharePass).toBe(true);
+    expect(status?.gates.verifyIncompleteWarningRatePass).toBe(true);
+    expect(status?.gates.topVerifyPathMissReasonSharePass).toBe(true);
     expect(status?.gates.overallPass).toBe(true);
+  });
+
+  it('flags advisory stabilization monitoring thresholds when fallback share or top miss dominance drift high', async () => {
+    const workspacePath = path.join(tempRoot, 'ws-stabilization-kpi-advisory');
+    createWorkspaceMarker(workspacePath);
+
+    const tracker = WorkspaceUsageTracker.getInstance();
+
+    await tracker.trackCommandEvent('workspai.studio.next_action_clicked', workspacePath, {
+      actionType: 'doctor-fix',
+      fallbackReason: 'success',
+    });
+    await tracker.trackCommandEvent('workspai.studio.next_action_clicked', workspacePath, {
+      actionType: 'terminal-bridge',
+      fallbackReason: 'bare_keyword_only',
+    });
+    await tracker.trackCommandEvent('workspai.studio.next_action_clicked', workspacePath, {
+      actionType: 'terminal-bridge',
+      fallbackReason: 'fix_preview_fallback',
+    });
+
+    await tracker.trackCommandEvent('workspai.studio.verify_failed', workspacePath, {
+      actionType: 'terminal-bridge',
+      verifyRequired: true,
+      verifyPathPresent: false,
+      verifyPathReason: 'missing_verify_step',
+    });
+    await tracker.trackCommandEvent('workspai.studio.verify_failed', workspacePath, {
+      actionType: 'terminal-bridge',
+      verifyRequired: true,
+      verifyPathPresent: false,
+      verifyPathReason: 'missing_verify_step',
+    });
+    await tracker.trackCommandEvent('workspai.studio.verify_incomplete_warning', workspacePath, {
+      actionType: 'terminal-bridge',
+      reason: 'missing_verify_step',
+      verifyRequired: true,
+    });
+    await tracker.trackCommandEvent('workspai.studio.verify_incomplete_warning', workspacePath, {
+      actionType: 'terminal-bridge',
+      reason: 'missing_verify_step',
+      verifyRequired: true,
+    });
+
+    const status = await tracker.getStudioStabilizationKpiStatus(workspacePath, 'all', {
+      routePrecisionMin: 30,
+      verifyPathCompletionRateMin: 0,
+      falseConfidenceRateMax: 100,
+      rollbackRecoverySuccessRateMin: 0,
+      repeatVerifiedResolutionRateMin: 0,
+    });
+
+    expect(status).not.toBeNull();
+    expect(status?.metrics.routeFallbackNonSuccessShare).toBe(66.67);
+    expect(status?.metrics.verifyIncompleteWarningCount).toBe(2);
+    expect(status?.metrics.verifyIncompleteWarningRate).toBe(100);
+    expect(status?.metrics.topVerifyPathMissReasonShare).toBe(100);
+    expect(status?.gates.routePrecisionPass).toBe(true);
+    expect(status?.gates.routeFallbackNonSuccessSharePass).toBe(false);
+    expect(status?.gates.verifyIncompleteWarningRatePass).toBe(false);
+    expect(status?.gates.topVerifyPathMissReasonSharePass).toBe(false);
+    expect(status?.gates.overallPass).toBe(false);
   });
 
   it('uses onboarding hourly buckets for last24h stats instead of recentEvents cap', async () => {

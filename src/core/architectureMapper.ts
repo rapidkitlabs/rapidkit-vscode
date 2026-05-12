@@ -71,6 +71,7 @@ const NATIVE_FRAMEWORKS = new Set([
   'nestjs',
   'express',
   'koa',
+  'gogin',
   'gin',
   'echo',
   'spring',
@@ -97,6 +98,7 @@ export class NativeArchitectureMapper implements ArchitectureMapper {
         const mapper = new NestjsArchitectureMapper();
         return mapper.mapToIR(projectPath, discovery, existingIr);
       }
+      case 'gogin':
       case 'gin':
       case 'echo': {
         const mapper = new GoNativeArchitectureMapper();

@@ -1,42 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  deriveLitePrimaryActionPlan,
+  deriveLiteReleaseState,
+} from '../../webview-ui/src/components/AIIncidentStudio';
+
 /**
  * Regression tests for Lite mode blocker-priority action routing
  *
  * Ensures that when blockers are present, the primary action routes to:
- * 1. Verify command (if required verify commands available)
- * 2. Blocker remediation query (if no verify commands available)
- * 3. Normal action routing (if no blockers present)
+ * 1. Blocker investigation query before any verify/check step
+ * 2. Normal action routing when no blockers exist
+ * 3. Lite status semantics stay aligned with full-mode HOLD vs NO-GO meaning
  *
  * This prevents users from attempting risky actions while critical blockers exist.
  */
 
 describe('IncidentStudioLiteMode - Blocker Priority Routing', () => {
   /**
-   * Test 1: When liteTopBlocker exists and required verify commands are available,
-   * should prioritize running the verify command over normal action
+   * Test 1: When liteTopBlocker exists,
+   * should prioritize blocker investigation guidance over auto-running verify
    */
-  it('routes to verify command when blocker exists and verify commands available', () => {
-    const runCommandSpy = vi.fn();
-    const onChatBrainQuerySpy = vi.fn();
+  it('routes to blocker investigation query when blocker exists even if verify commands are available', () => {
+    const plan = deriveLitePrimaryActionPlan({
+      topBlocker: 'Verify evidence completion below target.',
+      primaryActionLabel: 'Validate deployment impact',
+      primaryActionSource: 'chatBrainBoard.actions[0]',
+      fallbackQuery: 'Ask AI for the single safest next step',
+    });
 
-    // Simulate state: blocker present, verify command required
-    const liteTopBlocker = 'Verify evidence completion below target.';
-    const requiredVerifyCommands = [{ required: true, command: 'rapidkit doctor project' }];
-    const liteVerifyCommand = 'rapidkit doctor project';
-
-    // Simulate runLitePrimaryAction logic
-    if (liteTopBlocker) {
-      if (requiredVerifyCommands.length > 0) {
-        runCommandSpy(liteVerifyCommand);
-      } else {
-        const blockerQuery = `Inspect this blocker and propose one deterministic remediation command: ${liteTopBlocker}`;
-        onChatBrainQuerySpy(blockerQuery);
-      }
-    }
-
-    expect(runCommandSpy).toHaveBeenCalledWith('rapidkit doctor project');
-    expect(onChatBrainQuerySpy).not.toHaveBeenCalled();
+    expect(plan.kind).toBe('blocker-query');
+    expect(plan.buttonLabel).toBe('Investigate blocker');
+    expect(plan.label).toBe('Investigate blocker: Verify evidence completion below target.');
+    expect(plan.query).toBe(
+      'Inspect this blocker and propose one deterministic remediation command: Verify evidence completion below target.'
+    );
   });
 
   /**
@@ -44,30 +42,15 @@ describe('IncidentStudioLiteMode - Blocker Priority Routing', () => {
    * should send focused blocker remediation query to AI
    */
   it('routes to blocker remediation query when blocker exists but no verify commands', () => {
-    const runCommandSpy = vi.fn();
-    const onChatBrainQuerySpy = vi.fn();
-    const setLastUserQuerySpy = vi.fn();
+    const plan = deriveLitePrimaryActionPlan({
+      topBlocker: 'Unrecovered verification failures above target.',
+      primaryActionLabel: 'Validate deployment impact',
+      primaryActionSource: 'fallback: guided-next-query',
+      fallbackQuery: 'Ask AI for the single safest next step',
+    });
 
-    // Simulate state: blocker present, no verify commands
-    const liteTopBlocker = 'Unrecovered verification failures above target.';
-    const requiredVerifyCommands: any[] = [];
-
-    // Simulate runLitePrimaryAction logic
-    if (liteTopBlocker) {
-      if (requiredVerifyCommands.length > 0) {
-        runCommandSpy('some-command');
-      } else {
-        const blockerQuery = `Inspect this blocker and propose one deterministic remediation command: ${liteTopBlocker}`;
-        setLastUserQuerySpy(blockerQuery);
-        onChatBrainQuerySpy(blockerQuery);
-      }
-    }
-
-    expect(runCommandSpy).not.toHaveBeenCalled();
-    expect(onChatBrainQuerySpy).toHaveBeenCalledWith(
-      'Inspect this blocker and propose one deterministic remediation command: Unrecovered verification failures above target.'
-    );
-    expect(setLastUserQuerySpy).toHaveBeenCalledWith(
+    expect(plan.kind).toBe('blocker-query');
+    expect(plan.query).toBe(
       'Inspect this blocker and propose one deterministic remediation command: Unrecovered verification failures above target.'
     );
   });
@@ -77,81 +60,60 @@ describe('IncidentStudioLiteMode - Blocker Priority Routing', () => {
    * should proceed with normal action routing (not blocker-focused)
    */
   it('routes to normal action when no blocker present', () => {
-    const runCommandSpy = vi.fn();
-    const onChatBrainExecuteActionSpy = vi.fn();
-    const onChatBrainQuerySpy = vi.fn();
+    const plan = deriveLitePrimaryActionPlan({
+      topBlocker: null,
+      primaryActionLabel: 'Validate deployment impact',
+      primaryActionSource: 'chatBrainBoard.actions[0]',
+      fallbackQuery: 'Ask AI for the single safest next step',
+    });
 
-    // Simulate state: no blocker, primary board action available
-    const liteTopBlocker = null;
-    const primaryBoardAction = { actionType: 'doctor-fix', id: 'action-1' };
-    const fallbackQuery = 'Ask AI for the single safest next step';
-
-    // Simulate runLitePrimaryAction logic
-    if (liteTopBlocker) {
-      // Blocker path (not taken)
-      if (true) runCommandSpy('should-not-run');
-    } else {
-      if (primaryBoardAction) {
-        onChatBrainExecuteActionSpy(primaryBoardAction.actionType, primaryBoardAction.id);
-      } else {
-        onChatBrainQuerySpy(fallbackQuery);
-      }
-    }
-
-    expect(runCommandSpy).not.toHaveBeenCalled();
-    expect(onChatBrainExecuteActionSpy).toHaveBeenCalledWith('doctor-fix', 'action-1');
-    expect(onChatBrainQuerySpy).not.toHaveBeenCalled();
+    expect(plan.kind).toBe('board-action');
+    expect(plan.buttonLabel).toBe('Run this next action');
+    expect(plan.label).toBe('Validate deployment impact');
   });
 
   /**
-   * Test 4: Status label should be "NO-GO" when blockers present
+   * Test 4: Status label should be "HOLD" when only advisory blockers present
    */
-  it('displays NO-GO status when blockers present', () => {
-    const liteHardBlockReasons = [
-      'Verify evidence completion below target.',
-      'Rollback success rate below target.',
-    ];
+  it('displays HOLD status when only advisory blockers are present', () => {
+    const liteState = deriveLiteReleaseState({
+      releaseDecision: undefined,
+      hardBlockerCount: 0,
+      advisoryBlockerCount: 2,
+    });
 
-    const liteReleaseNoGo = liteHardBlockReasons.length > 0;
-    const liteStatusLabel = liteReleaseNoGo ? 'NO-GO' : 'READY';
-    const liteStatusSummary = liteReleaseNoGo
-      ? `Blocked by ${liteHardBlockReasons.length} signal${liteHardBlockReasons.length === 1 ? '' : 's'}`
-      : 'No hard blockers detected in current evidence';
-
-    expect(liteStatusLabel).toBe('NO-GO');
-    expect(liteStatusSummary).toBe('Blocked by 2 signals');
+    expect(liteState.label).toBe('HOLD');
+    expect(liteState.blocksRelease).toBe(false);
+    expect(liteState.summary).toBe('Hold: 2 stabilization signals need review');
   });
 
   /**
-   * Test 5: Status label should be "READY" when no blockers present
+   * Test 5: Status label should be "NO-GO" when hard blockers are present
+   */
+  it('displays NO-GO status when hard blockers are present', () => {
+    const liteState = deriveLiteReleaseState({
+      releaseDecision: undefined,
+      hardBlockerCount: 2,
+      advisoryBlockerCount: 0,
+    });
+
+    expect(liteState.label).toBe('NO-GO');
+    expect(liteState.blocksRelease).toBe(true);
+    expect(liteState.summary).toBe('Blocked by 2 hard signals');
+  });
+
+  /**
+   * Test 6: Status label should be "READY" when no blockers present
    */
   it('displays READY status when no blockers present', () => {
-    const liteHardBlockReasons: string[] = [];
+    const liteState = deriveLiteReleaseState({
+      releaseDecision: undefined,
+      hardBlockerCount: 0,
+      advisoryBlockerCount: 0,
+    });
 
-    const liteReleaseNoGo = liteHardBlockReasons.length > 0;
-    const liteStatusLabel = liteReleaseNoGo ? 'NO-GO' : 'READY';
-    const liteStatusSummary = liteReleaseNoGo
-      ? `Blocked by ${liteHardBlockReasons.length} signal${liteHardBlockReasons.length === 1 ? '' : 's'}`
-      : 'No hard blockers detected in current evidence';
-
-    expect(liteStatusLabel).toBe('READY');
-    expect(liteStatusSummary).toBe('No hard blockers detected in current evidence');
-  });
-
-  /**
-   * Test 6: Button label should reflect blocker-aware action
-   */
-  it('button label reflects blocker-aware primary action', () => {
-    const litePrimaryActionLabel = 'Validate deployment impact';
-    const liteTopBlocker = 'Resolution pattern reuse below target.';
-
-    const blockerAwarePrimaryActionLabel = liteTopBlocker
-      ? `Resolve blocker: ${liteTopBlocker}`
-      : litePrimaryActionLabel;
-
-    expect(blockerAwarePrimaryActionLabel).toBe(
-      'Resolve blocker: Resolution pattern reuse below target.'
-    );
+    expect(liteState.label).toBe('READY');
+    expect(liteState.summary).toBe('No hard blockers detected in current evidence');
   });
 
   /**

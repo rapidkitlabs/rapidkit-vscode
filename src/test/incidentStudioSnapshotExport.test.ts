@@ -189,17 +189,25 @@ describe('IncidentStudio Snapshot Export - S01/S02 Operational Metrics', () => {
     const gates = {
       overallPass: true,
       routePrecisionPass: true,
+      routeFallbackNonSuccessSharePass: true,
       verifyPathCompletionRatePass: true,
+      verifyIncompleteWarningRatePass: true,
       falseConfidenceRatePass: true,
       rollbackRecoverySuccessRatePass: true,
       repeatVerifiedResolutionRatePass: true,
+      topVerifyPathMissReasonSharePass: true,
       telemetryEvidencePass: true,
     };
 
     const fallbackNonSuccessShare = 18; // ✅ < 20%
     const topVerifyMissShare = 25; // ✅ < 30%
+    const verifyIncompleteWarningRate = 8; // ✅ < 10%
 
-    const canClaim = gates.overallPass && fallbackNonSuccessShare <= 20 && topVerifyMissShare <= 30;
+    const canClaim =
+      gates.overallPass &&
+      fallbackNonSuccessShare <= 20 &&
+      topVerifyMissShare <= 30 &&
+      verifyIncompleteWarningRate <= 10;
 
     expect(canClaim).toBe(true);
   });
@@ -211,24 +219,32 @@ describe('IncidentStudio Snapshot Export - S01/S02 Operational Metrics', () => {
     const gates = {
       overallPass: true,
       routePrecisionPass: true,
+      routeFallbackNonSuccessSharePass: true,
       verifyPathCompletionRatePass: false, // ❌ FAIL
+      verifyIncompleteWarningRatePass: false, // ❌ FAIL
       falseConfidenceRatePass: true,
       rollbackRecoverySuccessRatePass: true,
       repeatVerifiedResolutionRatePass: true,
+      topVerifyPathMissReasonSharePass: true,
       telemetryEvidencePass: true,
     };
 
     const fallbackNonSuccessShare = 18;
     const topVerifyMissShare = 25;
+    const verifyIncompleteWarningRate = 14;
 
     const blockers = [
       !gates.verifyPathCompletionRatePass ? 'S02 Verify Path Completion gate failed' : null,
+      !gates.verifyIncompleteWarningRatePass
+        ? `Verify-incomplete warning rate (${verifyIncompleteWarningRate}%) exceeds 10%`
+        : null,
     ].filter((b): b is string => b !== null);
 
     const canClaim =
       gates.overallPass &&
       fallbackNonSuccessShare <= 20 &&
       topVerifyMissShare <= 30 &&
+      verifyIncompleteWarningRate <= 10 &&
       blockers.length === 0;
 
     expect(canClaim).toBe(false);
@@ -345,6 +361,12 @@ Total recovery attempts: 50
           interpretation:
             '⚠️ Top miss reason exceeds 30% of misses; requires wording/checklist improvement',
         },
+        verifyIncompleteWarnings: {
+          count: 9,
+          rate: 11,
+          interpretation:
+            '⚠️ Verify-incomplete warning rate exceeds 10% threshold; improve verify guidance coverage',
+        },
         recoveryClassMix: {
           autoRollbackShare: 78,
           interpretation: '✅ Auto-rollback dominates recovery mix',
@@ -352,12 +374,16 @@ Total recovery attempts: 50
       },
       releaseGateDecision: {
         canClaim: false,
-        blockers: ['Top verify-path miss (Incomplete checklist wording: 45%) exceeds 30%'],
+        blockers: [
+          'Top verify-path miss (Incomplete checklist wording: 45%) exceeds 30%',
+          'Verify-incomplete warning rate (11%) exceeds 10%',
+        ],
       },
     };
 
     expect(json.version).toBe('1.0');
     expect(json.operationalMetrics).toBeDefined();
+    expect(json.operationalMetrics.verifyIncompleteWarnings.rate).toBe(11);
     expect(json.releaseGateDecision.canClaim).toBe(false);
     expect(json.releaseGateDecision.blockers.length).toBeGreaterThan(0);
   });

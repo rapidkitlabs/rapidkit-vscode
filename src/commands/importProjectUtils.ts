@@ -1,37 +1,19 @@
-export type StackConfidence = 'high' | 'medium' | 'low';
-export type DetectedStack =
-  | 'fastapi'
-  | 'django'
-  | 'flask'
-  | 'nestjs'
-  | 'express'
-  | 'koa'
-  | 'go'
-  | 'springboot'
-  | 'rails'
-  | 'dotnet'
-  | 'unknown';
+import {
+  detectStackFromBackendHints,
+  detectStackFromMarkerSignals,
+  type StackDetection,
+  type BackendImportHints,
+  type BackendImportMarkerSignals,
+} from '../core/backendFrameworkContract';
+export type {
+  DetectedStack,
+  StackConfidence,
+  StackDetection,
+} from '../core/backendFrameworkContract';
 
-export interface StackDetection {
-  stack: DetectedStack;
-  confidence: StackConfidence;
-}
+type ByopDiscoveryLike = BackendImportHints;
 
-type ByopDiscoveryLike = {
-  framework?: string;
-  runtime?: string;
-  confidenceLevel?: StackConfidence;
-};
-
-export interface ProjectSignals {
-  hasPyProject: boolean;
-  hasGoMod: boolean;
-  hasPomXml: boolean;
-  hasGradle: boolean;
-  hasGradleKts: boolean;
-  hasPackageJson: boolean;
-  hasNestDependency: boolean;
-}
+export type ProjectSignals = BackendImportMarkerSignals;
 
 export function normalizeProjectName(raw: string): string {
   return raw
@@ -45,75 +27,11 @@ export function normalizeProjectName(raw: string): string {
 }
 
 export function detectProjectStackFromSignals(signals: ProjectSignals): StackDetection {
-  if (signals.hasPyProject) {
-    return { stack: 'unknown', confidence: 'medium' };
-  }
-
-  if (signals.hasNestDependency) {
-    return { stack: 'nestjs', confidence: 'high' };
-  }
-
-  if (signals.hasPackageJson) {
-    return { stack: 'unknown', confidence: 'medium' };
-  }
-
-  if (signals.hasGoMod) {
-    return { stack: 'go', confidence: 'high' };
-  }
-
-  if (signals.hasPomXml || signals.hasGradle || signals.hasGradleKts) {
-    return { stack: 'springboot', confidence: 'high' };
-  }
-
-  return { stack: 'unknown', confidence: 'low' };
+  return detectStackFromMarkerSignals(signals);
 }
 
 export function detectProjectStackFromByopDiscovery(discovery: ByopDiscoveryLike): StackDetection {
-  const framework = String(discovery.framework || '')
-    .trim()
-    .toLowerCase();
-  const runtime = String(discovery.runtime || '')
-    .trim()
-    .toLowerCase();
-  const confidence: StackConfidence =
-    discovery.confidenceLevel === 'high' ||
-    discovery.confidenceLevel === 'medium' ||
-    discovery.confidenceLevel === 'low'
-      ? discovery.confidenceLevel
-      : 'low';
-
-  if (framework === 'fastapi') {
-    return { stack: 'fastapi', confidence };
-  }
-  if (framework === 'django') {
-    return { stack: 'django', confidence };
-  }
-  if (framework === 'flask') {
-    return { stack: 'flask', confidence };
-  }
-  if (framework === 'nestjs') {
-    return { stack: 'nestjs', confidence };
-  }
-  if (framework === 'express') {
-    return { stack: 'express', confidence };
-  }
-  if (framework === 'koa') {
-    return { stack: 'koa', confidence };
-  }
-  if (framework === 'gin' || framework === 'echo' || runtime === 'go') {
-    return { stack: 'go', confidence };
-  }
-  if (framework === 'spring' || framework === 'springboot' || runtime === 'java') {
-    return { stack: 'springboot', confidence };
-  }
-  if (framework === 'rails' || runtime === 'ruby') {
-    return { stack: 'rails', confidence };
-  }
-  if (framework === 'dotnet' || runtime === 'csharp') {
-    return { stack: 'dotnet', confidence };
-  }
-
-  return { stack: 'unknown', confidence };
+  return detectStackFromBackendHints(discovery);
 }
 
 export function deriveProjectNameFromGitUrl(gitUrl: string): string {

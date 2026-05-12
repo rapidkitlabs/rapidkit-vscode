@@ -236,7 +236,7 @@ describe('aiService', () => {
 
     expect(prepared.validation.clarificationNeeded).toBe(true);
     expect(prepared.validation.clarificationReason).toContain(
-      'run `npx rapidkit doctor workspace`'
+      'run `npx --yes --package rapidkit rapidkit doctor workspace`'
     );
     expect(prepared.contract.evidence_confidence).toBe('none');
   });

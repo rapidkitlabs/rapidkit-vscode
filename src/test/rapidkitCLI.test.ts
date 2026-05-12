@@ -66,7 +66,7 @@ describe('WorkspaiCLI', () => {
     expect(vi.mocked(run)).toHaveBeenNthCalledWith(
       2,
       'npx',
-      ['rapidkit', '--version'],
+      ['--yes', '--package', 'rapidkit', 'rapidkit', '--version'],
       expect.objectContaining({ stdio: 'pipe', timeout: 5000 })
     );
   });
@@ -87,7 +87,7 @@ describe('WorkspaiCLI', () => {
     expect(result.stdout).toBe('ok');
     expect(vi.mocked(run)).toHaveBeenLastCalledWith(
       'npx',
-      ['--yes', 'rapidkit', 'doctor', 'workspace'],
+      ['--yes', '--package', 'rapidkit', 'rapidkit', 'doctor', 'workspace'],
       expect.objectContaining({ cwd: workspacePath, stdio: 'pipe' })
     );
 

@@ -199,7 +199,10 @@ export type IncidentStudioStabilizationKpiStatus = {
   windowEndAt: string;
   thresholds: {
     routePrecisionMin: number;
+    routeFallbackNonSuccessShareMax?: number;
     verifyPathCompletionRateMin: number;
+    verifyIncompleteWarningRateMax?: number;
+    topVerifyPathMissReasonShareMax?: number;
     falseConfidenceRateMax: number;
     rollbackRecoverySuccessRateMin: number;
     repeatVerifiedResolutionRateMin: number;
@@ -209,9 +212,12 @@ export type IncidentStudioStabilizationKpiStatus = {
     routeMatchedWithoutFallback: number;
     routeFallbackCount: number;
     routePrecision: number | null;
+    routeFallbackNonSuccessShare?: number | null;
     verifyRequired: number;
     verifyPathPresent: number;
     verifyPathCompletionRate: number | null;
+    verifyIncompleteWarningCount?: number;
+    verifyIncompleteWarningRate?: number | null;
     verifyFailed: number;
     rollbackAttempted: number;
     rollbackSucceeded: number;
@@ -233,6 +239,7 @@ export type IncidentStudioStabilizationKpiStatus = {
       reason: string;
       count: number;
     }>;
+    topVerifyPathMissReasonShare?: number | null;
     recoveryClassBreakdown?: {
       auto_rollback: number;
       manual_recovery: number;
@@ -242,10 +249,13 @@ export type IncidentStudioStabilizationKpiStatus = {
   gates: {
     telemetryEvidencePass: boolean;
     routePrecisionPass: boolean;
+    routeFallbackNonSuccessSharePass?: boolean;
     verifyPathCompletionRatePass: boolean;
+    verifyIncompleteWarningRatePass?: boolean;
     falseConfidenceRatePass: boolean;
     rollbackRecoverySuccessRatePass: boolean;
     repeatVerifiedResolutionRatePass: boolean;
+    topVerifyPathMissReasonSharePass?: boolean;
     overallPass: boolean;
   };
 };
@@ -682,7 +692,14 @@ function buildIncidentDecisionClarityContract(input: {
       ? `Signals: ${input.diagnosis?.signalSources.slice(0, 3).join(', ')}`
       : undefined);
   const impactScope = input.diagnosis?.relatedFiles.slice(0, 8) || [];
-  const nextStep = input.verifyCommandPack?.commands[0]?.command;
+  const primaryVerifyCommand =
+    input.verifyCommandPack?.commands.find((entry) => entry.required)?.command ||
+    input.verifyCommandPack?.commands[0]?.command;
+  const nextStep = input.verifyCommandPack?.blockedReasons[0]
+    ? `Resolve verify blocker: ${input.verifyCommandPack.blockedReasons[0]}.`
+    : primaryVerifyCommand
+      ? 'Run the primary verify step and inspect the result before claiming completion.'
+      : undefined;
   const verifyPlan = (input.verifyCommandPack?.commands || [])
     .filter((entry) => entry.required)
     .slice(0, 6)

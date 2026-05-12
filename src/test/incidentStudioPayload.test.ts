@@ -22,6 +22,7 @@ import {
 import { classifyIncidentActionPolicy } from '../ui/panels/incidentStudioPromptPolicy';
 import {
   buildIncidentWorkspaceGraphFixture,
+  getIncidentFixtureSupportedTopology,
   INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES,
 } from './fixtures/incidentStudioGraphFixtures';
 import { INCIDENT_PROTOCOL_FIXTURES } from './fixtures/incidentStudioProtocolFixtures';
@@ -326,6 +327,7 @@ describe('incidentStudioPayload', () => {
 
   it('keeps graph evidence complete across supported workspace kit fixtures', () => {
     for (const fixture of INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES) {
+      const supportedTopology = getIncidentFixtureSupportedTopology(fixture);
       const graph = normalizeIncidentWorkspaceGraphSnapshot(
         buildIncidentWorkspaceGraphFixture(fixture)
       );
@@ -337,7 +339,7 @@ describe('incidentStudioPayload', () => {
         },
         project: {
           framework: fixture.framework,
-          kit: fixture.kit,
+          kit: supportedTopology,
           selectedProject: {
             path: fixture.projectPath,
             name: fixture.projectName,
@@ -885,7 +887,7 @@ describe('incidentStudioPayload', () => {
         confidence: 0,
         mutating: false,
       },
-      nextStep: 'rapidkit doctor workspace',
+      nextStep: 'Resolve verify blocker: scope unknown.',
       verifyPlan: ['rapidkit doctor workspace'],
       rollbackPlan: undefined,
       evidenceLinks: ['scope unknown'],
@@ -939,7 +941,7 @@ describe('incidentStudioPayload', () => {
         confidence: 78,
         mutating: true,
       },
-      nextStep: 'npm run test:integration',
+      nextStep: 'Run the primary verify step and inspect the result before claiming completion.',
       verifyPlan: ['npm run test:integration'],
       rollbackPlan: 'Restore affected files with git restore and rerun verify.',
       evidenceLinks: ['doctor-evidence', 'system-graph'],

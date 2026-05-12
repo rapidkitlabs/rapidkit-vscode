@@ -6,6 +6,7 @@ import {
   detectProjectStackFromSignals,
   normalizeProjectName,
 } from '../commands/importProjectUtils';
+import { INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES } from './fixtures/incidentStudioGraphFixtures';
 
 describe('importProjectUtils', () => {
   describe('detectProjectStackFromSignals', () => {
@@ -117,18 +118,95 @@ describe('importProjectUtils', () => {
       ).toEqual({ stack: 'springboot', confidence: 'high' });
     });
 
-    it('maps runtime-level go/ruby/csharp discovery when framework is generic', () => {
+    it('maps Studio-expanded framework aliases to the closest supported import stack', () => {
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'gofiber',
+          runtime: 'go',
+          confidenceLevel: 'high',
+        })
+      ).toEqual({ stack: 'go', confidence: 'high' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'gogin',
+          runtime: 'go',
+          confidenceLevel: 'medium',
+        })
+      ).toEqual({ stack: 'go', confidence: 'medium' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'springboot',
+          runtime: 'java',
+          confidenceLevel: 'high',
+        })
+      ).toEqual({ stack: 'springboot', confidence: 'high' });
+    });
+
+    it('maps runtime-level hints without overclaiming generic java/ruby stacks', () => {
       expect(
         detectProjectStackFromByopDiscovery({ runtime: 'go', confidenceLevel: 'medium' })
       ).toEqual({ stack: 'go', confidence: 'medium' });
 
       expect(
         detectProjectStackFromByopDiscovery({ runtime: 'ruby', confidenceLevel: 'low' })
-      ).toEqual({ stack: 'rails', confidence: 'low' });
+      ).toEqual({ stack: 'unknown', confidence: 'low' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({ runtime: 'java', confidenceLevel: 'high' })
+      ).toEqual({ stack: 'unknown', confidence: 'high' });
 
       expect(
         detectProjectStackFromByopDiscovery({ runtime: 'csharp', confidenceLevel: 'high' })
       ).toEqual({ stack: 'dotnet', confidence: 'high' });
+    });
+
+    it('does not overclaim unsupported import stacks for broader backend frameworks', () => {
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'fastify',
+          runtime: 'nodejs',
+          confidenceLevel: 'high',
+        })
+      ).toEqual({ stack: 'unknown', confidence: 'high' });
+
+      expect(
+        detectProjectStackFromByopDiscovery({
+          framework: 'laravel',
+          runtime: 'php',
+          confidenceLevel: 'medium',
+        })
+      ).toEqual({ stack: 'unknown', confidence: 'medium' });
+    });
+
+    it('keeps Incident Studio fixture breadth aligned with BYOP import stack mapping', () => {
+      const expectedStacksByFramework = {
+        fastapi: 'fastapi',
+        django: 'django',
+        flask: 'flask',
+        nestjs: 'nestjs',
+        express: 'express',
+        koa: 'koa',
+        gofiber: 'go',
+        gogin: 'go',
+        echo: 'go',
+        rails: 'rails',
+        dotnet: 'dotnet',
+        springboot: 'springboot',
+      } as const;
+
+      for (const fixture of INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES) {
+        expect(
+          detectProjectStackFromByopDiscovery({
+            framework: fixture.framework,
+            confidenceLevel: 'high',
+          })
+        ).toEqual({
+          stack: expectedStacksByFramework[fixture.framework],
+          confidence: 'high',
+        });
+      }
     });
   });
 

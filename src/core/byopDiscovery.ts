@@ -15,6 +15,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  normalizeBackendFrameworkLabel,
+  normalizeBackendRuntimeLabel,
+} from './backendFrameworkContract';
 import { getAllProfiles, getFrameworkProfile } from './byopFrameworkProfiles';
 
 // ============================================================================
@@ -572,6 +576,11 @@ export class ByopDiscoveryEngine {
     });
 
     if (maxRuntime === 'unknown' && framework) {
+      const normalizedRuntime = this.toDiscoveryRuntime(normalizeBackendRuntimeLabel(framework));
+      if (normalizedRuntime !== 'unknown') {
+        maxRuntime = normalizedRuntime;
+      }
+
       const profile = getFrameworkProfile(framework as any);
       if (profile) {
         maxRuntime = profile.runtime as RuntimeType;
@@ -671,14 +680,46 @@ export class ByopDiscoveryEngine {
     const seen = new Set<string>();
     const next: DiscoverySignal[] = [];
     for (const signal of signals) {
-      const key = `${signal.source}|${signal.runtime ?? ''}|${signal.framework ?? ''}|${signal.evidence ?? ''}`;
+      const canonicalSignal = this.canonicalizeSignal(signal);
+      const key = `${canonicalSignal.source}|${canonicalSignal.runtime ?? ''}|${canonicalSignal.framework ?? ''}|${canonicalSignal.evidence ?? ''}`;
       if (seen.has(key)) {
         continue;
       }
       seen.add(key);
-      next.push(signal);
+      next.push(canonicalSignal);
     }
     signals.splice(0, signals.length, ...next);
+  }
+
+  private canonicalizeSignal(signal: DiscoverySignal): DiscoverySignal {
+    if (!signal.framework) {
+      return signal;
+    }
+
+    const canonicalFramework = normalizeBackendFrameworkLabel(signal.framework);
+    if (canonicalFramework === 'unknown') {
+      return signal;
+    }
+
+    return {
+      ...signal,
+      framework: canonicalFramework,
+    };
+  }
+
+  private toDiscoveryRuntime(
+    runtime: ReturnType<typeof normalizeBackendRuntimeLabel>
+  ): RuntimeType {
+    if (runtime === 'node') {
+      return 'nodejs';
+    }
+    if (runtime === 'dotnet') {
+      return 'csharp';
+    }
+    if (runtime === 'python' || runtime === 'go' || runtime === 'java' || runtime === 'ruby') {
+      return runtime;
+    }
+    return 'unknown';
   }
 
   private toProjectRelative(filePath: string): string {

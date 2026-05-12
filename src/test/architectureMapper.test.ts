@@ -371,7 +371,7 @@ describe('C03: Architecture Mapping Engine', () => {
     const mapper = new GoNativeArchitectureMapper();
     const ir = await mapper.mapToIR(
       projectPath,
-      discovery({ runtime: 'go', framework: 'gin', confidenceLevel: 'high' })
+      discovery({ runtime: 'go', framework: 'gogin', confidenceLevel: 'high' })
     );
 
     const handlers = ir.topology.services.flatMap((service) => service.handlers);
@@ -385,12 +385,12 @@ describe('C03: Architecture Mapping Engine', () => {
     const mapper = new SpringBootArchitectureMapper();
     const ir = await mapper.mapToIR(
       projectPath,
-      discovery({ runtime: 'java', framework: 'spring', confidenceLevel: 'high' })
+      discovery({ runtime: 'java', framework: 'springboot', confidenceLevel: 'high' })
     );
 
     expect(ir.metadata.mapperType).toBe('native');
     expect(ir.runtime).toBe('java');
-    expect(ir.framework).toBe('spring');
+    expect(ir.framework).toBe('springboot');
 
     const handlers = ir.topology.services.flatMap((service) => service.handlers);
     expect(handlers.some((handler) => handler.path === '/users/list')).toBe(true);
@@ -403,7 +403,7 @@ describe('C03: Architecture Mapping Engine', () => {
     const mapper = new NativeArchitectureMapper();
     const ir = await mapper.mapToIR(
       projectPath,
-      discovery({ runtime: 'java', framework: 'spring', confidenceLevel: 'high' })
+      discovery({ runtime: 'java', framework: 'springboot', confidenceLevel: 'high' })
     );
 
     expect(ir.metadata.mapperType).toBe('native');

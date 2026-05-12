@@ -2739,6 +2739,12 @@
     border: 1px solid color-mix(in srgb, #f87171 55%, transparent);
   }
 
+  .incident-lite-status.is-warning {
+    color: #facc15;
+    background: color-mix(in srgb, #facc15 14%, transparent);
+    border: 1px solid color-mix(in srgb, #facc15 55%, transparent);
+  }
+
   .incident-lite-empty {
     display: grid;
     gap: 7px;

@@ -1,5 +1,12 @@
 import { useState } from 'react';
-import { Copy, ChevronDown, FolderOpen, Rocket, Package as PackageIcon, Settings } from 'lucide-react';
+import {
+    Copy,
+    ChevronDown,
+    FolderOpen,
+    Rocket,
+    Package as PackageIcon,
+    Settings,
+} from 'lucide-react';
 
 interface Command {
     code: string;
@@ -14,7 +21,14 @@ interface CommandCategory {
     commands: Command[];
 }
 
-type WorkspaceProfile = 'minimal' | 'python-only' | 'node-only' | 'go-only' | 'java-only' | 'polyglot' | 'enterprise';
+type WorkspaceProfile =
+    | 'minimal'
+    | 'python-only'
+    | 'node-only'
+    | 'go-only'
+    | 'java-only'
+    | 'polyglot'
+    | 'enterprise';
 
 interface CommandReferenceProps {
     workspaceProfile?: WorkspaceProfile;
@@ -22,106 +36,118 @@ interface CommandReferenceProps {
     workspaceName?: string;
 }
 
+function simplifyCommandForDisplay(command: string): string {
+    const compact = command.trim().replace(/\s+/g, ' ');
+    if (!compact) {
+        return compact;
+    }
+
+    return compact
+        .replace(/^npx\s+--yes\s+--package\s+rapidkit\s+rapidkit\b/i, 'rapidkit')
+        .replace(/^npx\s+rapidkit\b/i, 'rapidkit')
+        .trim();
+}
+
 function buildWorkspaceCommands(profile: WorkspaceProfile): Command[] {
     const common: Command[] = [
         {
-            code: 'npx rapidkit create workspace my-workspace --yes --profile polyglot',
-            description: 'Create a workspace with explicit profile (recommended canonical form)'
+            code: 'npx --yes --package rapidkit rapidkit create workspace my-workspace --yes --profile polyglot',
+            description: 'Create a workspace with explicit profile (recommended canonical form)',
         },
         {
-            code: `npx rapidkit bootstrap --profile ${profile}`,
-            description: `Sync and bootstrap runtimes for the active profile (${profile})`
+            code: `npx --yes --package rapidkit rapidkit bootstrap --profile ${profile}`,
+            description: `Sync and bootstrap runtimes for the active profile (${profile})`,
         },
         {
-            code: 'npx rapidkit init',
+            code: 'npx --yes --package rapidkit rapidkit init',
             description:
-                'Full init (workspace + projects). Mirror aliases at workspace root: `workspace init` and `workspace run init`.'
+                'Full init (workspace + projects). Mirror aliases at workspace root: `workspace init` and `workspace run init`.',
         },
         {
-            code: 'npx rapidkit doctor workspace',
-            description: 'Run workspace health checks (canonical doctor contract)'
+            code: 'npx --yes --package rapidkit rapidkit doctor workspace',
+            description: 'Run workspace health checks (canonical doctor contract)',
         },
         {
-            code: 'npx rapidkit cache status',
-            description: 'Inspect workspace cache policy and status'
+            code: 'npx --yes --package rapidkit rapidkit cache status',
+            description: 'Inspect workspace cache policy and status',
         },
         {
-            code: 'npx rapidkit mirror status',
-            description: 'Inspect mirror/offline artifact status'
-        }
+            code: 'npx --yes --package rapidkit rapidkit mirror status',
+            description: 'Inspect mirror/offline artifact status',
+        },
     ];
 
     const runtimeByProfile: Record<WorkspaceProfile, Command[]> = {
         'go-only': [
             {
-                code: 'npx rapidkit setup go --warm-deps',
-                description: 'Validate Go runtime and pre-warm module dependencies'
-            }
+                code: 'npx --yes --package rapidkit rapidkit setup go --warm-deps',
+                description: 'Validate Go runtime and pre-warm module dependencies',
+            },
         ],
         'java-only': [
             {
-                code: 'npx rapidkit setup java --warm-deps',
-                description: 'Validate Java runtime and pre-warm build dependencies'
-            }
+                code: 'npx --yes --package rapidkit rapidkit setup java --warm-deps',
+                description: 'Validate Java runtime and pre-warm build dependencies',
+            },
         ],
         'node-only': [
             {
-                code: 'npx rapidkit setup node --warm-deps',
-                description: 'Validate Node runtime and pre-warm dependency cache'
-            }
+                code: 'npx --yes --package rapidkit rapidkit setup node --warm-deps',
+                description: 'Validate Node runtime and pre-warm dependency cache',
+            },
         ],
         'python-only': [
             {
-                code: 'npx rapidkit setup python',
-                description: 'Validate Python runtime prerequisites'
-            }
+                code: 'npx --yes --package rapidkit rapidkit setup python',
+                description: 'Validate Python runtime prerequisites',
+            },
         ],
-        'polyglot': [
+        polyglot: [
             {
-                code: 'npx rapidkit setup python',
-                description: 'Validate Python runtime prerequisites'
+                code: 'npx --yes --package rapidkit rapidkit setup python',
+                description: 'Validate Python runtime prerequisites',
             },
             {
-                code: 'npx rapidkit setup node --warm-deps',
-                description: 'Validate Node runtime and pre-warm dependency cache'
+                code: 'npx --yes --package rapidkit rapidkit setup node --warm-deps',
+                description: 'Validate Node runtime and pre-warm dependency cache',
             },
             {
-                code: 'npx rapidkit setup go --warm-deps',
-                description: 'Validate Go runtime and pre-warm module dependencies'
+                code: 'npx --yes --package rapidkit rapidkit setup go --warm-deps',
+                description: 'Validate Go runtime and pre-warm module dependencies',
             },
             {
-                code: 'npx rapidkit setup java --warm-deps',
-                description: 'Validate Java runtime and pre-warm Maven/Gradle dependencies'
-            }
+                code: 'npx --yes --package rapidkit rapidkit setup java --warm-deps',
+                description: 'Validate Java runtime and pre-warm Maven/Gradle dependencies',
+            },
         ],
-        'enterprise': [
+        enterprise: [
             {
-                code: 'npx rapidkit setup python',
-                description: 'Validate Python runtime prerequisites'
+                code: 'npx --yes --package rapidkit rapidkit setup python',
+                description: 'Validate Python runtime prerequisites',
             },
             {
-                code: 'npx rapidkit setup node --warm-deps',
-                description: 'Validate Node runtime and pre-warm dependency cache'
+                code: 'npx --yes --package rapidkit rapidkit setup node --warm-deps',
+                description: 'Validate Node runtime and pre-warm dependency cache',
             },
             {
-                code: 'npx rapidkit setup go --warm-deps',
-                description: 'Validate Go runtime and pre-warm module dependencies'
+                code: 'npx --yes --package rapidkit rapidkit setup go --warm-deps',
+                description: 'Validate Go runtime and pre-warm module dependencies',
             },
             {
-                code: 'npx rapidkit setup java --warm-deps',
-                description: 'Validate Java runtime and pre-warm Maven/Gradle dependencies'
+                code: 'npx --yes --package rapidkit rapidkit setup java --warm-deps',
+                description: 'Validate Java runtime and pre-warm Maven/Gradle dependencies',
             },
             {
-                code: 'npx rapidkit mirror verify',
-                description: 'Verify mirrored artifacts and policy compliance (enterprise)'
-            }
+                code: 'npx --yes --package rapidkit rapidkit mirror verify',
+                description: 'Verify mirrored artifacts and policy compliance (enterprise)',
+            },
         ],
-        'minimal': [
+        minimal: [
             {
-                code: 'npx rapidkit setup python',
-                description: 'Validate Python runtime prerequisites (optional for minimal)'
-            }
-        ]
+                code: 'npx --yes --package rapidkit rapidkit setup python',
+                description: 'Validate Python runtime prerequisites (optional for minimal)',
+            },
+        ],
     };
 
     return [...common, ...runtimeByProfile[profile]];
@@ -138,25 +164,25 @@ export function CommandReference({
     const workspaceCommands = buildWorkspaceCommands(workspaceProfile);
     const devCommands: Command[] = [
         {
-            code: 'npx rapidkit doctor workspace --fix',
-            description: 'Run doctor with safe auto-fixes for workspace issues'
+            code: 'npx --yes --package rapidkit rapidkit doctor workspace --fix',
+            description: 'Run doctor with safe auto-fixes for workspace issues',
         },
         {
-            code: 'npx rapidkit --version',
-            description: 'Show RapidKit CLI version'
+            code: 'npx --yes --package rapidkit rapidkit --version',
+            description: 'Show RapidKit CLI version',
         },
         {
-            code: 'npx rapidkit --help',
-            description: 'Display all available commands and options'
+            code: 'npx --yes --package rapidkit rapidkit --help',
+            description: 'Display all available commands and options',
         },
         {
-            code: 'npx rapidkit mirror sync',
-            description: 'Sync mirror artifacts for offline/controlled environments'
+            code: 'npx --yes --package rapidkit rapidkit mirror sync',
+            description: 'Sync mirror artifacts for offline/controlled environments',
         },
         {
-            code: 'npx rapidkit mirror verify',
-            description: 'Verify mirrored artifacts and policy compliance'
-        }
+            code: 'npx --yes --package rapidkit rapidkit mirror verify',
+            description: 'Verify mirrored artifacts and policy compliance',
+        },
     ];
 
     const categories: CommandCategory[] = [
@@ -165,7 +191,7 @@ export function CommandReference({
             title: 'Workspace Commands',
             icon: FolderOpen,
             count: workspaceCommands.length,
-            commands: workspaceCommands
+            commands: workspaceCommands,
         },
         {
             id: 'project',
@@ -174,34 +200,34 @@ export function CommandReference({
             count: 7,
             commands: [
                 {
-                    code: 'npx rapidkit create project fastapi.standard my-api --output .',
-                    description: 'Create FastAPI Standard project in current workspace'
+                    code: 'npx --yes --package rapidkit rapidkit create project fastapi.standard my-api --output .',
+                    description: 'Create FastAPI Standard project in current workspace',
                 },
                 {
-                    code: 'npx rapidkit create project fastapi.ddd my-ddd-api --output .',
-                    description: 'Create FastAPI DDD project with clean architecture'
+                    code: 'npx --yes --package rapidkit rapidkit create project fastapi.ddd my-ddd-api --output .',
+                    description: 'Create FastAPI DDD project with clean architecture',
                 },
                 {
-                    code: 'npx rapidkit create project nestjs.standard my-service --output .',
-                    description: 'Create NestJS project in current workspace'
+                    code: 'npx --yes --package rapidkit rapidkit create project nestjs.standard my-service --output .',
+                    description: 'Create NestJS project in current workspace',
                 },
                 {
-                    code: 'npx rapidkit create project gofiber.standard my-go-service --output .',
-                    description: 'Create Go/Fiber project in current workspace'
+                    code: 'npx --yes --package rapidkit rapidkit create project gofiber.standard my-go-service --output .',
+                    description: 'Create Go/Fiber project in current workspace',
                 },
                 {
-                    code: 'npx rapidkit create project springboot.standard my-spring-service --output .',
-                    description: 'Create Spring Boot project in current workspace'
+                    code: 'npx --yes --package rapidkit rapidkit create project springboot.standard my-spring-service --output .',
+                    description: 'Create Spring Boot project in current workspace',
                 },
                 {
-                    code: 'npx rapidkit create project springboot.standard billing-api --output ~/projects',
-                    description: 'Create standalone Spring Boot project at custom location'
+                    code: 'npx --yes --package rapidkit rapidkit create project springboot.standard billing-api --output ~/projects',
+                    description: 'Create standalone Spring Boot project at custom location',
                 },
                 {
-                    code: 'npx rapidkit init && npx rapidkit dev',
-                    description: 'Initialize dependencies and start development server'
-                }
-            ]
+                    code: 'npx --yes --package rapidkit rapidkit init && npx --yes --package rapidkit rapidkit dev',
+                    description: 'Initialize dependencies and start development server',
+                },
+            ],
         },
         {
             id: 'module',
@@ -210,38 +236,38 @@ export function CommandReference({
             count: 5,
             commands: [
                 {
-                    code: 'npx rapidkit add module auth_core',
-                    description: 'Password hashing, token signing, and runtime auth'
+                    code: 'npx --yes --package rapidkit rapidkit add module auth_core',
+                    description: 'Password hashing, token signing, and runtime auth',
                 },
                 {
-                    code: 'npx rapidkit add module db_postgres',
-                    description: 'SQLAlchemy async Postgres with DI and health checks'
+                    code: 'npx --yes --package rapidkit rapidkit add module db_postgres',
+                    description: 'SQLAlchemy async Postgres with DI and health checks',
                 },
                 {
-                    code: 'npx rapidkit add module redis',
-                    description: 'Redis runtime with async and sync client'
+                    code: 'npx --yes --package rapidkit rapidkit add module redis',
+                    description: 'Redis runtime with async and sync client',
                 },
                 {
-                    code: 'npx rapidkit add module email',
-                    description: 'Email delivery with SMTP support'
+                    code: 'npx --yes --package rapidkit rapidkit add module email',
+                    description: 'Email delivery with SMTP support',
                 },
                 {
-                    code: 'npx rapidkit add module storage',
-                    description: 'File storage and media management'
-                }
-            ]
+                    code: 'npx --yes --package rapidkit rapidkit add module storage',
+                    description: 'File storage and media management',
+                },
+            ],
         },
         {
             id: 'dev',
             title: 'Development & Utilities',
             icon: Settings,
             count: devCommands.length,
-            commands: devCommands
-        }
+            commands: devCommands,
+        },
     ];
 
     const toggleCategory = (categoryId: string) => {
-        setExpandedCategories(prev => {
+        setExpandedCategories((prev) => {
             const newSet = new Set(prev);
             if (newSet.has(categoryId)) {
                 newSet.delete(categoryId);
@@ -296,11 +322,9 @@ export function CommandReference({
                         color: 'var(--vscode-descriptionForeground)',
                     }}
                 >
-                    💡 To see profile-specific commands, select a workspace from the
-                    {' '}
-                    <strong style={{ color: 'var(--vscode-foreground)' }}>WORKSPACES</strong>
-                    {' '}
-                    sidebar panel first.
+                    💡 To see profile-specific commands, select a workspace from the{' '}
+                    <strong style={{ color: 'var(--vscode-foreground)' }}>WORKSPACES</strong> sidebar panel
+                    first.
                 </div>
             )}
 
@@ -317,7 +341,7 @@ export function CommandReference({
                 </div>
             )}
 
-            {categories.map(category => {
+            {categories.map((category) => {
                 const Icon = category.icon;
                 const isExpanded = expandedCategories.has(category.id);
 
@@ -337,7 +361,7 @@ export function CommandReference({
                                 className="category-toggle"
                                 style={{
                                     transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                    transition: 'transform 0.2s'
+                                    transition: 'transform 0.2s',
                                 }}
                             />
                         </div>
@@ -346,7 +370,7 @@ export function CommandReference({
                                 {category.commands.map((cmd, index) => (
                                     <div key={index} className="command-item">
                                         <div className="command-header">
-                                            <div className="command-code">{cmd.code}</div>
+                                            <div className="command-code">{simplifyCommandForDisplay(cmd.code)}</div>
                                             <button
                                                 className={`command-copy-btn ${copiedCommand === cmd.code ? 'copied' : ''}`}
                                                 onClick={() => copyCommand(cmd.code)}
@@ -355,7 +379,9 @@ export function CommandReference({
                                                 {copiedCommand === cmd.code ? (
                                                     <>✓ Copied!</>
                                                 ) : (
-                                                    <><Copy size={12} /> Copy</>
+                                                    <>
+                                                        <Copy size={12} /> Copy
+                                                    </>
                                                 )}
                                             </button>
                                         </div>

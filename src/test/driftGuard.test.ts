@@ -188,8 +188,15 @@ describe('contract drift guard', () => {
       '"release:stop-gate": "node scripts/release-stop-gate.mjs"'
     );
     expect(workflowSource).toContain('Release stop gate (contract/parity)');
-    expect(workflowSource).toContain('npm run release:stop-gate -- --skip-kpi');
+    expect(workflowSource).toContain('Shared parity contract snapshot');
+    expect(workflowSource).toContain('npm run test:parity-contract');
+    expect(workflowSource).toContain('npm run release:stop-gate -- \\');
+    expect(workflowSource).toContain('--marker releases/fixtures/wave3-kpi-marker.json');
+    expect(workflowSource).toContain('--enforce-claim-checklist');
+    expect(workflowSource).toContain('--enforce-enterprise-freeze');
+    expect(workflowSource).toContain('--enforce-release-posture-label');
     expect(gateScriptSource).toContain('src/test/driftGuard.test.ts');
+    expect(gateScriptSource).toContain('src/test/importStackParity.snapshot.test.ts');
     expect(gateScriptSource).toContain('src/test/incidentStudioPayload.test.ts');
     expect(gateScriptSource).toContain('src/test/workspaceUsageTracker.test.ts');
     expect(gateScriptSource).toContain('--manifest');
@@ -368,5 +375,25 @@ describe('contract drift guard', () => {
     expect(breakIdx).toBeGreaterThan(clarificationIdx);
     expect(clarificationIdx).toBeLessThan(streamIdx);
     expect(breakIdx).toBeLessThan(streamIdx);
+  });
+
+  it('keeps incident telemetry request fail-safe fallback to null payload', () => {
+    const welcomePanelSource = read('src/ui/panels/welcomePanel.ts');
+
+    expect(welcomePanelSource).toContain("case 'requestIncidentStudioTelemetry':");
+    expect(welcomePanelSource).toContain('await this._sendIncidentStudioTelemetry(');
+    expect(welcomePanelSource).toContain(
+      "console.warn('[WelcomePanel] incident telemetry refresh failed:'"
+    );
+    expect(welcomePanelSource).toContain("command: 'incidentStudioTelemetry'");
+    expect(welcomePanelSource).toContain('data: null');
+
+    const caseIdx = welcomePanelSource.indexOf("case 'requestIncidentStudioTelemetry':");
+    const catchIdx = welcomePanelSource.indexOf('} catch (error) {', caseIdx);
+    const fallbackIdx = welcomePanelSource.indexOf("command: 'incidentStudioTelemetry'", caseIdx);
+
+    expect(caseIdx).toBeGreaterThan(-1);
+    expect(catchIdx).toBeGreaterThan(caseIdx);
+    expect(fallbackIdx).toBeGreaterThan(catchIdx);
   });
 });

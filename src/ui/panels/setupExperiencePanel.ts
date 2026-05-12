@@ -898,7 +898,7 @@ export class SetupPanel {
     if (!this._isDisposing && this._panel && this._panel.webview) {
       try {
         this._panel.webview.postMessage(message);
-      } catch (err) {
+      } catch {
         // Silently ignore if webview is disposed
         // This can happen when messages are queued before disposal completes
       }

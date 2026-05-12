@@ -1,8 +1,8 @@
 /**
  * C02: BYOP Discovery Pipeline - Test Suite
  *
- * 32 comprehensive tests covering:
- * - FastAPI, NestJS, Go/Gin project detection
+ * 33 comprehensive tests covering:
+ * - FastAPI, NestJS, Go/Gin/GoFiber project detection
  * - Mixed/polyglot framework detection
  * - Confidence scoring and capability levels
  * - Portfolio metrics
@@ -196,6 +196,61 @@ func main() {
 
     r.Run(":8080")
 }
+
+`
+  );
+
+  fs.writeFileSync(
+    path.join(projectPath, 'Makefile'),
+    `test:
+	go test ./...
+run:
+	go run main.go
+build:
+	go build -o api main.go
+`
+  );
+}
+
+function setupGoFiberProject(projectPath: string): void {
+  fs.writeFileSync(
+    path.join(projectPath, 'go.mod'),
+    `module github.com/example/fiber-api
+
+go 1.21
+
+require (
+    github.com/gofiber/fiber/v2 v2.52.4
+)
+`
+  );
+
+  fs.writeFileSync(
+    path.join(projectPath, 'Dockerfile'),
+    `FROM golang:1.21-alpine
+WORKDIR /app
+COPY . .
+RUN go build -o api main.go
+EXPOSE 3000
+CMD ["./api"]
+`
+  );
+
+  fs.writeFileSync(
+    path.join(projectPath, 'main.go'),
+    `package main
+
+import "github.com/gofiber/fiber/v2"
+
+func main() {
+    app := fiber.New()
+
+    app.Get("/health", func(c *fiber.Ctx) error {
+        return c.JSON(fiber.Map{"status": "ok"})
+    })
+
+    app.Listen(":3000")
+}
 `
   );
 
@@ -368,7 +423,23 @@ describe('C02: BYOP Discovery Pipeline', () => {
         const result = await engine.discover();
 
         expect(result.runtime).toBe('go');
-        expect(result.framework).toBe('gin');
+        expect(result.framework).toBe('gogin');
+        expect(result.confidenceLevel).toBe('high');
+      } finally {
+        cleanupFixtureProject(projectPath);
+      }
+    });
+
+    it('should detect GoFiber project with high confidence', async () => {
+      const projectPath = createFixtureProject('gofiber');
+      setupGoFiberProject(projectPath);
+
+      try {
+        const engine = new ByopDiscoveryEngine(projectPath);
+        const result = await engine.discover();
+
+        expect(result.runtime).toBe('go');
+        expect(result.framework).toBe('gofiber');
         expect(result.confidenceLevel).toBe('high');
       } finally {
         cleanupFixtureProject(projectPath);
@@ -384,7 +455,7 @@ describe('C02: BYOP Discovery Pipeline', () => {
         const result = await engine.discover();
 
         expect(result.runtime).toBe('java');
-        expect(result.framework).toBe('spring');
+        expect(result.framework).toBe('springboot');
         expect(result.confidenceLevel).toMatch(/high|medium/);
       } finally {
         cleanupFixtureProject(projectPath);
@@ -654,6 +725,13 @@ CMD ["python", "main.py"]
       const profile = getFrameworkProfile('gin');
       expect(profile).toBeDefined();
       expect(profile?.name).toBe('gin');
+      expect(profile?.runtime).toBe('go');
+    });
+
+    it('should load GoFiber profile', () => {
+      const profile = getFrameworkProfile('gofiber');
+      expect(profile).toBeDefined();
+      expect(profile?.name).toBe('gofiber');
       expect(profile?.runtime).toBe('go');
     });
 

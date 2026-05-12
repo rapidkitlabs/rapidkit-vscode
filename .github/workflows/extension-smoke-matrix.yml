@@ -31,11 +31,27 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Format check
+        if: runner.os != 'Windows'
+        run: npm run format:check
+
       - name: Compile
         run: npm run compile
 
       - name: Contract drift smoke
         run: npm run test:watch -- --run src/test/driftGuard.test.ts
 
+      - name: Shared parity contract snapshot
+        run: npm run test:parity-contract
+
       - name: Release stop gate (contract/parity)
-        run: npm run release:stop-gate -- --skip-kpi
+        run: |
+          npm run release:stop-gate -- \
+            --marker releases/fixtures/wave3-kpi-marker.json \
+            --marker-max-age-hours 100000 \
+            --claim-checklist releases/fixtures/wave3-claim-checklist.md \
+            --enforce-claim-checklist \
+            --enterprise-gate releases/fixtures/wave3-enterprise-gate.json \
+            --enforce-enterprise-freeze \
+            --release-notes releases/fixtures/release-posture-label.md \
+            --enforce-release-posture-label

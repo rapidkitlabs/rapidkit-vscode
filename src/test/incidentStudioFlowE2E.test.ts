@@ -27,12 +27,14 @@ import {
 } from '../ui/panels/incidentStudioTelemetry';
 import {
   buildIncidentWorkspaceGraphFixture,
+  getIncidentFixtureSupportedTopology,
   INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES,
 } from './fixtures/incidentStudioGraphFixtures';
 
 describe('incidentStudioFlowE2E', () => {
   it('keeps Diagnose -> Plan -> Verify flow stable across all supported kits', () => {
     for (const fixture of INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES) {
+      const supportedTopology = getIncidentFixtureSupportedTopology(fixture);
       const openPayload = normalizeIncomingIncidentStudioOpen({
         workspacePath: ` ${fixture.workspacePath} `,
         workspaceName: ` ${fixture.workspaceName} `,
@@ -161,12 +163,12 @@ describe('incidentStudioFlowE2E', () => {
         summary: {
           nodeCount: fixture.modules.length,
           edgeCount: fixture.modules.length > 1 ? 1 : 0,
-          supportedTopology: fixture.kit,
+          supportedTopology,
         },
       });
 
       expect(systemGraphSnapshot?.workspacePath).toBe(fixture.workspacePath);
-      expect(systemGraphSnapshot?.summary.supportedTopology).toBe(fixture.kit);
+      expect(systemGraphSnapshot?.summary.supportedTopology).toBe(supportedTopology);
 
       const impactAssessment = normalizeIncidentImpactAssessmentPayload({
         requestId: 'impact-flow-1',
@@ -190,19 +192,19 @@ describe('incidentStudioFlowE2E', () => {
 
       const predictiveWarning = normalizeIncidentPredictiveWarningPayload({
         requestId: 'predictive-flow-1',
-        warningId: `warn-${fixture.kit}`,
+        warningId: `warn-${supportedTopology}`,
         confidenceBand: 'medium',
         predictedFailure: 'likely downstream timeout',
         affectedScopeSummary: impactAssessment.affectedModules.join(', '),
         nextSafeAction: 'Run change-impact-lite and verify before apply.',
         verifyChecklist: impactAssessment.verifyChecklist,
         telemetrySeed: {
-          predictionKey: `pred-${fixture.kit}`,
+          predictionKey: `pred-${supportedTopology}`,
           evidenceSources: impactAssessment.sources,
         },
       });
 
-      expect(predictiveWarning.telemetrySeed.predictionKey).toContain(fixture.kit);
+      expect(predictiveWarning.telemetrySeed.predictionKey).toContain(supportedTopology);
       expect(predictiveWarning.verifyChecklist.length).toBeGreaterThan(0);
 
       const releaseGateEvidence = normalizeIncidentReleaseGateEvidencePayload({

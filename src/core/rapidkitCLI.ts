@@ -57,6 +57,10 @@ export class WorkspaiCLI {
     this.logger = Logger.getInstance();
   }
 
+  private buildPortableNpxRapidkitArgs(args: string[]): string[] {
+    return ['--yes', '--package', 'rapidkit', 'rapidkit', ...args];
+  }
+
   /**
    * Create a new RapidKit workspace using npm package
    * Uses: npx rapidkit <workspace-name> [--yes] [--skip-git]
@@ -64,7 +68,7 @@ export class WorkspaiCLI {
    */
   async createWorkspace(options: CreateWorkspaceOptions): Promise<ExecaReturnValue> {
     // Use: npx rapidkit create workspace <name> --yes  (skip interactive prompts)
-    const args = ['rapidkit', 'create', 'workspace', options.name, '--yes'];
+    const args = ['create', 'workspace', options.name, '--yes'];
 
     if (options.installMethod) {
       args.push('--install-method', options.installMethod);
@@ -84,7 +88,7 @@ export class WorkspaiCLI {
 
     this.logger.info('Creating workspace with npx:', args.join(' '), 'at', options.parentPath);
 
-    return await run('npx', args, {
+    return await run('npx', this.buildPortableNpxRapidkitArgs(args), {
       cwd: options.parentPath,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
@@ -100,7 +104,6 @@ export class WorkspaiCLI {
    */
   async createProject(options: CreateProjectOptions): Promise<ExecaReturnValue> {
     const args = [
-      'rapidkit',
       'create',
       'project',
       options.kit,
@@ -119,7 +122,7 @@ export class WorkspaiCLI {
 
     this.logger.info('Creating project with npx (core):', ['npx', ...args].join(' '));
 
-    const result = await run('npx', args, {
+    const result = await run('npx', this.buildPortableNpxRapidkitArgs(args), {
       cwd: options.parentPath,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
@@ -130,7 +133,7 @@ export class WorkspaiCLI {
 
     if (!options.skipInstall) {
       const projectPath = (await import('path')).join(options.parentPath, options.name);
-      await run('npx', ['rapidkit', 'init', projectPath], {
+      await run('npx', this.buildPortableNpxRapidkitArgs(['init', projectPath]), {
         cwd: options.parentPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -152,7 +155,6 @@ export class WorkspaiCLI {
     options: CreateProjectInWorkspaceOptions
   ): Promise<ExecaReturnValue> {
     const args = [
-      'rapidkit',
       'create',
       'project',
       options.kit,
@@ -176,7 +178,7 @@ export class WorkspaiCLI {
       options.workspacePath + ')'
     );
 
-    const result = await run('npx', args, {
+    const result = await run('npx', this.buildPortableNpxRapidkitArgs(args), {
       cwd: options.workspacePath,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
@@ -192,7 +194,7 @@ export class WorkspaiCLI {
       this.logger.info('Running rapidkit init in project:', projectPath);
 
       // Run init from project directory (not workspace)
-      await run('npx', ['rapidkit', 'init'], {
+      await run('npx', this.buildPortableNpxRapidkitArgs(['init']), {
         cwd: projectPath,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -223,7 +225,10 @@ export class WorkspaiCLI {
     }
 
     try {
-      await run('npx', ['rapidkit', '--version'], { stdio: 'pipe', timeout: 5000 });
+      await run('npx', this.buildPortableNpxRapidkitArgs(['--version']), {
+        stdio: 'pipe',
+        timeout: 5000,
+      });
       return true;
     } catch (error) {
       this.logger.debug('RapidKit CLI not available', error);
@@ -246,7 +251,7 @@ export class WorkspaiCLI {
     }
 
     try {
-      const result = await run('npx', ['rapidkit', '--version'], {
+      const result = await run('npx', this.buildPortableNpxRapidkitArgs(['--version']), {
         stdio: 'pipe',
         timeout: 5000,
       });
@@ -321,7 +326,7 @@ export class WorkspaiCLI {
         this.logger.debug('Direct rapidkit binary failed, falling back to npx', e);
         // Priority 3: Fall back to npx (but use workspace's rapidkit if available)
         this.logger.warn('⚠️ Falling back to npx - may use different rapidkit version!');
-        return await run('npx', ['--yes', 'rapidkit', ...args], {
+        return await run('npx', this.buildPortableNpxRapidkitArgs(args), {
           cwd: workingDir,
           stdio: 'pipe',
         });

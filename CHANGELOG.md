@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.3] - 2026-05-12
+
+### Added
+
+- **Incident Studio policy modules** — added new policy/evidence helper modules under `src/ui/panels/`:
+  - `incidentStudioPolicyGates.ts`
+  - `incidentStudioResponseValidator.ts`
+  - `incidentStudioVerifyRerun.ts`
+  - `incidentStudioVerifyDiff.ts`
+  - `incidentStudioEvidenceMapping.ts`
+  - `incidentStudioEvidenceProvenance.ts`
+  - `incidentStudioConfidenceUI.ts`
+  - `incidentStudioExportProvenance.ts`
+- **Core backend contract modules**:
+  - `src/core/backendFrameworkContract.ts` (framework/runtime -> stack contract)
+  - `src/core/verifyPackContractExporter.ts` (export verify-pack contract to `.rapidkit/reports`)
+  - `src/core/workspaceHygieneProbes.ts` (duplicate-deps, SCM hygiene, README framework alignment)
+- **Parity snapshot automation** — added deterministic shared snapshot sync/check commands:
+  - `sync:parity-snapshot`
+  - `check:parity-snapshot`
+  - `contracts/backend-import-stack-parity.snapshot.json`
+  - `scripts/sync-import-stack-parity-snapshot.mjs`
+- **Release notes artifact** — added `releases/RELEASE_NOTES_v0.27.3.md`.
+- **Regression suites** — added focused test coverage for policy gates, verifier rerun/diff, evidence provenance/export, response contract validation, workspace boundary matching, and parity snapshot checks.
+
+### Changed
+
+- **Incident Studio claim coherence (webview)** — `webview-ui/src/components/AIIncidentStudio.tsx` now enforces NO-GO/verify-gate truth in UI claims:
+  - blocks success messaging when verify/release gates are unsatisfied
+  - downgrades GO to gated HOLD when verify completion gates are not met
+  - surfaces explicit scope-truth and flow-vs-telemetry labels
+  - guided mode now renders deterministic next+verify intent chips and hides dense action board panel
+- **Command transport + display separation**:
+  - execution path normalized to portable `npx --yes --package rapidkit rapidkit ...`
+  - user-facing command rendering simplified to `rapidkit ...`
+  - applied across Incident Studio, command reference, and welcome panel pathways
+- **Workspace stabilization telemetry model** (`src/utils/workspaceUsageTracker.ts`):
+  - added thresholds/metrics/gates for:
+    - `routeFallbackNonSuccessShare`
+    - `verifyIncompleteWarningRate`
+    - `topVerifyPathMissReasonShare`
+  - propagated to payload contract types and Incident Studio KPI cards/exports
+- **Welcome panel runtime hardening** (`src/ui/panels/welcomePanel.ts`):
+  - explicit shell dispatch per OS for terminal-bridge execution
+  - incident telemetry refresh wrapped with safe fallback postMessage
+  - command scope detection expanded for workspace-level rapidkit actions
+- **Release gate enforcement in CI** — removed KPI bypass from smoke matrix release gate and switched to fixture-backed inputs (`wave3-kpi-marker`, claim checklist, enterprise gate, release posture label).
+- **Formatting gate in CI** — added `format:check` to smoke workflow (non-Windows) for local/CI parity.
+
+### Fixed
+
+- **Workspace path prefix-collision bug** — `src/utils/findWorkspace.ts` now uses normalized boundary-safe containment checks, so sibling paths like `workspace-other` are no longer treated as nested under `workspace`.
+- **Doctor command messaging parity** — doctor evidence tooltips/context hints now use the portable canonical invocation.
+- **Formatting consistency in release branch** — normalized prettier formatting on high-churn files used by validation.
+
 ## [0.27.2] - 2026-05-10
 
 ### Fixed
