@@ -1108,6 +1108,9 @@ export class WelcomePanel {
       };
       // Last AI response text (populated after each _handleAiChatQuery call)
       lastActionResponseText?: string;
+      // Scope-gate state from latest action used to fail-close command apply routes.
+      lastScopeKnown?: boolean;
+      lastUnknownScopeMutationBlocked?: boolean;
     }
   >();
   private _pendingImportedIncidentReplayByWorkspace = new Map<
@@ -7106,9 +7109,10 @@ No markdown, no explanation outside the JSON.`;
       (isMutatingAction || actionPolicy.requiresImpactReview || actionPolicy.requiresVerifyPath) &&
       releaseGateBlockedReasons.length > 0;
     const unknownScopeMutationBlocked =
-      actionPolicy.requiresImpactReview &&
+      (isMutatingAction || actionPolicy.requiresImpactReview) &&
       wave2Contracts.impactAssessment.blockMutationWhenScopeUnknown &&
-      !wave2Contracts.releaseGateEvidence.scopeKnown;
+      (!wave2Contracts.releaseGateEvidence.scopeKnown ||
+        wave2Contracts.impactAssessment.impactScoreContract?.scopeKnown === false);
     const effectiveVerifySuccess = verifySuccess && !releaseGateCompletionBlocked;
     const sandboxEvidence =
       activeWorkspacePath &&
@@ -7328,6 +7332,8 @@ No markdown, no explanation outside the JSON.`;
       } else {
         conv.phase = 'verify';
       }
+      conv.lastScopeKnown = wave2Contracts.releaseGateEvidence.scopeKnown;
+      conv.lastUnknownScopeMutationBlocked = unknownScopeMutationBlocked;
       conv.lastActivityAt = Date.now();
       this._chatBrainConversations.set(conversationId, conv);
 
@@ -7777,6 +7783,21 @@ No markdown, no explanation outside the JSON.`;
           conversationId,
           code: 'INVALID_INPUT',
           message: 'workspacePath is required to apply patches.',
+          retryable: false,
+        },
+        meta: { requestId, version: 'v1' },
+      });
+      return;
+    }
+
+    if (conv?.lastUnknownScopeMutationBlocked || conv?.lastScopeKnown === false) {
+      this._panel.webview.postMessage({
+        command: 'aiChatError',
+        data: {
+          conversationId,
+          code: 'SCOPE_UNKNOWN_MUTATION_BLOCKED',
+          message:
+            'Patch apply blocked: impacted scope is unknown. Run change-impact-lite and verify before mutation.',
           retryable: false,
         },
         meta: { requestId, version: 'v1' },

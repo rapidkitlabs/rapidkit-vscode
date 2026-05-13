@@ -50,6 +50,29 @@ describe('incidentArchitectureLens', () => {
         rationale: ['Orders depends on billing during auth checks.'],
         verifyChecklist: ['Run doctor checks', 'Run orders integration tests'],
         blockMutationWhenScopeUnknown: true,
+        impactScoreContract: {
+          schemaVersion: 'e1-impact-score-contract.v1',
+          scoringModelVersion: 'c11-deterministic.v1',
+          scopeModelVersion: 'graph-seed-scope.v1',
+          generatedAt: '2026-05-12T00:00:00.000Z',
+          supportedTopology: 'springboot.enterprise',
+          scopeKnown: false,
+          confidence: 86,
+          riskLevel: 'high',
+          impactedModules: ['orders', 'billing'],
+          candidateTests: ['tests/orders.service.spec.ts'],
+          crossServiceBoundaryPaths: ['orders -> billing'],
+          signalCounts: {
+            impactedNodeCount: 2,
+            impactedEdgeCount: 1,
+            impactedModuleCount: 2,
+            candidateTestCount: 1,
+            crossServiceBoundaryCount: 1,
+          },
+          blockedReasons: ['Scope is uncertain'],
+          architectureWarnings: ['Cross-boundary mutation risk'],
+          likelyFailureMode: 'authorization flow may fail across the orders boundary',
+        },
       },
       predictiveWarning: {
         requestId: 'pred-1',
@@ -81,6 +104,10 @@ describe('incidentArchitectureLens', () => {
     expect(lens?.blocked).toBe(true);
     expect(lens?.title).toBe('Architecture lens: review before mutation');
     expect(lens?.statusLabel).toContain('Blocked');
+    expect(lens?.statusLabel).toContain('high confidence');
+    expect(lens?.confidenceLabel).toBe('high');
+    expect(lens?.confidenceSummary).toBe('high confidence (86%)');
+    expect(lens?.impactContractTag).toContain('e1-impact-score-contract.v1');
     expect(lens?.graphSummary).toBe('springboot.enterprise · 2 nodes · 1 edges');
     expect(lens?.headline).toContain('authorization flow may fail');
     expect(lens?.reasons).toEqual(
@@ -119,6 +146,7 @@ describe('incidentArchitectureLens', () => {
     expect(lens).not.toBeNull();
     expect(lens?.blocked).toBe(false);
     expect(lens?.title).toBe('Architecture lens: system graph loaded');
+    expect(lens?.confidenceSummary).toBe('low confidence (0%)');
     expect(lens?.headline).toBe(
       'System graph evidence is ready for architecture-aware impact review.'
     );

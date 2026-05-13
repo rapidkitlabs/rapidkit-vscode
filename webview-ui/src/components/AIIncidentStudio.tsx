@@ -4266,6 +4266,18 @@ export function AIIncidentStudio({
                                             <p className="incident-architecture-lens-summary">
                                                 {architectureLens.headline}
                                             </p>
+                                            <div className="incident-command-tags">
+                                                <span
+                                                    className={`incident-risk-badge incident-risk-badge--${architectureLens.riskTone === 'unknown' ? 'medium' : architectureLens.riskTone}`}
+                                                >
+                                                    {architectureLens.confidenceSummary}
+                                                </span>
+                                                {architectureLens.impactContractTag ? (
+                                                    <span className="incident-studio-badge is-info">
+                                                        {architectureLens.impactContractTag}
+                                                    </span>
+                                                ) : null}
+                                            </div>
                                             <div
                                                 className="incident-architecture-lens-view-switch"
                                                 role="group"

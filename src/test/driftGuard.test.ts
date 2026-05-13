@@ -213,6 +213,7 @@ describe('contract drift guard', () => {
     expect(workflowSource).toContain('--enforce-release-posture-label');
     expect(gateScriptSource).toContain('src/test/driftGuard.test.ts');
     expect(gateScriptSource).toContain('src/test/importStackParity.snapshot.test.ts');
+    expect(gateScriptSource).toContain('src/test/impactScoreScenarioMatrix.test.ts');
     expect(gateScriptSource).toContain('src/test/incidentStudioPayload.test.ts');
     expect(gateScriptSource).toContain('src/test/workspaceUsageTracker.test.ts');
     expect(gateScriptSource).toContain('--manifest');
@@ -266,6 +267,18 @@ describe('contract drift guard', () => {
     }
 
     expect(violations).toHaveLength(0);
+  });
+
+  it('keeps fail-closed unknown-scope mutation guard active for apply-patch route', () => {
+    const welcomePanelSource = read('src/ui/panels/welcomePanel.ts');
+
+    expect(welcomePanelSource).toContain('lastUnknownScopeMutationBlocked');
+    expect(welcomePanelSource).toContain('lastScopeKnown');
+    expect(welcomePanelSource).toContain(
+      'if (conv?.lastUnknownScopeMutationBlocked || conv?.lastScopeKnown === false)'
+    );
+    expect(welcomePanelSource).toContain('SCOPE_UNKNOWN_MUTATION_BLOCKED');
+    expect(welcomePanelSource).toContain('Patch apply blocked: impacted scope is unknown.');
   });
 
   it('keeps project lifecycle command contracts cross-platform for fastapi/go/nestjs', () => {

@@ -12,6 +12,9 @@ export type IncidentArchitectureLensModel = {
   headline: string;
   graphSummary: string;
   riskTone: 'low' | 'medium' | 'high' | 'critical' | 'unknown';
+  confidenceLabel: 'low' | 'medium' | 'high';
+  confidenceSummary: string;
+  impactContractTag?: string;
   blocked: boolean;
   reasons: string[];
   affectedModules: string[];
@@ -71,6 +74,16 @@ function toRiskTone(riskLevel?: string): IncidentArchitectureLensModel['riskTone
   return 'unknown';
 }
 
+function toConfidenceLabel(confidence: number): IncidentArchitectureLensModel['confidenceLabel'] {
+  if (confidence >= 80) {
+    return 'high';
+  }
+  if (confidence >= 55) {
+    return 'medium';
+  }
+  return 'low';
+}
+
 function formatNodeType(nodeType: IncidentSystemGraphNode['type']): string {
   if (nodeType === 'datastore') {
     return 'Datastore';
@@ -114,6 +127,16 @@ export function buildIncidentArchitectureLens(input: {
   const blockedReasons = uniqueNonEmpty(releaseGateEvidence?.blockedReasons ?? [], 3);
   const blocked = blockedReasons.length > 0;
   const riskTone = toRiskTone(impactAssessment?.riskLevel);
+  const contractConfidence = impactAssessment?.impactScoreContract?.confidence;
+  const confidenceValue =
+    typeof contractConfidence === 'number'
+      ? contractConfidence
+      : (impactAssessment?.confidence ?? 0);
+  const confidenceLabel = toConfidenceLabel(confidenceValue);
+  const confidenceSummary = `${confidenceLabel} confidence (${confidenceValue}%)`;
+  const impactContractTag = impactAssessment?.impactScoreContract
+    ? `${impactAssessment.impactScoreContract.schemaVersion} · ${impactAssessment.impactScoreContract.scoringModelVersion}`
+    : undefined;
   const graphSummary = graphSnapshot
     ? `${graphSnapshot.summary.supportedTopology} · ${graphSnapshot.summary.nodeCount} nodes · ${graphSnapshot.summary.edgeCount} edges`
     : 'Graph snapshot pending';
@@ -121,9 +144,15 @@ export function buildIncidentArchitectureLens(input: {
   const reasons = uniqueNonEmpty(
     [
       ...(impactAssessment?.rationale ?? []),
+      impactAssessment?.impactScoreContract?.crossServiceBoundaryPaths?.length
+        ? `Boundary paths: ${impactAssessment.impactScoreContract.crossServiceBoundaryPaths
+            .slice(0, 2)
+            .join(', ')}`
+        : undefined,
       predictiveWarning?.telemetrySeed?.evidenceSources?.length
         ? `Signals: ${predictiveWarning.telemetrySeed.evidenceSources.join(', ')}`
         : undefined,
+      impactContractTag ? `Impact contract: ${impactContractTag}` : undefined,
       releaseGateEvidence
         ? `Gate state: scope ${releaseGateEvidence.scopeKnown ? 'known' : 'unknown'}, verify ${releaseGateEvidence.verifyPathPresent ? 'ready' : 'missing'}, rollback ${releaseGateEvidence.rollbackPathPresent ? 'ready' : 'missing'}`
         : undefined,
@@ -140,7 +169,7 @@ export function buildIncidentArchitectureLens(input: {
     [
       blocked ? 'Blocked' : 'Review ready',
       impactAssessment?.riskLevel ? `${impactAssessment.riskLevel} risk` : undefined,
-      impactAssessment ? `${impactAssessment.confidence}% confidence` : undefined,
+      confidenceSummary,
     ],
     3
   );
@@ -166,6 +195,9 @@ export function buildIncidentArchitectureLens(input: {
     headline,
     graphSummary,
     riskTone,
+    confidenceLabel,
+    confidenceSummary,
+    impactContractTag,
     blocked,
     reasons,
     affectedModules: uniqueNonEmpty(impactAssessment?.affectedModules ?? [], 5),

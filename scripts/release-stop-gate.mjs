@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 const DEFAULT_TEST_FILES = [
   'src/test/driftGuard.test.ts',
   'src/test/importStackParity.snapshot.test.ts',
+  'src/test/impactScoreScenarioMatrix.test.ts',
   'src/test/incidentStudioPayload.test.ts',
   'src/test/incidentStudioPromptPolicy.test.ts',
   'src/test/workspaceUsageTracker.test.ts',
