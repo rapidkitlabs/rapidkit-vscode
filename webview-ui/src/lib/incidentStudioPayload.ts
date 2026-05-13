@@ -124,6 +124,7 @@ export type IncidentReproPackEvidence = {
     relatedFiles: string[];
   };
   exportHint?: string;
+  sensitivityLabel?: 'internal' | 'restricted' | 'confidential';
 };
 
 export type IncidentReleaseReadinessCommanderArtifact = {
@@ -526,6 +527,40 @@ function asBoolean(value: unknown, fallback = false): boolean {
 
 function asOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
+}
+
+function asIncidentReproPackSensitivityLabel(
+  value: unknown
+): IncidentReproPackEvidence['sensitivityLabel'] {
+  if (value === 'internal' || value === 'restricted' || value === 'confidential') {
+    return value;
+  }
+  return undefined;
+}
+
+function deriveIncidentReproPackSensitivityLabel(input: {
+  declared: IncidentReproPackEvidence['sensitivityLabel'];
+  riskLevel: IncidentActionRiskLevel;
+  redactedFields: string[];
+}): 'internal' | 'restricted' | 'confidential' {
+  if (input.declared) {
+    return input.declared;
+  }
+  if (input.riskLevel === 'critical') {
+    return 'confidential';
+  }
+  const lowered = new Set(input.redactedFields.map((field) => field.trim().toLowerCase()));
+  if (
+    input.riskLevel === 'high' ||
+    lowered.has('token') ||
+    lowered.has('password') ||
+    lowered.has('secret') ||
+    lowered.has('apikey') ||
+    lowered.has('authorization')
+  ) {
+    return 'restricted';
+  }
+  return 'internal';
 }
 
 function asWorkspaceMemoryPolicyProfile(
@@ -994,6 +1029,8 @@ export function normalizeIncidentActionResultPayload(
   const reproStatus = cleanText(reproPackRecord.status)?.toLowerCase();
   const replayPayloadRecord = asRecord(reproPackRecord.replayPayload);
   const redactionRecord = asRecord(reproPackRecord.redaction);
+  const replayRiskLevel = normalizeIncidentRiskLevel(replayPayloadRecord.riskLevel);
+  const redactedFields = sanitizeStringArray(redactionRecord.redactedFields, 120, 16);
   const incidentReproPack: IncidentReproPackEvidence = {
     packId:
       cleanText(reproPackRecord.packId) ||
@@ -1010,7 +1047,7 @@ export function normalizeIncidentActionResultPayload(
     redaction: {
       policy: sanitizeIncidentText(redactionRecord.policy, 120) || 'incident-studio-default',
       applied: asBoolean(redactionRecord.applied, true),
-      redactedFields: sanitizeStringArray(redactionRecord.redactedFields, 120, 16),
+      redactedFields,
     },
     summary: {
       historyTurns: Math.max(
@@ -1038,13 +1075,18 @@ export function normalizeIncidentActionResultPayload(
       workspacePath: cleanText(replayPayloadRecord.workspacePath) || '',
       conversationId: cleanText(replayPayloadRecord.conversationId) || '',
       actionType: sanitizeIncidentText(replayPayloadRecord.actionType, 120) || 'unknown',
-      riskLevel: normalizeIncidentRiskLevel(replayPayloadRecord.riskLevel),
+      riskLevel: replayRiskLevel,
       likelyFailureMode: sanitizeIncidentText(replayPayloadRecord.likelyFailureMode, 240),
       verifyChecklist: sanitizeStringArray(replayPayloadRecord.verifyChecklist, 220, 12),
       blockedReasons: sanitizeStringArray(replayPayloadRecord.blockedReasons, 220, 12),
       relatedFiles: sanitizeStringArray(replayPayloadRecord.relatedFiles, 240, 16),
     },
     exportHint: sanitizeIncidentText(reproPackRecord.exportHint, 240),
+    sensitivityLabel: deriveIncidentReproPackSensitivityLabel({
+      declared: asIncidentReproPackSensitivityLabel(reproPackRecord.sensitivityLabel),
+      riskLevel: replayRiskLevel,
+      redactedFields,
+    }),
   };
 
   const hasReproPackField =

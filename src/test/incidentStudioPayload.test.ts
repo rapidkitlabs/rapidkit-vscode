@@ -810,6 +810,7 @@ describe('incidentStudioPayload', () => {
         relatedFiles: ['src/orders/service.ts'],
       },
       exportHint: 'password=[REDACTED]',
+      sensitivityLabel: 'restricted',
     });
   });
 

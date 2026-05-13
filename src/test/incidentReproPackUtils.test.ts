@@ -125,12 +125,17 @@ describe('incidentReproPackUtils', () => {
           relatedFiles: ['orders/service.ts', 'orders/replay.test.ts'],
         },
         exportHint: 'safe handoff',
+        sensitivity: {
+          label: 'confidential',
+          reason: 'Critical-risk replay payload with redacted sensitive fields.',
+        },
       },
       replay_entrypoint: {
         pack_id: 'repro-002',
         workspace_hint: 'private-workspace',
         action_type: 'incident-repro-pack',
         risk_level: 'critical',
+        sensitivity_label: 'confidential',
         verify_checklist: ['Run doctor workspace', 'Run smoke tests'],
       },
     });
@@ -266,6 +271,7 @@ describe('incidentReproPackUtils', () => {
 
     expect(bundle.incident_repro_pack.workspacePath).toBe('my-project');
     expect(bundle.incident_repro_pack.replayPayload.workspacePath).toBe('my-project');
+    expect(bundle.incident_repro_pack.sensitivity.label).toBe('internal');
   });
 
   it('buildLinkSafeExportBundle: normalises unknown riskLevel to high', () => {
@@ -292,6 +298,7 @@ describe('incidentReproPackUtils', () => {
 
     expect(bundle.incident_repro_pack.replayPayload.riskLevel).toBe('high');
     expect(bundle.replay_entrypoint.risk_level).toBe('high');
+    expect(bundle.replay_entrypoint.sensitivity_label).toBe('restricted');
   });
 
   it('buildLinkSafeExportBundle: preserves failed/skipped status without normalising', () => {
@@ -351,6 +358,7 @@ describe('incidentReproPackUtils', () => {
     expect(bundle.incident_repro_pack.redaction.redactedFields).toContain('workspacePath');
     expect(bundle.incident_repro_pack.redaction.redactedFields).toContain('conversationId');
     expect(bundle.incident_repro_pack.exportHint).toContain('Link-safe payload');
+    expect(bundle.incident_repro_pack.sensitivity.label).toBe('restricted');
   });
 
   // ── parseImportedReproBundle edge cases ───────────────────────────────────

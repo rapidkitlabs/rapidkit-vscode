@@ -142,6 +142,7 @@ describe('AIIncidentStudio interactions', () => {
                   relatedFiles: ['src/orders/service.ts'],
                 },
                 exportHint: 'Bundle is redacted and safe to share.',
+                sensitivityLabel: 'restricted',
               },
             },
           })
@@ -172,6 +173,7 @@ describe('AIIncidentStudio interactions', () => {
     expect(onChatBrainQuery).toHaveBeenCalledTimes(1);
     expect(onChatBrainQuery.mock.calls[0]?.[0]).toContain('Pack ID: repro-pack-42');
     expect(onChatBrainQuery.mock.calls[0]?.[0]).toContain('Verification checklist:');
+    expect(container.textContent).toContain('Sensitivity: RESTRICTED');
   });
 
   it('applies only the accepted patch paths and preserves host-confirmed apply state semantics', () => {

@@ -4486,6 +4486,7 @@ No markdown, no explanation outside the JSON.`;
           relatedFiles: string[];
         };
         exportHint?: string;
+        sensitivityLabel?: 'internal' | 'restricted' | 'confidential';
       }
     | undefined {
     if (input.actionType !== 'incident-repro-pack' || !input.workspacePath) {
@@ -4530,6 +4531,12 @@ No markdown, no explanation outside the JSON.`;
       },
       exportHint:
         'Use share/export flow for secure handoff: keep redaction enabled and include replay checklist + blocked reasons.',
+      sensitivityLabel:
+        input.impactAssessment.riskLevel === 'critical'
+          ? 'confidential'
+          : input.impactAssessment.riskLevel === 'high'
+            ? 'restricted'
+            : 'internal',
     };
   }
 
@@ -4722,6 +4729,7 @@ No markdown, no explanation outside the JSON.`;
               relatedFiles?: string[];
             };
             exportHint?: string;
+            sensitivityLabel?: 'internal' | 'restricted' | 'confidential';
           })
         : undefined;
 
@@ -4779,6 +4787,7 @@ No markdown, no explanation outside the JSON.`;
         },
         redaction: reproPack.redaction ?? {},
         summary: reproPack.summary ?? {},
+        sensitivityLabel: reproPack.sensitivityLabel,
       },
       workspaceResolution?.workspaceName || path.basename(workspacePathInput || '') || 'workspace'
     );

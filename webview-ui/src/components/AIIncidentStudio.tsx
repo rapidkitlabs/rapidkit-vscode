@@ -6650,6 +6650,10 @@ export function AIIncidentStudio({
                                                                 {' · '}
                                                                 {reproPack.replayPayload.blockedReasons.length} blocked reasons
                                                             </p>
+                                                            <p>
+                                                                Sensitivity:{' '}
+                                                                {(reproPack.sensitivityLabel || 'internal').toUpperCase()}
+                                                            </p>
                                                             {reproPack.exportHint ? <p>{reproPack.exportHint}</p> : null}
                                                             <div className="incident-command-actions">
                                                                 <button

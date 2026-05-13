@@ -1,6 +1,7 @@
 import * as path from 'path';
 
 export type IncidentReproPackRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type IncidentReproPackSensitivityLabel = 'internal' | 'restricted' | 'confidential';
 
 export type ExportableIncidentReproPack = {
   packId: string;
@@ -36,6 +37,7 @@ export type ExportableIncidentReproPack = {
     relatedFiles?: string[];
   };
   exportHint?: string;
+  sensitivityLabel?: IncidentReproPackSensitivityLabel;
 };
 
 export type LinkSafeExportBundle = {
@@ -73,15 +75,54 @@ export type LinkSafeExportBundle = {
       relatedFiles: string[];
     };
     exportHint?: string;
+    sensitivity: {
+      label: IncidentReproPackSensitivityLabel;
+      reason: string;
+    };
   };
   replay_entrypoint: {
     pack_id: string;
     workspace_hint: string;
     action_type: string;
     risk_level: IncidentReproPackRiskLevel;
+    sensitivity_label: IncidentReproPackSensitivityLabel;
     verify_checklist: string[];
   };
 };
+
+function deriveSensitivityLabel(input: {
+  declared?: IncidentReproPackSensitivityLabel;
+  riskLevel: IncidentReproPackRiskLevel;
+  redactedFields: string[];
+}): IncidentReproPackSensitivityLabel {
+  if (
+    input.declared === 'internal' ||
+    input.declared === 'restricted' ||
+    input.declared === 'confidential'
+  ) {
+    return input.declared;
+  }
+
+  if (input.riskLevel === 'critical') {
+    return 'confidential';
+  }
+
+  const sensitiveFields = new Set(
+    input.redactedFields.map((field) => field.trim().toLowerCase()).filter(Boolean)
+  );
+  if (
+    input.riskLevel === 'high' ||
+    sensitiveFields.has('token') ||
+    sensitiveFields.has('password') ||
+    sensitiveFields.has('secret') ||
+    sensitiveFields.has('apikey') ||
+    sensitiveFields.has('authorization')
+  ) {
+    return 'restricted';
+  }
+
+  return 'internal';
+}
 
 /**
  * Converts an absolute file path to a 2-segment relative path safe for sharing.
@@ -211,6 +252,23 @@ export function buildLinkSafeExportBundle(
     exportHint:
       reproPack.exportHint ||
       'Link-safe payload exported with redaction enabled. Import in Incident Studio to replay safely.',
+    sensitivity: {
+      label: deriveSensitivityLabel({
+        declared: reproPack.sensitivityLabel,
+        riskLevel,
+        redactedFields: Array.from(
+          new Set([
+            ...(reproPack.redaction?.redactedFields ?? []),
+            'workspacePath',
+            'conversationId',
+          ])
+        ),
+      }),
+      reason:
+        riskLevel === 'critical'
+          ? 'Critical-risk replay payload with redacted sensitive fields.'
+          : 'Redacted replay payload intended for controlled incident collaboration.',
+    },
   };
 
   return {
@@ -224,6 +282,7 @@ export function buildLinkSafeExportBundle(
       workspace_hint: linkSafePack.workspacePath,
       action_type: linkSafePack.replayPayload.actionType,
       risk_level: linkSafePack.replayPayload.riskLevel,
+      sensitivity_label: linkSafePack.sensitivity.label,
       verify_checklist: linkSafePack.replayPayload.verifyChecklist,
     },
   };
