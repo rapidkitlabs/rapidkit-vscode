@@ -255,6 +255,49 @@ describe('workspaceMemoryService', () => {
     expect(parsed.decisions).toContain('Adopt strict incident runbooks');
   });
 
+  it('blocks memory writes when access contract is missing', async () => {
+    const svc = WorkspaceMemoryService.getInstance();
+    const wsPath = path.join(tempRoot, 'ws-write-contract-missing');
+
+    await expect(
+      svc.write(wsPath, {
+        context: 'Write without explicit contract',
+        conventions: [],
+        decisions: [],
+        policyProfile: 'balanced',
+        sensitivity: 'normal',
+        localProcessingMode: false,
+        lastUpdated: '',
+      })
+    ).rejects.toThrow(/missing access contract/i);
+  });
+
+  it('blocks memory writes when access contract mode is invalid', async () => {
+    const svc = WorkspaceMemoryService.getInstance();
+    const wsPath = path.join(tempRoot, 'ws-write-contract-invalid-mode');
+
+    await expect(
+      svc.write(
+        wsPath,
+        {
+          context: 'Write with invalid mode',
+          conventions: [],
+          decisions: [],
+          policyProfile: 'balanced',
+          sensitivity: 'normal',
+          localProcessingMode: false,
+          lastUpdated: '',
+        },
+        {
+          actor: 'incident-studio.replay-learning',
+          operation: 'incident-replay-learning',
+          mode: 'invalid-mode' as any,
+          reason: 'Attempted write with malformed contract mode.',
+        }
+      )
+    ).rejects.toThrow(/invalid access mode/i);
+  });
+
   it('blocks unapproved system-enrichment writes under strict policy profile', async () => {
     const svc = WorkspaceMemoryService.getInstance();
     const wsPath = path.join(tempRoot, 'ws-write-contract-block');

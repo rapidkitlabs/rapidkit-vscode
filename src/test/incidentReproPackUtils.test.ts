@@ -201,6 +201,52 @@ describe('incidentReproPackUtils', () => {
     ]);
   });
 
+  it('buildLinkSafeExportBundle: redacts bearer and token literals in audit summaries', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-01T10:00:00.000Z'));
+
+    const bundle = buildLinkSafeExportBundle(
+      {
+        packId: 'repro-006',
+        status: 'captured',
+        actionId: 'action-006',
+        workspacePath: '/tmp/company/private-workspace',
+        replayPayload: {
+          workspacePath: '/tmp/company/private-workspace',
+          conversationId: 'conv-secret',
+          actionType: 'incident-repro-pack',
+          riskLevel: 'high',
+          verifyChecklist: ['Run doctor workspace'],
+          blockedReasons: [],
+          relatedFiles: [],
+        },
+        memoryInfluenceAuditTimeline: [
+          {
+            memoryEventId: 'memory-action-006-policy',
+            timestamp: '2026-05-01T09:59:30.000Z',
+            source: 'workspace-memory',
+            influenceKind: 'policy',
+            summary:
+              'authorization: Bearer sk-super-secret-token and github_pat_12345678901234567890123456789012',
+            policyProfile: 'strict',
+            sensitivity: 'sensitive',
+            localProcessingMode: true,
+            decisionArtifacts: {
+              actionId: 'action-006',
+              reproPackId: 'repro-006',
+            },
+          },
+        ],
+      },
+      'private-workspace'
+    );
+
+    expect(bundle.memory_influence_audit[0]?.summary).toContain('[REDACTED]');
+    expect(bundle.memory_influence_audit[0]?.summary).not.toContain('sk-super-secret-token');
+    expect(bundle.memory_influence_audit[0]?.summary).not.toContain('github_pat_');
+    expect(bundle.memory_influence_audit[0]?.summary).not.toContain('Bearer sk-');
+  });
+
   it('parses imported snake_case bundles into a replay-ready payload', () => {
     const parsed = parseImportedReproBundle({
       incident_repro_pack: {

@@ -318,6 +318,28 @@ describe('contract drift guard', () => {
     expect(incidentStudioUiSource).toContain('decisionArtifacts');
   });
 
+  it('keeps workspace memory writes restricted to approved contract-gated routes', () => {
+    const aiFreeFeaturesSource = read('src/commands/aiFreeFeatures.ts');
+    const welcomePanelSource = read('src/ui/panels/welcomePanel.ts');
+    const workspaceMemoryServiceSource = read('src/core/workspaceMemoryService.ts');
+    const combinedSource = `${aiFreeFeaturesSource}\n${welcomePanelSource}`;
+
+    const writeCallMatches = combinedSource.match(/memoryService\.write\(/g) || [];
+    expect(writeCallMatches.length).toBe(2);
+
+    expect(aiFreeFeaturesSource).toContain("operation: 'workspace-memory-wizard'");
+    expect(aiFreeFeaturesSource).toContain("mode: 'user-initiated'");
+    expect(aiFreeFeaturesSource).toContain('approvedByUser: true');
+
+    expect(welcomePanelSource).toContain("operation: 'incident-replay-learning'");
+    expect(welcomePanelSource).toContain("mode: 'system-enrichment'");
+    expect(welcomePanelSource).toContain('approvedByUser: false');
+
+    expect(workspaceMemoryServiceSource).toContain('missing access contract');
+    expect(workspaceMemoryServiceSource).toContain('invalid access mode');
+    expect(workspaceMemoryServiceSource).toContain('blocked by policy profile');
+  });
+
   it('keeps project lifecycle command contracts cross-platform for fastapi/go/nestjs', () => {
     const extensionSource = read('src/extension.ts');
     const projectLifecycleSource = read('src/commands/projectLifecycle.ts');

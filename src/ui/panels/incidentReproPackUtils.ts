@@ -110,6 +110,10 @@ export type LinkSafeExportBundle = {
 
 const INCIDENT_AUDIT_SECRET_PATTERN =
   /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|client[_-]?secret|authorization)\b\s*[:=]\s*([^\s,;]+)/gi;
+const INCIDENT_AUDIT_AUTHORIZATION_PATTERN = /\bauthorization\b\s*[:=]\s*[^\n\r]+/gi;
+const INCIDENT_AUDIT_BEARER_PATTERN = /(?:^|\s)Bearer\s+[A-Za-z0-9._~+/-]+=*/gi;
+const INCIDENT_AUDIT_TOKEN_LITERAL_PATTERN =
+  /\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z\-_]{20,})\b/g;
 
 function sanitizeAuditSummary(value: unknown): string {
   if (typeof value !== 'string') {
@@ -122,11 +126,16 @@ function sanitizeAuditSummary(value: unknown): string {
   }
 
   const redacted = trimmed.replace(
-    INCIDENT_AUDIT_SECRET_PATTERN,
-    (_full, key: string) => `${key}=[REDACTED]`
+    INCIDENT_AUDIT_AUTHORIZATION_PATTERN,
+    'authorization: [REDACTED]'
   );
 
-  return redacted.length > 240 ? `${redacted.slice(0, 240)}...[TRUNCATED]` : redacted;
+  const normalized = redacted
+    .replace(INCIDENT_AUDIT_SECRET_PATTERN, (_full, key: string) => `${key}=[REDACTED]`)
+    .replace(INCIDENT_AUDIT_BEARER_PATTERN, ' Bearer [REDACTED]')
+    .replace(INCIDENT_AUDIT_TOKEN_LITERAL_PATTERN, '[REDACTED]');
+
+  return normalized.length > 240 ? `${normalized.slice(0, 240)}...[TRUNCATED]` : normalized;
 }
 
 function deriveSensitivityLabel(input: {
