@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-05-13
+
+### Added
+
+- **Enterprise E1/E2 execution slice** shipped across Incident Studio contracts:
+  - **E1 baseline hardening** with versioned cross-service impact score contract (`v1`) and execution-complete confidence/scope safeguards.
+  - **E2.1** local-processing memory policy profile exposure (`policyProfile`, `sensitivity`, `localProcessingMode`) in host and payload contracts.
+  - **E2.2** memory write-access contract enforcement for workspace memory write paths.
+  - **E2.3** repro-pack sensitivity labels end-to-end (host evidence, payload normalization, UI rendering, and export bundle contract).
+  - **E2.4** memory influence audit timeline linked to decision artifacts across host -> payload -> UI -> export flow.
+  - **E2.5** security review hardening coverage for memory/export paths (contract/drift/test enforcement).
+- **Release governance tooling**:
+  - `scripts/export-open-issues-report.mjs` added for release issue-severity evidence export.
+  - release-stop gate integration and workflow usage for open-issue severity blocking.
+
+### Changed
+
+- **CI release gate enforcement** strengthened:
+  - `.github/workflows/extension-smoke-matrix.yml` now enforces release-stop checks with open-issue severity inputs.
+  - `scripts/release-stop-gate.mjs` and package scripts aligned to stricter stop-gate behavior.
+- **Incident Studio host/webview contracts** updated for memory-policy governance, repro-pack security labels, and artifact-linked audit timeline evidence.
+- **Impact and architecture reasoning safety** strengthened through updated system graph and lens contracts, with expanded scenario and fixture coverage.
+
+### Fixed
+
+- **Fail-closed mutation safety regressions prevented** with expanded drift guard and flow-level assertions for unknown-scope and policy-bound routes.
+- **Memory/export redaction consistency** tightened so sensitive fields remain sanitized in normalized payloads and link-safe bundle exports.
+
+### Verification
+
+- Core enterprise stabilization suites for E1/E2 slices pass in the release range:
+  - `src/test/impactScoreScenarioMatrix.test.ts`
+  - `src/test/systemGraphIndexer.test.ts`
+  - `src/test/workspaceMemoryService.test.ts`
+  - `src/test/incidentReproPackUtils.test.ts`
+  - `src/test/incidentStudioPayload.test.ts`
+  - `src/test/AIIncidentStudio.interaction.test.ts`
+  - `src/test/driftGuard.test.ts`
+- Commit scope included in this release is the full range from tag `v0.27.3` to current `HEAD`.
+
 ## [0.27.3] - 2026-05-12
 
 ### Added

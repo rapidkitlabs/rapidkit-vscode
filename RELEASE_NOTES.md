@@ -1,5 +1,50 @@
 # Release Notes
 
+## v0.28.0 (May 13, 2026)
+
+### ✦ Enterprise E1/E2 Stabilization and Policy Boundaries Release
+
+Summary:
+- This release includes the entire commit range from `v0.27.3` to current `HEAD`.
+- Delivers E1 execution hardening and E2.1-E2.5 private-brain and policy-boundary slices.
+- Strengthens release governance with open-issue severity enforcement in CI release-stop flows.
+
+Highlights:
+- **Range included in this release** (`v0.27.3..HEAD`):
+  - `7ebe77c` chore(ci): harden release gate with open-issue severity enforcement
+  - `7111314` feat(e1): add versioned cross-service impact score contract v1
+  - `33aa978` feat(stabilization): complete E1.3 E1.4 E1.5 execution
+  - `31a1c5d` feat(e2.1): expose local-processing memory policy profile
+  - `7b828b7` feat(e2.2): enforce workspace memory write access contract
+  - `be68e00` feat(e2.3): add repro-pack sensitivity labeling end-to-end
+  - `6969017` feat(e2.4): link memory influence timeline to decision artifacts
+  - `80ebb71` feat(e2.5): harden memory-export security review coverage
+
+- **E1 hardening delivered**:
+  - versioned impact score contract (`v1`) wired and tested
+  - confidence/scope safety behaviors and unknown-scope guardrails reinforced
+  - expanded impact/architecture scenario coverage
+
+- **E2 private-brain and policy boundaries delivered**:
+  - E2.1: local-processing memory policy profile surfaced in host and payload
+  - E2.2: memory write access contract enforced in write paths
+  - E2.3: repro-pack sensitivity labels across host -> payload -> UI -> export
+  - E2.4: memory influence audit timeline linked to decision artifacts (action/repro/release artifacts)
+  - E2.5: security hardening coverage for memory/export redaction and policy-bound behavior
+
+- **CI and release governance**:
+  - release-stop automation strengthened with open-issue severity checks
+  - issue-report export script added and used by release workflow checks
+
+- **Code areas touched in this release window**:
+  - Host orchestration and policy: `src/ui/panels/welcomePanel.ts`, `src/core/workspaceMemoryService.ts`
+  - Impact/graph contracts: `src/core/systemGraphIndexer.ts`, `webview-ui/src/lib/incidentArchitectureLens.ts`
+  - Repro/export safety: `src/ui/panels/incidentReproPackUtils.ts`, `webview-ui/src/lib/incidentStudioPayload.ts`, `webview-ui/src/components/AIIncidentStudio.tsx`
+  - Governance and CI: `.github/workflows/extension-smoke-matrix.yml`, `scripts/release-stop-gate.mjs`, `scripts/export-open-issues-report.mjs`
+  - Regression/drift coverage: `src/test/*` (impact, memory, payload, interaction, drift)
+
+Release posture: `stabilization-only`
+
 ## v0.27.3 (May 12, 2026)
 
 ### ✦ Enterprise Stability Hardening Patch
@@ -305,374 +350,6 @@ Improved readability of Maximize and Lite/Full view toggle buttons in header:
 
 ---
 
-## Previous Release: v0.24.1 (May 6, 2026)
-
-### ✦ Incident Studio UX Polish + Dashboard AI Surface + Docs Refresh
-
-**Summary:** This release packages the latest product-facing quality pass around Workspai inside VS Code: Incident Studio layout and state-sync hardening, a sharper AI-first dashboard surface, reliable project add-module routing, and README/screenshot alignment through editor quick fixes.
-
-#### Added
-
-- **Dashboard AI spotlighting**
-  Added a featured Incident Studio card, compact AI feature cards, a Quick Links "build with AI" cue, and refreshed README coverage for screenshot 8.
-- **Project modal kit retry path**
-  Added an on-demand retry flow when the create-project modal opens before kits are loaded.
-
-#### Changed
-
-- **Incident Studio interaction surface**
-  Reworked header controls, maximize/view toggles, active-scope presentation, and removed the redundant scope bar to eliminate horizontal overflow.
-- **Host/webview navigation flow**
-  Updated dashboard and Incident Studio tab switching, setup entry points, and active-scope syncing so context stays aligned across surfaces.
-- **README and positioning pass**
-  Tightened README copy, synced screenshots 1-8, and aligned messaging around backend AI workflows including Spring Boot support.
-
-#### Fixed
-
-- **Project Explorer add-module crash**
-  Fixed circular command-argument serialization so right-click add-module actions work reliably from the Project Explorer.
-- **Analyze icon ambiguity and tab polish**
-  Fixed overlapping Analyze/Test visuals and corrected tab alignment/icon regressions.
-- **Incident Studio state races**
-  Fixed stale scope state, first-open kit-loading gaps, and the header regression introduced by the earlier layout refactor.
-
-#### Validation Snapshot
-
-- `node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); JSON.parse(require('fs').readFileSync('package-lock.json','utf8'));"` -> pass
-
----
-
-## Previous Release: v0.24.0 (May 5, 2026)
-
-### ✦ Decision Clarity Loop Completion + Enterprise Readiness Gate
-
-**Summary:** This release ships the full CLC1-7 closure in Incident Studio: strict decision clarity grammar, pre-execution mutation blocking, deterministic phase-next-action routing, outcome KPI gate integration, UX mode enforcement, and complete artifact success-criteria rendering.
-
-#### Added
-
-- **Decision clarity grammar contract (CLC1)**
-  Added one explicit decision-clarity response structure across actionable Incident Studio outputs.
-- **Outcome KPI computation module (CLC5)**
-  Added outcome-quality KPI computation and fixture-backed telemetry records for release gates.
-- **Artifact criteria + UX mode adapters (CLC6/CLC7)**
-  Added dedicated adapters for mode policy and per-artifact success criteria evaluation.
-
-#### Changed
-
-- **Pre-execution mutation safety (CLC2)**
-  Decision-clarity required fields are now enforced before mutation-ready completion claims.
-- **Deterministic phase progression (CLC3)**
-  Phase rail and next-action guidance now consume deterministic policy logic.
-- **Release gate hard checks (CLC5)**
-  Outcome-based KPI thresholds are now part of mandatory `overallPass` evaluation.
-- **Artifact evidence rendering (CLC7)**
-  All five artifact kinds now surface explicit pass/fail/partial criteria in UI.
-
-#### Fixed
-
-- **Decision clarity host/webview dead path**
-  Fixed payload wiring so clarity evidence is emitted in action result contracts.
-- **Mode bypass and UI status gaps**
-  Fixed multi-CTA mode-policy bypass and missing criteria status styles.
-
-#### Validation Snapshot
-
-- `npm run test` -> 644/644 pass
-- `npm run build && npm run compile && npm run package` -> pass
-
----
-
-## Latest Release: v0.23.0 (May 5, 2026)
-
-### ✦ Enterprise Import + Incident Studio Release Readiness Maturity
-
-**Summary:** This release consolidates the full local train ahead of `origin/main` plus the current working-tree stabilization set. It ships enterprise import flows, universal architecture discovery foundations, Incident Studio release-readiness hardening, W07/W08 KPI availability, and claim-safe Wave 3 release governance.
-
-#### Added
-
-- **Enterprise import and BYOP surfaces**
-  Added stronger import flows, cross-project wiring, and backend project onboarding paths with more deterministic command routing and extension activation integration.
-- **Release outcome validation loop (W07/W08)**
-  Added release-readiness decision validation telemetry and command surface to record GO/NO-GO outcomes linked to artifact IDs.
-- **Nightly Incident Studio soak workflow**
-  Added dedicated soak workflow coverage for stability checks beyond mainline release gate execution.
-- **Contract runtime and stress coverage expansion**
-  Added contract runtime module/test coverage and expanded stress/release-gate tests for Incident Studio and wave3 policy enforcement.
-
-#### Changed
-
-- **Wave 3 release-stop gate depth**
-  Expanded KPI reporting to include release-readiness validation metrics, readiness rollout visibility, and stronger gate output evidence.
-- **Incident Studio host/webview parity**
-  Updated payload contracts, panel telemetry typing, prompt policy, and UI behavior so release-readiness and verify-pack flows are consistent across layers.
-- **Core command/import/workspace orchestration**
-  Refined command handlers and workspace/project operations to reduce cross-surface drift and improve reliability in multi-workspace setups.
-
-#### Fixed
-
-- **Claim safety and wording parity**
-  Aligned shipped-scope language across docs and product-facing surfaces to avoid over-claiming auto-mutation or unsupported readiness guarantees.
-- **Type and gate consistency issues**
-  Resolved telemetry time-window/type mismatches and stabilized release-gate regression coverage for new KPI outputs.
-
-#### Validation Snapshot
-
-- `npm run test -- src/test/workspaceUsageTracker.test.ts src/test/releaseStopGateManifest.test.ts`: pass
-- `npm run release:stop-gate:wave3`: pass
-
----
-
-## Latest Release: v0.22.0 (April 29, 2026)
-
-### ✦ Incident Studio + Setup UX + Workspace Sharing + Graph-Aware Release Controls
-
-**Summary:** This release packages the full 37-commit train currently ahead of `origin/main`, not just one feature slice. It introduces the Incident Studio foundation, a new setup experience, workspace share bundle flows, system-graph-backed architecture reasoning, editor A08 surfaces, wave-2 release gating and rollback evidence, doctor/telemetry improvements, and a production dependency security refresh.
-
-#### Added
-
-- **Incident Studio foundation**
-  Shipped the core AI Incident Studio experience with:
-  - lifecycle-aware host/webview contracts
-  - graph-backed action handling
-  - support panels for memory, resume, telemetry, and prompt policy
-  - normalized partial-failure and verify-readiness behavior
-  - end-to-end regression coverage
-
-- **Setup experience replacement**
-  Replaced the old setup panel with a full setup experience surface that better handles tool readiness, system requirements, and guided onboarding inside the extension.
-
-- **Workspace share bundle flows**
-  Added workspace share bundle parsing plus dashboard import/export actions so teams can move workspace context more intentionally through the VS Code UI.
-
-- **System graph and A08 baseline**
-  Added:
-  - workspace system graph indexing
-  - deterministic blast-radius scoring
-  - Incident Studio Architecture Lens
-  - editor Architecture CodeLens
-  - inline architecture warnings near diagnostics or fallback anchors
-
-- **Wave-2 release controls**
-  Added release-stop automation, manifest/KPI wiring, hard-gate reporting, controlled override policy, and verify-fail auto-rollback evidence plumbing.
-
-- **Doctor and telemetry reporting**
-  Added doctor telemetry refresh views plus richer project logs/context reporting used by the release-gate and incident flows.
-
-- **Expanded automated coverage**
-  Added deep tests for Incident Studio contracts, system graph indexing, release-stop gating, workspace share bundles, config files, telemetry, and A08 editor surfaces.
-
-#### Changed
-
-- **AI context and prompting stack** — formalized the AI context contract/resolver, expanded project-context extraction, and aligned chat, debug, and incident flows around the same context-rich execution path.
-- **UI and command surface alignment** — updated command handlers, wizards, schemas, tree views, config-file tooling, and extension activation wiring to support the new setup, sharing, incident, and graph-aware workflows.
-- **Architecture evidence is now unified** — impact, predictive, release-gate, and graph signals are now presented as one coherent review path instead of scattered UI fragments.
-- **Dependency lockfile security refresh** — `npm audit fix` was applied to the release line, clearing current production dependency audit findings.
-
-#### Fixed
-
-- **Prompt and mutation safety** — hardened prompt sanitization, adversarial guards, verify-first policy enforcement, and unknown-scope blocking behavior.
-- **Workspace and panel stability** — fixed workspace detection gaps, project switching races, webview readiness issues, sync cache invalidation, module browser sluggishness, and partial-failure normalization around Incident Studio flows.
-- **Architecture review discoverability** — users no longer need to infer blast radius from separate UI fragments or top-of-file-only affordances.
-- **Production npm audit exposure** — current runtime dependency audit findings are cleared for this release line.
-
-#### Validation Snapshot
-
-- Type check: pass
-- Lint: pass
-- Build: pass
-- Compile: pass
-- VSIX package: pass
-- Full test suite: 182/182 pass
-- Production audit (`npm audit --omit=dev`): 0 vulnerabilities
-- Full audit: only dev-tooling vulnerabilities remain, blocked upstream by `@vscode/test-cli` -> `mocha` -> `serialize-javascript` and one nested `brace-expansion` path
-
----
-
-## Latest Release: v0.21.0 (April 23, 2026)
-
-### ✦ AI Action Expansion + Telemetry Insights + Runtime Hardening
-
-**Summary:** This release expands the free AI action surface across command palette, sidebar inline actions, and quick-actions webview; introduces workspace telemetry summaries plus onboarding experiment stats; and hardens runtime reliability with safer doctor metadata fetches, bounded port scans, and startup path-race fixes.
-
-#### Added
-
-- **Expanded AI action commands** available from palette and menus:
-  - `AI Quick Actions`
-  - `AI Smart Route`
-  - `AI Fix Preview (Lite)`
-  - `AI Change Impact (Lite)`
-  - `Analyze Terminal Output with AI`
-  - `Guided Workspace Memory Setup`
-  - `AI Recipe Packs`
-- **Telemetry commands**:
-  - `Show Telemetry Summary`
-  - `Reset Telemetry Data`
-  - `Show AI Feature Tour`
-  - `Show Onboarding Experiment Stats`
-- **AI onboarding tour** with follow-up variant tracking and conversion metrics hooks.
-
-#### Changed
-
-- **Action surface consistency** — WORKSPACES / PROJECTS inline action groups and the Actions webview now align with the same AI-first flows.
-- **AI telemetry depth** — `@workspai` chat and AI modal now emit structured outcome telemetry (`success`, `prepare-error`, `cancelled`, `error`) with context-safe metadata.
-- **Telemetry UX in logs/context panel** — added JSON summary views, quick summary copy, and one-click reset/open marker paths.
-
-#### Fixed
-
-- **Doctor metadata fetch safety** — added timeout, bounded redirects, and same-host redirect enforcement.
-- **Project dev startup resilience** — replaced unbounded recursive port probing with bounded scan + fallback.
-- **Workspace init stability** — made workspace registry directory creation synchronous during startup to avoid race conditions.
-
----
-
-## Latest Release: v0.20.0 (April 20, 2026)
-
-### ✦ @workspai Chat Participant + AI Create Presets + Workspace Hardening
-
-**Summary:** This release ships the `@workspai` participant directly in the VS Code Chat panel (with `/ask` and `/debug` slash commands), adds smart categorised prompt presets to the AI Create modal, hardens workspace memory with full sanitisation, makes workspace creation idempotent, and enriches AI context with live module data from the CLI.
-
-#### Added
-
-- **`@workspai` Chat Participant** — use `@workspai /ask` for full-context Q&A scoped to your active project, or `@workspai /debug` for a structured root-cause + fix + prevention debug flow. Both commands run through the same AI pipeline as the Workspai modal.
-- **AI Create presets** — categorised quick-fill options (SaaS & commerce, core backend, microservices, data & ML, internal tools) surface in the AI Create modal. Smart scoring shows the most relevant presets as you type.
-- **"Which backend next?" poll** — vote for Django, Express, or Spring directly from the sidebar; result acknowledged inline.
-- **New workspace commands** — bootstrap, setup, init, policy (show/set), cache (status/clear/prune/repair), mirror (status/sync/verify/rotate), and `checkForUpdates` all registered and palette-accessible.
-- **WorkspaceMemoryService tests** — new unit tests covering read/write round-trips, sanitisation, timestamp validation, and concurrent-access paths.
-
-#### Changed
-
-- **Workspace memory hardening** — all memory fields are now validated and sanitised on every read; corrupt entries are auto-corrected and written back
-- **Live module catalogue in AI context** — AI responses now reference the actual current module list fetched from the CLI (60-second TTL cache) instead of a static snapshot
-- **Idempotent workspace creation** — partial directories trigger a "Replace or Cancel" prompt; fully complete workspaces skip the CLI call silently
-- **Brand icons updated** — `workspai.png` / `workspai.svg` refreshed; stale `rapidkits.svg` removed
-
-#### Fixed
-
-- **AI module slug validation** — slugs from AI are cross-checked against the live module list and a `vendor/category/slug` regex before reaching the CLI
-- **Richer AI project context** — payloads now include Python version, CLI/core versions, installed modules list, workspace health stats, runtime, and engine
-
----
-
-## Latest Release: v0.19.1 (April 19, 2026)
-
-### ✦ Toolchain Reliability + Go Context + Workspai Positioning
-
-**Summary:** This release hardens cross-platform tool verification, improves how Go workspaces are detected and explained inside the AI experience, and aligns public-facing Workspai positioning across the extension. The result is more reliable doctor/setup flows, more accurate Go guidance, and cleaner product messaging in the editor and Marketplace surfaces.
-
-#### Changed
-
-- **Workspai product positioning sync** — extension README, Marketplace description, and webview header now consistently present Workspai as "The AI workspace for backend teams"
-- **Go AI guidance** — AI module/context messaging now clearly explains that Go kits use `gofiber.standard` and `gogin.standard`, and that Go projects should be extended with native Go packages and internal adapters rather than RapidKit marketplace modules
-- **Go kit metadata cleanup** — removed misleading `modular` tag from Go/Fiber and Go/Gin kit descriptors
-
-#### Fixed
-
-- **Workspace memory inline action icon** — the sidebar action for editing workspace memory now uses a valid codicon, so the button glyph is visible again next to each workspace instead of showing only an empty clickable slot
-- **Cross-platform `rapidkit` command execution** — all generated wrapper commands now use explicit npm package resolution via `npx --yes --package rapidkit rapidkit ...`, preventing cwd launcher shadowing on Windows and other shell environments
-- **Go workspace detection** — `go.mod` analysis now detects Go/Fiber and Go/Gin projects from real framework dependencies instead of relying on RapidKit-specific strings
-- **Toolchain verification stability** — setup checks now verify `rapidkit-core` using `pip show` / `pipx list` paths that are more reliable across Windows and Linux environments
-- **Poetry verification discovery** — setup flow now checks real Poetry executable candidates only when present, reducing false negatives and noisy verification attempts
-
----
-
-## Latest Release: v0.19.0 (April 18, 2026)
-
-### ✦ AI Streaming UX + Model Selector
-
-**Summary:** This release fixes the core AI streaming experience — responses now appear token-by-token in real time instead of all at once after a delay. Users can also choose which AI model answers their queries from a compact inline dropdown in the modal header.
-
-#### Added
-
-- **AI model selector** in the modal header — choose Claude, GPT, Gemini, or any other Copilot-registered model per query; premium users see their full roster, free users see their available models; defaults to "Auto" (workspace preference)
-- **Thinking indicator** — animated bouncing dots shown during the context-scan phase before the first token arrives, replacing the blank-cursor wait state
-- **MarkdownRenderer** — a new zero-dependency markdown renderer for AI responses: headings, bold/italic, inline code, fenced code blocks, lists, HR
-
-#### Fixed
-
-- **Real-time streaming** — resolved the "response appears all at once" problem; the extension host now time-slices postMessage calls via a 50 ms flush interval, breaking VS Code IPC batching that held all tokens until stream end
-- **Streaming render overhead** — `MarkdownRenderer` no longer re-parses the full response on every animation frame during streaming; raw text is shown live, then formatted in a single pass on completion
-- **Menu item warning** — removed invalid `collapseAll` menu reference; uses native `showCollapseAll: true` on the Projects tree view instead
-
----
-
-## v0.18.0 (April 17, 2026)
-
-### ✦ AI Stability + Context Intelligence Upgrade
-
-**Summary:** This release hardens the AI engine for production usage by improving model resolution and fallback logic, making workspace memory and context assembly more resilient, and strengthening prompt/request safety. The result is more reliable AI generation and debugging behavior across large or mixed-framework repositories.
-
-#### Added
-
-- **Deeper AI context extraction** across FastAPI, NestJS, and Go projects to improve answer quality and generation relevance
-- **New AI-focused tests** to guard model alias handling and debugger command behavior
-
-#### Changed
-
-- **Model mapping and fallback strategy** updated for modern Copilot/GitHub model IDs and aliases
-- **Workspace memory service flow** converted to async path for non-blocking operations
-- **Legacy AI commands unified** through the shared Workspai AI modal path for consistent UX
-
-#### Fixed
-
-- **Prompt budget controls** to avoid oversized requests in large workspaces
-- **Module slug typo normalization** for safer module operations
-- **AI request lifecycle handling** (request correlation/cancel flows) for more predictable streaming behavior
-
----
-
-## v0.17.1 (April 17, 2026)
-
-### ⚡ Deep Performance Audit — All Sidebars + UI Polish
-
-**Summary:** Every sidebar panel now renders instantly. Six performance bottlenecks were identified and fixed across `workspaceExplorer`, `projectExplorer`, `moduleExplorer`, `extension.ts`, `coreVersionService`, and `examplesService`. Two-phase rendering is now consistent across all three tree views. Additionally, the Available Modules empty state was upgraded to a rich VS Code `viewsWelcome` panel, the HeroAction badge alignment was corrected, and a missing `devDependency` was added.
-
-#### Performance
-
-- **WORKSPACES — two-phase rendering** — items render instantly from cache; version badge, profile tag, and module count load in background via `_scheduleBackgroundMetadataLoad`
-- **PROJECTS — two-phase rendering** — tree appears immediately from `this.projects`; `_scheduleProjectLoad()` runs in background; `loadProjects()` uses `Promise.all` for parallel `pathExists` checks per project
-- **AVAILABLE MODULES — two-phase rendering** — `loading~spin` spinner shown immediately; catalog fetched in background via `_scheduleBackgroundCatalogLoad()`; never blocks `getChildren()`
-- **Extension activation** — `workspaceDetector.detectRapidKitProjects()` deferred to background (was blocking entire activation with `await`)
-- **`coreVersionService` TTL** — 5 min → 30 min — subprocess version check runs far less often
-- **`examplesService` timeout** — 10 s → 5 s
-
-#### Fixed
-
-- **AVAILABLE MODULES empty state** — returns `[]` when no project selected; VS Code `viewsWelcome` shows rich empty state with `$(package)` icon, heading, description, and "Open Projects" button
-- **Doctor refresh `setTimeout` removed** — fragile `setTimeout(5000/8000)` after doctor re-run and autofix deleted; file watcher on `doctor-last-run.json` handles refresh automatically
-- **`HeroAction.tsx` badge alignment** — Sparkles icon now sits inline with badge text via `inline-flex items-center gap-1`
-- **Dead code** — `_ensureCatalogLoaded()` removed from `moduleExplorer` (unused after two-phase refactor)
-- **`concurrently` added to `devDependencies`** — was used in `dev` script but missing from declared deps
-
----
-
-## v0.17.0 (April 16, 2026)
-
-### ✦ AI Assistant, Doctor Fix with AI, Code Actions & Minimizable Modal
-
-**Summary:** Introduces deep AI integration across the extension — editor Code Actions for inline debug/explain, AI-powered fix suggestions directly from the Workspace Health panel, AI module recommendations in the Create Project flow, and a minimizable floating pill for the AI Create modal. Consolidates the Quick Actions sidebar to a single **AI Assistant** button.
-
-#### Added
-
-- ✦ **AI Debug Actions (Code Actions)** — `✦ Debug with Workspai AI` and `✦ Explain error with AI` quick-fix lightbulb actions appear in the editor for Python, TypeScript, JavaScript, and Go files with diagnostics or a text selection; opens the AI modal with the error/selection pre-filled in Debug mode
-- ✦ **Doctor Fix with AI** — each issue in the **Workspace Health** sidebar now has a ✨ inline button; clicking it opens the AI modal with the full issue context pre-filled
-- ✦ **AI Module Suggestions** — the Create Project modal has a new "Suggest modules with AI" button that recommends the top modules for your chosen framework and project description
-- **Minimizable AI Create modal** — a `−` button appears during `thinking` and `creating` steps; collapses to a floating pill in the bottom-left corner so the dashboard stays usable; auto-restores when creation completes
-
-#### Changed
-
-- **Quick Actions sidebar** — consolidated to a single `✦ AI Assistant` button that opens the AI modal; redundant "Workspace Brain" button removed
-- **`rapidkit.debugWithAI` command** — now opens the main Workspai panel AI modal with context pre-filled, instead of a separate HTML tab
-- **`rapidkit.workspaceBrain` command** — now focuses the main Workspai panel instead of opening a separate HTML tab
-- **Doctor Fix with AI** — issue text passed directly as `prefillQuestion` to the AI modal (no scratch-doc workaround)
-
-#### Fixed
-
-- `AIModal.tsx` — added `context` to `useEffect` dependency array so `prefillQuestion` is correctly applied when modal is already mounted
-
----
-
-## v0.16.0 (March 22, 2026)
-
 ### 🩺 Workspace Health Sidebar + Module Install Modal
 
 **Summary:** Introduces the **Doctor Evidence Viewer** — a persistent sidebar panel that reads `.rapidkit/reports/doctor-last-run.json` and renders an inline health dashboard (score bar, system tool status, per-project issues) without any extra CLI call. Also wires the **Available Modules** sidebar item click directly into the same install confirmation modal used on the welcome page, so users see exactly what will be installed and where before confirming.
@@ -729,6 +406,13 @@ Improved readability of Maximize and Lite/Full view toggle buttons in header:
 
 | Version | Release Date | Highlights |
 |---------|--------------|-----------|
+| [v0.28.0](releases/RELEASE_NOTES_v0.28.0.md) | May 13, 2026 | ✦ E1/E2 enterprise stabilization (E2.1-E2.5), memory-policy boundaries, audit timeline linkage, release-gate hardening |
+| [v0.27.3](releases/RELEASE_NOTES_v0.27.3.md) | May 12, 2026 | ✦ Incident Studio trust hardening, deterministic verify/release gating, parity snapshot and CI guardrails |
+| [v0.27.2](releases/RELEASE_NOTES_v0.27.2.md) | May 10, 2026 | ✦ Setup panel disposal safety, guarded postMessage flow, webview lifecycle stability |
+| [v0.27.1](releases/RELEASE_NOTES_v0.27.1.md) | May 10, 2026 | ✦ Workspace run suite, AI command center, project-scoped doctor routing and telemetry hardening |
+| [v0.27.0](releases/RELEASE_NOTES_v0.27.0.md) | May 8, 2026 | ✦ Routing/module-graph/BYOP stabilization, phase-gate alignment, enterprise gate fixture hardening |
+| [v0.26.0](releases/RELEASE_NOTES_v0.26.0.md) | May 8, 2026 | ✦ Browser smoke-test action, model-selection regression fix, smart rate-limit fallback |
+| [v0.25.0](releases/RELEASE_NOTES_v0.25.0.md) | May 7, 2026 | ✦ S01-S05 stabilization loop completion with false-positive prevention telemetry breakdowns |
 | [v0.24.1](releases/RELEASE_NOTES_v0.24.1.md) | May 6, 2026 | ✦ Incident Studio UX polish, 🎛️ AI dashboard refresh, 📚 README + quick-fixes sync |
 | [v0.24.0](releases/RELEASE_NOTES_v0.24.0.md) | May 5, 2026 | ✦ decision clarity loop closure, ✅ enterprise readiness gates, 🧪 artifact criteria coverage |
 | [v0.19.1](releases/RELEASE_NOTES_v0.19.1.md) | Apr 19, 2026 | ✦ toolchain reliability, 🐹 Go context clarity, 🧭 Workspai positioning sync |
