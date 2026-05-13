@@ -52,6 +52,11 @@ describe('incidentStudioFlowE2E', () => {
         buildIncidentWorkspaceGraphFixture(fixture)
       );
 
+      expect(graph?.memory.policyProfile).toBe('balanced');
+      expect(graph?.memory.sensitivity).toBe('normal');
+      expect(graph?.memory.localProcessingMode).toBe(false);
+      expect(graph?.evidence.localProcessingMode).toBe(false);
+
       const syncResult = reconcileIncidentStudioSyncSelection(fixture.workspacePath, null, {
         workspacePath: fixture.workspacePath,
         graph,

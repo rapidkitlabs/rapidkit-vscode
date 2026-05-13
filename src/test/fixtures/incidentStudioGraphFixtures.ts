@@ -200,6 +200,9 @@ export function buildIncidentWorkspaceGraphFixture(fixture: IncidentStudioSuppor
       conventionsCount: 2,
       decisionsCount: 1,
       hasMemory: true,
+      policyProfile: 'balanced' as const,
+      sensitivity: 'normal' as const,
+      localProcessingMode: false,
     },
     telemetry: {
       totalEvents: 14,
@@ -210,6 +213,7 @@ export function buildIncidentWorkspaceGraphFixture(fixture: IncidentStudioSuppor
       hasDoctorEvidence: true,
       hasGitDiff: true,
       hasWorkspaceMemory: true,
+      localProcessingMode: false,
       projectScoped: true,
     },
     completeness: 'fresh' as const,

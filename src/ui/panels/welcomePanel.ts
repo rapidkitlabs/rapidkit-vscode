@@ -126,6 +126,9 @@ type IncidentWorkspaceGraphSnapshot = {
     conventionsCount: number;
     decisionsCount: number;
     hasMemory: boolean;
+    policyProfile: 'strict' | 'balanced' | 'permissive';
+    sensitivity: 'normal' | 'sensitive';
+    localProcessingMode: boolean;
   };
   telemetry: {
     totalEvents: number;
@@ -136,6 +139,7 @@ type IncidentWorkspaceGraphSnapshot = {
     hasDoctorEvidence: boolean;
     hasGitDiff: boolean;
     hasWorkspaceMemory: boolean;
+    localProcessingMode: boolean;
     projectScoped: boolean;
   };
   completeness: 'fresh' | 'cached' | 'partial' | 'degraded';
@@ -3169,6 +3173,7 @@ No markdown, no explanation outside the JSON.`;
       workspaceMemory?.conventions?.length ||
       workspaceMemory?.decisions?.length
     );
+    const memoryPolicy = memoryService.resolvePolicy(workspaceMemory);
     const hasDoctorEvidence = Boolean(doctorSnapshot);
     const hasGitDiff = Boolean(gitDiffStat && !gitDiffStat.includes('unavailable'));
     const hasProjectScope = Boolean(selectedProject);
@@ -3235,6 +3240,9 @@ No markdown, no explanation outside the JSON.`;
         conventionsCount: workspaceMemory?.conventions?.length || 0,
         decisionsCount: workspaceMemory?.decisions?.length || 0,
         hasMemory: hasWorkspaceMemory,
+        policyProfile: memoryPolicy.profile,
+        sensitivity: memoryPolicy.sensitivity,
+        localProcessingMode: memoryPolicy.localProcessingMode,
       },
       telemetry: {
         totalEvents: commandSummary?.totalEvents || 0,
@@ -3245,6 +3253,7 @@ No markdown, no explanation outside the JSON.`;
         hasDoctorEvidence,
         hasGitDiff,
         hasWorkspaceMemory,
+        localProcessingMode: memoryPolicy.localProcessingMode,
         projectScoped: hasProjectScope,
       },
       completeness: hasDoctorEvidence && hasGitDiff ? 'fresh' : 'partial',

@@ -11,6 +11,18 @@ import { sanitizePromptText } from '../utils/promptSecurity';
 
 const fsp = fs.promises;
 
+export type WorkspaceMemoryPolicyProfile = 'strict' | 'balanced' | 'permissive';
+export type WorkspaceMemorySensitivity = 'normal' | 'sensitive';
+
+export type WorkspaceMemoryPolicy = {
+  profile: WorkspaceMemoryPolicyProfile;
+  sensitivity: WorkspaceMemorySensitivity;
+  localProcessingMode: boolean;
+};
+
+const DEFAULT_POLICY_PROFILE: WorkspaceMemoryPolicyProfile = 'balanced';
+const DEFAULT_SENSITIVITY: WorkspaceMemorySensitivity = 'normal';
+
 export interface WorkspaceMemory {
   /** One-line project overview shown at the top of every AI prompt. */
   context: string;
@@ -18,6 +30,12 @@ export interface WorkspaceMemory {
   conventions: string[];
   /** Architecture decisions with optional date (e.g. "Chose Redis — April 2026"). */
   decisions: string[];
+  /** Policy profile used to control privacy strictness for memory-enabled flows. */
+  policyProfile?: WorkspaceMemoryPolicyProfile;
+  /** Sensitivity marker for workspace memory handling. */
+  sensitivity?: WorkspaceMemorySensitivity;
+  /** Local-processing mode strips high-detail symbols in sensitive repositories. */
+  localProcessingMode?: boolean;
   lastUpdated: string;
 }
 
@@ -25,6 +43,9 @@ const DEFAULT_MEMORY: WorkspaceMemory = {
   context: '',
   conventions: [],
   decisions: [],
+  policyProfile: DEFAULT_POLICY_PROFILE,
+  sensitivity: DEFAULT_SENSITIVITY,
+  localProcessingMode: false,
   lastUpdated: '',
 };
 
@@ -40,6 +61,9 @@ const TEMPLATE_MEMORY: WorkspaceMemory = {
     'Domain models are pure dataclasses — no ORM mixins in domain layer',
   ],
   decisions: ['Chose PostgreSQL over MongoDB — relational data model fits our queries'],
+  policyProfile: DEFAULT_POLICY_PROFILE,
+  sensitivity: DEFAULT_SENSITIVITY,
+  localProcessingMode: false,
   lastUpdated: '',
 };
 
@@ -82,6 +106,44 @@ export class WorkspaceMemoryService {
       .filter(Boolean);
   }
 
+  private sanitizePolicyProfile(value: unknown): WorkspaceMemoryPolicyProfile {
+    if (value === 'strict' || value === 'balanced' || value === 'permissive') {
+      return value;
+    }
+    return DEFAULT_POLICY_PROFILE;
+  }
+
+  private sanitizeSensitivity(value: unknown): WorkspaceMemorySensitivity {
+    return value === 'sensitive' ? 'sensitive' : DEFAULT_SENSITIVITY;
+  }
+
+  private deriveLocalProcessingMode(input: {
+    localProcessingMode: unknown;
+    policyProfile: WorkspaceMemoryPolicyProfile;
+    sensitivity: WorkspaceMemorySensitivity;
+  }): boolean {
+    if (typeof input.localProcessingMode === 'boolean') {
+      return input.localProcessingMode;
+    }
+    return input.policyProfile === 'strict' || input.sensitivity === 'sensitive';
+  }
+
+  resolvePolicy(memory?: WorkspaceMemory): WorkspaceMemoryPolicy {
+    const profile = this.sanitizePolicyProfile(memory?.policyProfile);
+    const sensitivity = this.sanitizeSensitivity(memory?.sensitivity);
+    const localProcessingMode = this.deriveLocalProcessingMode({
+      localProcessingMode: memory?.localProcessingMode,
+      policyProfile: profile,
+      sensitivity,
+    });
+
+    return {
+      profile,
+      sensitivity,
+      localProcessingMode,
+    };
+  }
+
   private sanitizeMemory(input: unknown): { memory: WorkspaceMemory; changed: boolean } {
     const source = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 
@@ -90,6 +152,13 @@ export class WorkspaceMemoryService {
 
     const conventions = this.sanitizeStringList(source.conventions);
     const decisions = this.sanitizeStringList(source.decisions);
+    const policyProfile = this.sanitizePolicyProfile(source.policyProfile);
+    const sensitivity = this.sanitizeSensitivity(source.sensitivity);
+    const localProcessingMode = this.deriveLocalProcessingMode({
+      localProcessingMode: source.localProcessingMode,
+      policyProfile,
+      sensitivity,
+    });
 
     const lastUpdatedRaw = typeof source.lastUpdated === 'string' ? source.lastUpdated.trim() : '';
     const lastUpdated =
@@ -99,6 +168,9 @@ export class WorkspaceMemoryService {
       context,
       conventions,
       decisions,
+      policyProfile,
+      sensitivity,
+      localProcessingMode,
       lastUpdated,
     };
 
@@ -106,6 +178,9 @@ export class WorkspaceMemoryService {
       context !== contextRaw ||
       JSON.stringify(conventions) !== JSON.stringify(source.conventions ?? []) ||
       JSON.stringify(decisions) !== JSON.stringify(source.decisions ?? []) ||
+      policyProfile !== source.policyProfile ||
+      sensitivity !== source.sensitivity ||
+      localProcessingMode !== source.localProcessingMode ||
       lastUpdated !== (typeof source.lastUpdated === 'string' ? source.lastUpdated : '');
 
     return { memory, changed };
@@ -238,6 +313,7 @@ export class WorkspaceMemoryService {
    */
   formatForPrompt(memory: WorkspaceMemory): string {
     const parts: string[] = [];
+    const policy = this.resolvePolicy(memory);
 
     if (memory.context && memory.context.trim()) {
       parts.push(`Project overview: ${sanitizePromptText(memory.context, 4000)}`);
@@ -260,6 +336,10 @@ export class WorkspaceMemoryService {
         parts.push(`Architecture decisions:\n${lines.join('\n')}`);
       }
     }
+
+    parts.push(
+      `Memory policy: ${policy.profile} (sensitivity: ${policy.sensitivity}, local processing: ${policy.localProcessingMode ? 'enabled' : 'disabled'})`
+    );
 
     return parts.join('\n');
   }

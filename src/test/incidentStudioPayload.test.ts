@@ -287,6 +287,9 @@ describe('incidentStudioPayload', () => {
         conventionsCount: 2,
         decisionsCount: 1,
         hasMemory: true,
+        policyProfile: 'strict',
+        sensitivity: 'sensitive',
+        localProcessingMode: true,
       },
       telemetry: {
         totalEvents: 32,
@@ -297,6 +300,7 @@ describe('incidentStudioPayload', () => {
         hasDoctorEvidence: true,
         hasGitDiff: true,
         hasWorkspaceMemory: true,
+        localProcessingMode: true,
         projectScoped: true,
       },
       completeness: 'fresh',
@@ -319,7 +323,13 @@ describe('incidentStudioPayload', () => {
         hasDoctorEvidence: true,
         hasGitDiff: true,
         hasWorkspaceMemory: true,
+        localProcessingMode: true,
         projectScoped: true,
+      },
+      memory: {
+        policyProfile: 'strict',
+        sensitivity: 'sensitive',
+        localProcessingMode: true,
       },
       completeness: 'fresh',
     });
@@ -360,16 +370,66 @@ describe('incidentStudioPayload', () => {
           hasMemory: true,
           conventionsCount: 2,
           decisionsCount: 1,
+          policyProfile: 'balanced',
+          sensitivity: 'normal',
+          localProcessingMode: false,
         },
         evidence: {
           hasDoctorEvidence: true,
           hasGitDiff: true,
           hasWorkspaceMemory: true,
+          localProcessingMode: false,
           projectScoped: true,
         },
         completeness: 'fresh',
       });
     }
+  });
+
+  it('defaults workspace memory policy profile for legacy graph payloads', () => {
+    const graph = normalizeIncidentWorkspaceGraphSnapshot({
+      snapshotVersion: 'v1',
+      workspace: { path: '/tmp/legacy' },
+      project: {
+        framework: 'unknown',
+        kit: 'unknown',
+        selectedProject: null,
+      },
+      topology: {
+        modulesCount: 0,
+        topModules: [],
+      },
+      doctor: {
+        hasEvidence: false,
+      },
+      git: {
+        diffStat: 'none',
+        hasDiffContext: false,
+      },
+      memory: {
+        conventionsCount: 0,
+        decisionsCount: 0,
+        hasMemory: false,
+      },
+      telemetry: {
+        totalEvents: 0,
+        lastCommand: null,
+        onboardingFollowupClickThroughRate: 0,
+      },
+      evidence: {
+        hasDoctorEvidence: false,
+        hasGitDiff: false,
+        hasWorkspaceMemory: false,
+        projectScoped: false,
+      },
+      completeness: 'partial',
+      lastUpdatedAt: 1,
+    });
+
+    expect(graph?.memory.policyProfile).toBe('balanced');
+    expect(graph?.memory.sensitivity).toBe('normal');
+    expect(graph?.memory.localProcessingMode).toBe(false);
+    expect(graph?.evidence.localProcessingMode).toBe(false);
   });
 
   it('returns null when workspace path is missing in workspace graph snapshot', () => {

@@ -281,6 +281,26 @@ describe('contract drift guard', () => {
     expect(welcomePanelSource).toContain('Patch apply blocked: impacted scope is unknown.');
   });
 
+  it('keeps workspace memory policy profile contract exposed for local-processing mode', () => {
+    const welcomePanelSource = read('src/ui/panels/welcomePanel.ts');
+    const memoryServiceSource = read('src/core/workspaceMemoryService.ts');
+    const payloadSource = read('webview-ui/src/lib/incidentStudioPayload.ts');
+
+    expect(memoryServiceSource).toContain('WorkspaceMemoryPolicyProfile');
+    expect(memoryServiceSource).toContain('resolvePolicy(memory?: WorkspaceMemory)');
+    expect(memoryServiceSource).toContain('Memory policy:');
+
+    expect(welcomePanelSource).toContain('policyProfile: memoryPolicy.profile');
+    expect(welcomePanelSource).toContain('sensitivity: memoryPolicy.sensitivity');
+    expect(welcomePanelSource).toContain('localProcessingMode: memoryPolicy.localProcessingMode');
+
+    expect(payloadSource).toContain('asWorkspaceMemoryPolicyProfile');
+    expect(payloadSource).toContain('deriveLocalProcessingMode');
+    expect(payloadSource).toContain('policyProfile');
+    expect(payloadSource).toContain('sensitivity');
+    expect(payloadSource).toContain('localProcessingMode');
+  });
+
   it('keeps project lifecycle command contracts cross-platform for fastapi/go/nestjs', () => {
     const extensionSource = read('src/extension.ts');
     const projectLifecycleSource = read('src/commands/projectLifecycle.ts');

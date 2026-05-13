@@ -156,4 +156,72 @@ describe('workspaceMemoryService', () => {
     expect(prompt).not.toContain('letmein');
     expect(prompt).not.toContain('eyJ.long.token');
   });
+
+  it('sanitizes policy profile and derives local processing mode for sensitive repositories', async () => {
+    const svc = WorkspaceMemoryService.getInstance();
+    const wsPath = path.join(tempRoot, 'ws-policy-derived');
+    const memoryDir = path.join(wsPath, '.rapidkit');
+    const memoryPath = path.join(memoryDir, 'workspace-memory.json');
+
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(
+      memoryPath,
+      JSON.stringify(
+        {
+          context: 'Sensitive repo',
+          conventions: [],
+          decisions: [],
+          policyProfile: 'strict',
+          sensitivity: 'sensitive',
+          lastUpdated: '2026-04-20T00:00:00.000Z',
+        },
+        null,
+        2
+      )
+    );
+
+    const parsed = await svc.read(wsPath);
+    const policy = svc.resolvePolicy(parsed);
+
+    expect(parsed.policyProfile).toBe('strict');
+    expect(parsed.sensitivity).toBe('sensitive');
+    expect(parsed.localProcessingMode).toBe(true);
+    expect(policy).toEqual({
+      profile: 'strict',
+      sensitivity: 'sensitive',
+      localProcessingMode: true,
+    });
+  });
+
+  it('falls back to balanced policy profile and keeps explicit local-processing override', async () => {
+    const svc = WorkspaceMemoryService.getInstance();
+    const wsPath = path.join(tempRoot, 'ws-policy-fallback');
+    const memoryDir = path.join(wsPath, '.rapidkit');
+    const memoryPath = path.join(memoryDir, 'workspace-memory.json');
+
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(
+      memoryPath,
+      JSON.stringify(
+        {
+          context: 'General repo',
+          conventions: [],
+          decisions: [],
+          policyProfile: 'unsupported-profile',
+          sensitivity: 'normal',
+          localProcessingMode: true,
+          lastUpdated: '2026-04-20T00:00:00.000Z',
+        },
+        null,
+        2
+      )
+    );
+
+    const parsed = await svc.read(wsPath);
+
+    expect(parsed.policyProfile).toBe('balanced');
+    expect(parsed.sensitivity).toBe('normal');
+    expect(parsed.localProcessingMode).toBe(true);
+    expect(svc.formatForPrompt(parsed)).toContain('Memory policy: balanced');
+  });
 });

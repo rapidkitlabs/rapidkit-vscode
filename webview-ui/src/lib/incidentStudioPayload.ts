@@ -464,6 +464,9 @@ export type IncidentWorkspaceGraphSnapshot = {
     conventionsCount: number;
     decisionsCount: number;
     hasMemory: boolean;
+    policyProfile: 'strict' | 'balanced' | 'permissive';
+    sensitivity: 'normal' | 'sensitive';
+    localProcessingMode: boolean;
   };
   telemetry: {
     totalEvents: number;
@@ -474,6 +477,7 @@ export type IncidentWorkspaceGraphSnapshot = {
     hasDoctorEvidence: boolean;
     hasGitDiff: boolean;
     hasWorkspaceMemory: boolean;
+    localProcessingMode: boolean;
     projectScoped: boolean;
   };
   completeness: 'fresh' | 'cached' | 'partial' | 'degraded';
@@ -522,6 +526,32 @@ function asBoolean(value: unknown, fallback = false): boolean {
 
 function asOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
+}
+
+function asWorkspaceMemoryPolicyProfile(
+  value: unknown
+): IncidentWorkspaceGraphSnapshot['memory']['policyProfile'] {
+  if (value === 'strict' || value === 'balanced' || value === 'permissive') {
+    return value;
+  }
+  return 'balanced';
+}
+
+function asWorkspaceMemorySensitivity(
+  value: unknown
+): IncidentWorkspaceGraphSnapshot['memory']['sensitivity'] {
+  return value === 'sensitive' ? 'sensitive' : 'normal';
+}
+
+function deriveLocalProcessingMode(input: {
+  rawValue: unknown;
+  policyProfile: IncidentWorkspaceGraphSnapshot['memory']['policyProfile'];
+  sensitivity: IncidentWorkspaceGraphSnapshot['memory']['sensitivity'];
+}): boolean {
+  if (typeof input.rawValue === 'boolean') {
+    return input.rawValue;
+  }
+  return input.policyProfile === 'strict' || input.sensitivity === 'sensitive';
 }
 
 function asStringArray(value: unknown): string[] {
@@ -1288,6 +1318,7 @@ export function normalizeIncidentImpactAssessmentPayload(
 ): NormalizedIncidentImpactAssessmentPayload {
   const root = asRecord(value);
   const impactScoreContractRoot = asRecord(root.impactScoreContract);
+  const impactSignalCounts = asRecord(impactScoreContractRoot.signalCounts);
 
   const impactScoreContract = Object.keys(impactScoreContractRoot).length
     ? {
@@ -1309,25 +1340,13 @@ export function normalizeIncidentImpactAssessmentPayload(
           160
         ),
         signalCounts: {
-          impactedNodeCount: Math.max(
-            0,
-            asNumber(impactScoreContractRoot.signalCounts?.impactedNodeCount, 0)
-          ),
-          impactedEdgeCount: Math.max(
-            0,
-            asNumber(impactScoreContractRoot.signalCounts?.impactedEdgeCount, 0)
-          ),
-          impactedModuleCount: Math.max(
-            0,
-            asNumber(impactScoreContractRoot.signalCounts?.impactedModuleCount, 0)
-          ),
-          candidateTestCount: Math.max(
-            0,
-            asNumber(impactScoreContractRoot.signalCounts?.candidateTestCount, 0)
-          ),
+          impactedNodeCount: Math.max(0, asNumber(impactSignalCounts.impactedNodeCount, 0)),
+          impactedEdgeCount: Math.max(0, asNumber(impactSignalCounts.impactedEdgeCount, 0)),
+          impactedModuleCount: Math.max(0, asNumber(impactSignalCounts.impactedModuleCount, 0)),
+          candidateTestCount: Math.max(0, asNumber(impactSignalCounts.candidateTestCount, 0)),
           crossServiceBoundaryCount: Math.max(
             0,
-            asNumber(impactScoreContractRoot.signalCounts?.crossServiceBoundaryCount, 0)
+            asNumber(impactSignalCounts.crossServiceBoundaryCount, 0)
           ),
         },
         blockedReasons: sanitizeStringArray(impactScoreContractRoot.blockedReasons, 220),
@@ -1483,6 +1502,13 @@ export function normalizeIncidentWorkspaceGraphSnapshot(
   }
 
   const selectedProjectPath = cleanText(selectedProject.path);
+  const policyProfile = asWorkspaceMemoryPolicyProfile(memory.policyProfile);
+  const sensitivity = asWorkspaceMemorySensitivity(memory.sensitivity);
+  const localProcessingMode = deriveLocalProcessingMode({
+    rawValue: memory.localProcessingMode,
+    policyProfile,
+    sensitivity,
+  });
 
   return {
     snapshotVersion: cleanText(root.snapshotVersion) || 'v1',
@@ -1525,6 +1551,9 @@ export function normalizeIncidentWorkspaceGraphSnapshot(
       conventionsCount: asNumber(memory.conventionsCount, 0),
       decisionsCount: asNumber(memory.decisionsCount, 0),
       hasMemory: Boolean(memory.hasMemory),
+      policyProfile,
+      sensitivity,
+      localProcessingMode,
     },
     telemetry: {
       totalEvents: asNumber(telemetry.totalEvents, 0),
@@ -1535,6 +1564,10 @@ export function normalizeIncidentWorkspaceGraphSnapshot(
       hasDoctorEvidence: Boolean(evidence.hasDoctorEvidence),
       hasGitDiff: Boolean(evidence.hasGitDiff),
       hasWorkspaceMemory: Boolean(evidence.hasWorkspaceMemory),
+      localProcessingMode:
+        typeof evidence.localProcessingMode === 'boolean'
+          ? evidence.localProcessingMode
+          : localProcessingMode,
       projectScoped: Boolean(evidence.projectScoped),
     },
     completeness:
