@@ -225,6 +225,68 @@ describe('workspaceMemoryService', () => {
     expect(svc.formatForPrompt(parsed)).toContain('Memory policy: balanced');
   });
 
+  it('enforces local-processing mode for strict profile even when file sets false', async () => {
+    const svc = WorkspaceMemoryService.getInstance();
+    const wsPath = path.join(tempRoot, 'ws-policy-strict-enforced');
+    const memoryDir = path.join(wsPath, '.rapidkit');
+    const memoryPath = path.join(memoryDir, 'workspace-memory.json');
+
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(
+      memoryPath,
+      JSON.stringify(
+        {
+          context: 'Strict repo',
+          conventions: [],
+          decisions: [],
+          policyProfile: 'strict',
+          sensitivity: 'normal',
+          localProcessingMode: false,
+          lastUpdated: '2026-04-20T00:00:00.000Z',
+        },
+        null,
+        2
+      )
+    );
+
+    const parsed = await svc.read(wsPath);
+    const policy = svc.resolvePolicy(parsed);
+
+    expect(parsed.localProcessingMode).toBe(true);
+    expect(policy.localProcessingMode).toBe(true);
+  });
+
+  it('enforces local-processing mode for sensitive profile even when file sets false', async () => {
+    const svc = WorkspaceMemoryService.getInstance();
+    const wsPath = path.join(tempRoot, 'ws-policy-sensitive-enforced');
+    const memoryDir = path.join(wsPath, '.rapidkit');
+    const memoryPath = path.join(memoryDir, 'workspace-memory.json');
+
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(
+      memoryPath,
+      JSON.stringify(
+        {
+          context: 'Sensitive repo',
+          conventions: [],
+          decisions: [],
+          policyProfile: 'balanced',
+          sensitivity: 'sensitive',
+          localProcessingMode: false,
+          lastUpdated: '2026-04-20T00:00:00.000Z',
+        },
+        null,
+        2
+      )
+    );
+
+    const parsed = await svc.read(wsPath);
+    const policy = svc.resolvePolicy(parsed);
+
+    expect(parsed.localProcessingMode).toBe(true);
+    expect(policy.localProcessingMode).toBe(true);
+  });
+
   it('allows contract-gated user-initiated memory write', async () => {
     const svc = WorkspaceMemoryService.getInstance();
     const wsPath = path.join(tempRoot, 'ws-write-contract-allow');

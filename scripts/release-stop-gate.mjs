@@ -95,6 +95,10 @@ function parseArgs(argv) {
       false
     ),
     blockedSeverities: parseSeverityList(process.env.WORKSPAI_GATE_BLOCK_SEVERITIES || 'p0,p1'),
+    issueReportMaxAgeHours: parseEnvNumber(
+      ['WORKSPAI_GATE_ISSUE_REPORT_MAX_AGE_HOURS', 'WORKSPAI_ISSUE_REPORT_MAX_AGE_HOURS'],
+      24
+    ),
     enterpriseGatePath:
       process.env.WORKSPAI_ENTERPRISE_GATE_PATH ||
       process.env.WORKSPAI_ENTERPRISE_STABILIZATION_GATE_PATH ||
@@ -109,6 +113,10 @@ function parseArgs(argv) {
       '',
     enforceReleasePostureLabel: parseEnvBoolean(
       ['WORKSPAI_GATE_ENFORCE_RELEASE_POSTURE_LABEL', 'WORKSPAI_ENFORCE_RELEASE_POSTURE_LABEL'],
+      false
+    ),
+    enforceClaimSafety: parseEnvBoolean(
+      ['WORKSPAI_GATE_ENFORCE_CLAIM_SAFETY', 'WORKSPAI_ENFORCE_CLAIM_SAFETY'],
       false
     ),
     verifyPackContract:
@@ -298,6 +306,15 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === '--issue-report-max-age-hours') {
+      const value = Number(argv[i + 1]);
+      if (Number.isFinite(value)) {
+        options.issueReportMaxAgeHours = value;
+      }
+      i += 1;
+      continue;
+    }
+
     if (arg === '--enterprise-gate') {
       options.enterpriseGatePath = argv[i + 1] || '';
       i += 1;
@@ -317,6 +334,11 @@ function parseArgs(argv) {
 
     if (arg === '--enforce-release-posture-label') {
       options.enforceReleasePostureLabel = true;
+      continue;
+    }
+
+    if (arg === '--enforce-claim-safety') {
+      options.enforceClaimSafety = true;
       continue;
     }
 
@@ -886,6 +908,57 @@ function buildOpenIssueSeverityStatus(issueReportPath, blockedSeverities = ['p0'
   };
 }
 
+function buildOpenIssueReportFreshnessStatus(issueReportPath, maxAgeHoursRaw) {
+  const resolvedPath = path.resolve(issueReportPath);
+  const maxAgeHours = Number.isFinite(maxAgeHoursRaw) ? Number(maxAgeHoursRaw) : 0;
+  const normalizedMaxAgeHours = maxAgeHours > 0 ? maxAgeHours : 0;
+
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      issueReportPath: resolvedPath,
+      maxAgeHours: normalizedMaxAgeHours,
+      message: `Open-issue report not found: ${resolvedPath}`,
+    };
+  }
+
+  if (normalizedMaxAgeHours === 0) {
+    return {
+      ok: true,
+      issueReportPath: resolvedPath,
+      maxAgeHours: 0,
+      message: 'Open-issue report freshness gate disabled.',
+    };
+  }
+
+  const payload = readJson(resolvedPath);
+  const generatedAtRaw = typeof payload?.generatedAt === 'string' ? payload.generatedAt : '';
+  const generatedAtMs = Date.parse(generatedAtRaw);
+
+  if (!Number.isFinite(generatedAtMs)) {
+    return {
+      ok: false,
+      issueReportPath: resolvedPath,
+      maxAgeHours: normalizedMaxAgeHours,
+      message: 'Open-issue report freshness gate failed: generatedAt is missing or invalid.',
+    };
+  }
+
+  const ageHours = (Date.now() - generatedAtMs) / (1000 * 60 * 60);
+  const ok = ageHours <= normalizedMaxAgeHours;
+
+  return {
+    ok,
+    issueReportPath: resolvedPath,
+    maxAgeHours: normalizedMaxAgeHours,
+    generatedAt: new Date(generatedAtMs).toISOString(),
+    ageHours: Number(ageHours.toFixed(2)),
+    message: ok
+      ? 'Open-issue report freshness gate passed.'
+      : `Open-issue report freshness gate failed: report age ${ageHours.toFixed(2)}h exceeds max ${normalizedMaxAgeHours}h.`,
+  };
+}
+
 function buildEnterpriseStabilizationGateStatus(gatePath) {
   const resolvedPath = path.resolve(gatePath);
   if (!fs.existsSync(resolvedPath)) {
@@ -973,12 +1046,255 @@ function buildReleasePostureLabelStatus(releaseNotesPath) {
   };
 }
 
+const CLAIM_SAFETY_PATTERNS = [
+  {
+    id: 'autonomous_mutation_claim',
+    regex:
+      /\b(autonomous|autonomously|self[-\s]?driven)\b.{0,80}\b(apply|applies|patch|patches|modify|modifies|mutate|mutates|code changes?)\b/i,
+    message: 'Release notes imply autonomous code mutation behavior.',
+  },
+  {
+    id: 'guaranteed_outcome_claim',
+    regex:
+      /\b(guaranteed?|zero[-\s]?risk|zero[-\s]?failure|100%\s*(success|accuracy|reliability|safe))\b/i,
+    message: 'Release notes contain unconditional or guaranteed outcome claims.',
+  },
+  {
+    id: 'roadmap_as_shipped_claim',
+    regex:
+      /\b(roadmap|planned|coming\s+soon|future)\b.{0,80}\b(available\s+now|now\s+available|shipped|generally\s+available|ga)\b/i,
+    message: 'Release notes present roadmap/future scope as shipped.',
+  },
+];
+
+function buildReleaseClaimSafetyStatus(releaseNotesPath) {
+  const resolvedPath = path.resolve(releaseNotesPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return {
+      ok: false,
+      releaseNotesPath: resolvedPath,
+      findings: [],
+      message: `Release notes file not found: ${resolvedPath}`,
+    };
+  }
+
+  const markdown = fs.readFileSync(resolvedPath, 'utf-8');
+  const lines = markdown.split(/\r?\n/);
+  const findings = [];
+  let insideCodeFence = false;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('```')) {
+      insideCodeFence = !insideCodeFence;
+      continue;
+    }
+
+    if (!trimmed || insideCodeFence) {
+      continue;
+    }
+
+    for (const pattern of CLAIM_SAFETY_PATTERNS) {
+      if (!pattern.regex.test(line)) {
+        continue;
+      }
+
+      findings.push({
+        ruleId: pattern.id,
+        line: lineIndex + 1,
+        message: pattern.message,
+        text: trimmed.slice(0, 220),
+      });
+    }
+  }
+
+  return {
+    ok: findings.length === 0,
+    releaseNotesPath: resolvedPath,
+    findings,
+    message:
+      findings.length === 0
+        ? 'Release notes claim-safety checks passed.'
+        : `Release notes claim-safety failed with ${findings.length} finding(s).`,
+  };
+}
+
 function percent(numerator, denominator) {
   return denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(2)) : null;
 }
 
 function ratio(numerator, denominator) {
   return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : null;
+}
+
+const CRITICAL_TELEMETRY_REQUIRED_FIELDS = {
+  'workspai.studio.verify_passed': {
+    actionId: 'non-empty-string',
+    actionType: 'non-empty-string',
+    verifyReady: 'boolean',
+    verifyRequired: 'boolean',
+    verifyPathPresent: 'boolean',
+  },
+  'workspai.studio.verify_failed': {
+    actionId: 'non-empty-string',
+    actionType: 'non-empty-string',
+    verifyReady: 'boolean',
+    verifyRequired: 'boolean',
+    verifyPathPresent: 'boolean',
+  },
+  'workspai.studio.release_readiness_artifact_exported': {
+    artifactId: 'non-empty-string',
+    decision: 'release-decision',
+    blockingReasonCount: 'finite-number',
+  },
+  'workspai.studio.release_readiness_go_decision_exported': {
+    artifactId: 'non-empty-string',
+    decision: 'release-decision',
+  },
+  'workspai.studio.release_readiness_no_go_decision_exported': {
+    artifactId: 'non-empty-string',
+    decision: 'release-decision',
+  },
+  'workspai.studio.release_readiness_decision_validated': {
+    artifactId: 'non-empty-string',
+    originalDecision: 'validation-decision',
+    validationOutcome: 'non-empty-string',
+  },
+  'workspai.studio.release_readiness_decision_correct': {
+    artifactId: 'non-empty-string',
+    originalDecision: 'validation-decision',
+    validationOutcome: 'non-empty-string',
+  },
+  'workspai.studio.release_readiness_no_go_decision_validated': {
+    artifactId: 'non-empty-string',
+    originalDecision: 'validation-decision',
+    validationOutcome: 'non-empty-string',
+  },
+  'workspai.studio.release_readiness_no_go_prevented_incident': {
+    artifactId: 'non-empty-string',
+    originalDecision: 'validation-decision',
+    validationOutcome: 'non-empty-string',
+  },
+};
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeProjectPathForTelemetry(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().replace(/\\/g, '/').toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveTelemetryValueType(value) {
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+  return typeof value;
+}
+
+function validateTelemetryField(value, rule) {
+  if (rule === 'non-empty-string') {
+    return typeof value === 'string' && value.trim().length > 0;
+  }
+
+  if (rule === 'boolean') {
+    return typeof value === 'boolean';
+  }
+
+  if (rule === 'finite-number') {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+
+  if (rule === 'release-decision') {
+    return value === 'go' || value === 'no-go';
+  }
+
+  if (rule === 'validation-decision') {
+    return value === 'GO' || value === 'NO-GO';
+  }
+
+  return false;
+}
+
+function buildTelemetryIntegrityStatus(recentEvents) {
+  const requiredFieldViolations = [];
+  const schemaDriftAlerts = [];
+  const scopeMismatchAlerts = [];
+  const observedProjectPaths = new Set();
+  let inspectedCriticalEvents = 0;
+
+  for (let index = 0; index < recentEvents.length; index += 1) {
+    const entry = recentEvents[index];
+    if (!isPlainObject(entry)) {
+      continue;
+    }
+
+    const command = typeof entry.command === 'string' ? entry.command.trim() : '';
+    const requiredFields = CRITICAL_TELEMETRY_REQUIRED_FIELDS[command];
+    if (!requiredFields) {
+      continue;
+    }
+
+    inspectedCriticalEvents += 1;
+
+    if (!isPlainObject(entry.props)) {
+      schemaDriftAlerts.push({
+        index,
+        command,
+        reason: 'props_missing_or_invalid',
+      });
+      continue;
+    }
+
+    const props = entry.props;
+    const normalizedProjectPath = normalizeProjectPathForTelemetry(props.projectPath);
+    if (normalizedProjectPath) {
+      observedProjectPaths.add(normalizedProjectPath);
+    }
+
+    for (const [field, rule] of Object.entries(requiredFields)) {
+      const value = props[field];
+      if (validateTelemetryField(value, rule)) {
+        continue;
+      }
+
+      requiredFieldViolations.push({
+        index,
+        command,
+        field,
+        expected: rule,
+        actualType: resolveTelemetryValueType(value),
+      });
+    }
+  }
+
+  if (observedProjectPaths.size > 1) {
+    scopeMismatchAlerts.push({
+      reason: 'multiple_project_paths_observed',
+      observedProjectPaths: Array.from(observedProjectPaths),
+    });
+  }
+
+  return {
+    inspectedCriticalEvents,
+    requiredFieldViolations,
+    schemaDriftAlerts,
+    scopeMismatchAlerts,
+    observedProjectPaths: Array.from(observedProjectPaths),
+    telemetryRequiredFieldsPass: requiredFieldViolations.length === 0,
+    telemetrySchemaDriftPass: schemaDriftAlerts.length === 0,
+    telemetryScopeMismatchPass: scopeMismatchAlerts.length === 0,
+  };
 }
 
 function buildPredictionAggregation({ predictionShown, predictionVerified, predictionFalsified }) {
@@ -1271,6 +1587,7 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
   const marker = readJson(markerPath);
   const telemetry = marker?.metadata?.custom?.workspaiTelemetry;
   const recentEvents = Array.isArray(telemetry?.recentEvents) ? telemetry.recentEvents : [];
+  const telemetryIntegrity = buildTelemetryIntegrityStatus(recentEvents);
 
   let loopStarted = 0;
   let nextActionClicked = 0;
@@ -1661,6 +1978,9 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
     firstChunkLatencyPass,
     syncLatencyPass,
     boardRenderLatencyPass,
+    telemetryRequiredFieldsPass: telemetryIntegrity.telemetryRequiredFieldsPass,
+    telemetrySchemaDriftPass: telemetryIntegrity.telemetrySchemaDriftPass,
+    telemetryScopeMismatchPass: telemetryIntegrity.telemetryScopeMismatchPass,
   };
 
   return {
@@ -1691,6 +2011,7 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
       releaseReadinessDecisionAccuracyAvailable: decisionsValidated > 0,
       noGoPreventedIncidentRateAvailable: noGoDecisionsValidated > 0,
     },
+    telemetryIntegrity,
     predictiveCalibration: predictiveCalibration.calibration,
     aggregation: predictionAggregation,
     metrics: {
@@ -1774,7 +2095,10 @@ function buildKpiGateStatus(markerPath, thresholds, calibrationOptions) {
         gates.falseConfidenceRatePass &&
         gates.firstChunkLatencyPass &&
         gates.syncLatencyPass &&
-        gates.boardRenderLatencyPass,
+        gates.boardRenderLatencyPass &&
+        gates.telemetryRequiredFieldsPass &&
+        gates.telemetrySchemaDriftPass &&
+        gates.telemetryScopeMismatchPass,
     },
   };
 }
@@ -1844,6 +2168,18 @@ function main() {
   }
 
   if (options.issueReportPath) {
+    const issueFreshnessStatus = buildOpenIssueReportFreshnessStatus(
+      options.issueReportPath,
+      options.issueReportMaxAgeHours
+    );
+    console.log('[release-stop-gate] Open-issue report freshness result:');
+    console.log(JSON.stringify(issueFreshnessStatus, null, 2));
+
+    if (options.enforceOpenIssues && !issueFreshnessStatus.ok) {
+      console.error(`[release-stop-gate] Release blocked: ${issueFreshnessStatus.message}`);
+      process.exit(1);
+    }
+
     const openIssueStatus = buildOpenIssueSeverityStatus(
       options.issueReportPath,
       options.blockedSeverities
@@ -1887,9 +2223,23 @@ function main() {
       console.error(`[release-stop-gate] Release blocked: ${releasePostureStatus.message}`);
       process.exit(1);
     }
+
+    const releaseClaimSafetyStatus = buildReleaseClaimSafetyStatus(options.releaseNotesPath);
+    console.log('[release-stop-gate] Release notes claim-safety result:');
+    console.log(JSON.stringify(releaseClaimSafetyStatus, null, 2));
+
+    if (options.enforceClaimSafety && !releaseClaimSafetyStatus.ok) {
+      console.error(`[release-stop-gate] Release blocked: ${releaseClaimSafetyStatus.message}`);
+      process.exit(1);
+    }
   } else if (options.enforceReleasePostureLabel) {
     console.error(
       '[release-stop-gate] Release blocked: --enforce-release-posture-label requires --release-notes <path> or WORKSPAI_RELEASE_NOTES_PATH.'
+    );
+    process.exit(1);
+  } else if (options.enforceClaimSafety) {
+    console.error(
+      '[release-stop-gate] Release blocked: --enforce-claim-safety requires --release-notes <path> or WORKSPAI_RELEASE_NOTES_PATH.'
     );
     process.exit(1);
   }

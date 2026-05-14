@@ -138,10 +138,15 @@ export class WorkspaceMemoryService {
     policyProfile: WorkspaceMemoryPolicyProfile;
     sensitivity: WorkspaceMemorySensitivity;
   }): boolean {
+    // Fail-closed boundary: strict/sensitive workspaces must remain local-processing.
+    if (input.policyProfile === 'strict' || input.sensitivity === 'sensitive') {
+      return true;
+    }
+
     if (typeof input.localProcessingMode === 'boolean') {
       return input.localProcessingMode;
     }
-    return input.policyProfile === 'strict' || input.sensitivity === 'sensitive';
+    return false;
   }
 
   resolvePolicy(memory?: WorkspaceMemory): WorkspaceMemoryPolicy {

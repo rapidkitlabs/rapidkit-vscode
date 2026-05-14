@@ -5,7 +5,7 @@ import path from 'path';
 
 function parseArgs(argv) {
   const options = {
-    output: path.resolve('releases/open-issues-report.json'),
+    output: path.resolve('artifacts/open-issues-report.json'),
     repo: process.env.GITHUB_REPOSITORY || '',
     state: 'open',
   };

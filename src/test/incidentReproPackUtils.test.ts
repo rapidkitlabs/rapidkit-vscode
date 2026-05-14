@@ -38,7 +38,7 @@ describe('incidentReproPackUtils', () => {
     expect(query).toContain('Risk level: high');
     expect(query).toContain('1. Run doctor workspace');
     expect(query).toContain('1. affected scope is incomplete');
-    expect(query).toContain('Related files: src/orders/service.ts, tests/orders.test.ts');
+    expect(query).toContain('Related files: orders/service.ts, tests/orders.test.ts');
   });
 
   it('builds a link-safe export bundle with redacted conversation and shortened file paths', () => {
@@ -247,6 +247,53 @@ describe('incidentReproPackUtils', () => {
     expect(bundle.memory_influence_audit[0]?.summary).not.toContain('Bearer sk-');
   });
 
+  it('buildLinkSafeExportBundle: enforces canonical decision artifact linkage for memory audit entries', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-01T10:00:00.000Z'));
+
+    const bundle = buildLinkSafeExportBundle(
+      {
+        packId: 'repro-007',
+        status: 'captured',
+        actionId: 'action-007',
+        workspacePath: '/tmp/company/private-workspace',
+        replayPayload: {
+          workspacePath: '/tmp/company/private-workspace',
+          conversationId: 'conv-secret',
+          actionType: 'incident-repro-pack',
+          riskLevel: 'high',
+          verifyChecklist: ['Run doctor workspace'],
+          blockedReasons: [],
+          relatedFiles: [],
+        },
+        memoryInfluenceAuditTimeline: [
+          {
+            memoryEventId: 'memory-action-007-policy',
+            timestamp: '2026-05-01T09:59:30.000Z',
+            source: 'incident-replay-learning',
+            influenceKind: 'artifact-link',
+            summary: 'replay learning updated rollback sequencing',
+            policyProfile: 'balanced',
+            sensitivity: 'normal',
+            localProcessingMode: false,
+            decisionArtifacts: {
+              actionId: 'some-other-action',
+              reproPackId: 'some-other-pack',
+              releaseReadinessArtifactId: 'rrc-007',
+            },
+          },
+        ],
+      },
+      'private-workspace'
+    );
+
+    expect(bundle.memory_influence_audit[0]?.decisionArtifacts).toEqual({
+      actionId: 'action-007',
+      reproPackId: 'repro-007',
+      releaseReadinessArtifactId: 'rrc-007',
+    });
+  });
+
   it('parses imported snake_case bundles into a replay-ready payload', () => {
     const parsed = parseImportedReproBundle({
       incident_repro_pack: {
@@ -349,6 +396,86 @@ describe('incidentReproPackUtils', () => {
 
     expect(query).toContain('src/file-10.ts');
     expect(query).not.toContain('src/file-11.ts');
+  });
+
+  it('buildIncidentReplayQuery: redacts sensitive literals from likelyFailureMode and checklists', () => {
+    const query = buildIncidentReplayQuery({
+      packId: 'repro-redaction',
+      replayPayload: {
+        actionType: 'incident-repro-pack',
+        riskLevel: 'high',
+        likelyFailureMode: 'Bearer sk-very-secret-token leaked in stdout',
+        verifyChecklist: ['authorization: Bearer abc123'],
+        blockedReasons: ['token=github_pat_verySecretTokenValue'],
+        relatedFiles: ['src/security.ts'],
+      },
+    });
+
+    expect(query).toContain('[REDACTED]');
+    expect(query).not.toContain('sk-very-secret-token');
+    expect(query).not.toContain('github_pat_verySecretTokenValue');
+  });
+
+  it('buildIncidentReplayQuery: normalizes absolute related file paths to link-safe hints', () => {
+    const query = buildIncidentReplayQuery({
+      packId: 'repro-safe-paths',
+      replayPayload: {
+        actionType: 'incident-repro-pack',
+        riskLevel: 'medium',
+        verifyChecklist: [],
+        blockedReasons: [],
+        relatedFiles: [
+          '/home/dev/private-workspace/src/orders/service.ts',
+          'C:\\Users\\dev\\private-workspace\\src\\orders\\controller.ts',
+        ],
+      },
+    });
+
+    expect(query).toContain('Related files: orders/service.ts, orders/controller.ts');
+    expect(query).not.toContain('/home/dev/private-workspace');
+    expect(query).not.toContain('C:\\Users\\dev');
+  });
+
+  it('buildIncidentReplayQuery: injects rollback/recovery guards for high-risk replay', () => {
+    const query = buildIncidentReplayQuery({
+      packId: 'repro-high-risk-guard',
+      replayPayload: {
+        actionType: 'incident-repro-pack',
+        riskLevel: 'critical',
+        likelyFailureMode: 'migration drift',
+        verifyChecklist: ['Run deterministic verify checks'],
+        blockedReasons: ['scope confidence is below threshold'],
+        relatedFiles: ['src/migrations/apply.ts'],
+      },
+    });
+
+    expect(query).toContain(
+      'Document one deterministic rollback/restore command before execution.'
+    );
+    expect(query).toContain(
+      'Rollback path is mandatory for high-risk replay until explicitly documented.'
+    );
+  });
+
+  it('buildIncidentReplayQuery: avoids duplicate rollback guards when rollback evidence is present', () => {
+    const query = buildIncidentReplayQuery({
+      packId: 'repro-high-risk-existing-rollback',
+      replayPayload: {
+        actionType: 'incident-repro-pack',
+        riskLevel: 'high',
+        likelyFailureMode: 'service instability',
+        verifyChecklist: ['Run rollback drill in staging before deploy'],
+        blockedReasons: ['Rollback path already documented in runbook'],
+        relatedFiles: ['src/release/runbook.md'],
+      },
+    });
+
+    expect(
+      query.includes('Document one deterministic rollback/restore command before execution.')
+    ).toBe(false);
+    expect(
+      query.includes('Rollback path is mandatory for high-risk replay until explicitly documented.')
+    ).toBe(false);
   });
 
   // ── buildLinkSafeExportBundle edge cases ──────────────────────────────────
@@ -612,5 +739,51 @@ describe('incidentReproPackUtils', () => {
     } as unknown as Record<string, unknown>);
 
     expect(parsed.replayPayload.actionType).toBe('incident-repro-pack');
+  });
+
+  it('parseImportedReproBundle: sanitizes imported sensitive text fields before replay', () => {
+    const parsed = parseImportedReproBundle({
+      incident_repro_pack: {
+        packId: 'sanitize-imported-text',
+        replayPayload: {
+          actionType: 'incident-repro-pack',
+          riskLevel: 'high',
+          likelyFailureMode: 'Bearer sk-live-secret-token leaked in logs',
+          verifyChecklist: ['authorization: Bearer abc123'],
+          blockedReasons: ['token=ghp_SECRET_SHOULD_NOT_LEAK'],
+          relatedFiles: ['src/security.ts'],
+        },
+      },
+    } as unknown as Record<string, unknown>);
+
+    expect(parsed.replayPayload.likelyFailureMode).toContain('[REDACTED]');
+    expect(parsed.replayPayload.likelyFailureMode).not.toContain('sk-live-secret-token');
+    expect(parsed.replayPayload.verifyChecklist[0]).toContain('[REDACTED]');
+    expect(parsed.replayPayload.blockedReasons[0]).toContain('[REDACTED]');
+  });
+
+  it('parseImportedReproBundle: normalizes imported workspace and file paths to link-safe hints', () => {
+    const parsed = parseImportedReproBundle({
+      incident_repro_pack: {
+        packId: 'sanitize-imported-paths',
+        replayPayload: {
+          workspacePath: '/home/dev/private-client/project-alpha',
+          actionType: 'incident-repro-pack',
+          riskLevel: 'medium',
+          verifyChecklist: [],
+          blockedReasons: [],
+          relatedFiles: [
+            '/home/dev/private-client/project-alpha/src/orders/service.ts',
+            'C:\\Users\\dev\\project-alpha\\src\\orders\\controller.ts',
+          ],
+        },
+      },
+    } as unknown as Record<string, unknown>);
+
+    expect(parsed.replayPayload.workspacePath).toBe('private-client/project-alpha');
+    expect(parsed.replayPayload.relatedFiles).toEqual([
+      'orders/service.ts',
+      'orders/controller.ts',
+    ]);
   });
 });

@@ -199,6 +199,14 @@ describe('incidentStudioPromptPolicy', () => {
     expect(source).toContain('verifyCompletenessCheck.reason');
   });
 
+  it('inline-command verify telemetry includes action identity and verify readiness fields', () => {
+    const source = readWelcomePanelSource();
+
+    expect(source).toContain('actionId: inlineActionId');
+    expect(source).toContain('verifyReady: success');
+    expect(source).toContain('verifyReady: false');
+  });
+
   describe('labelDiagnosisConfidence', () => {
     it('returns high when scope is known and confidence score >= 0.75', () => {
       expect(labelDiagnosisConfidence('known', 0.75)).toBe('high');

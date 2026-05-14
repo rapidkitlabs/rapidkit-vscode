@@ -2548,6 +2548,10 @@ No markdown, no explanation outside the JSON.`;
                 selectedProjectPath && selectedProjectBelongsToWorkspace
                   ? { projectPath: selectedProjectPath }
                   : {};
+              const inlineActionId =
+                typeof protocolRequestId === 'string' && protocolRequestId.trim().length > 0
+                  ? `inline-${protocolRequestId.trim()}`
+                  : `inline-${Date.now().toString(36)}`;
 
               if (!inlineCommand) {
                 vscode.window.showWarningMessage('No command provided to run.');
@@ -2629,6 +2633,7 @@ No markdown, no explanation outside the JSON.`;
                   const success = result.exitCode === 0;
 
                   this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+                    actionId: inlineActionId,
                     actionType: 'inline-command',
                     command: inlineCommand.slice(0, 180),
                     projectScoped:
@@ -2644,9 +2649,11 @@ No markdown, no explanation outside the JSON.`;
                     success ? 'workspai.studio.verify_passed' : 'workspai.studio.verify_failed',
                     workspacePath,
                     {
+                      actionId: inlineActionId,
                       actionType: 'inline-command',
                       command: inlineCommand.slice(0, 180),
                       exitCode: result.exitCode,
+                      verifyReady: success,
                       verifyRequired: true,
                       verifyPathPresent: success,
                       verifyPathReason: success ? 'command_success' : 'command_failed',
@@ -2667,6 +2674,7 @@ No markdown, no explanation outside the JSON.`;
                 } catch (error) {
                   const errorMsg = error instanceof Error ? error.message : String(error);
                   this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+                    actionId: inlineActionId,
                     actionType: 'inline-command',
                     command: inlineCommand.slice(0, 180),
                     success: false,
@@ -2674,9 +2682,11 @@ No markdown, no explanation outside the JSON.`;
                     ...inlineScopeProps,
                   });
                   this._trackStudioEvent('workspai.studio.verify_failed', workspacePath, {
+                    actionId: inlineActionId,
                     actionType: 'inline-command',
                     command: inlineCommand.slice(0, 180),
                     error: String(errorMsg).slice(0, 180),
+                    verifyReady: false,
                     verifyRequired: true,
                     verifyPathPresent: false,
                     verifyPathReason: 'command_exception',

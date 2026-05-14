@@ -198,7 +198,7 @@ describe('contract drift guard', () => {
     expect(workflowSource).toContain(
       'npm run release:stop-gate -- --marker releases/wave3-kpi-marker.json'
     );
-    expect(workflowSource).toContain('--issue-report releases/open-issues-report.json');
+    expect(workflowSource).toContain('--issue-report artifacts/open-issues-report.json');
     expect(workflowSource).toContain('--enforce-open-issues');
     expect(workflowSource).toContain('--block-severities p0,p1');
     expect(workflowSource).toContain('--marker-max-age-hours 720');
@@ -211,6 +211,7 @@ describe('contract drift guard', () => {
     expect(workflowSource).toContain('--enforce-claim-checklist');
     expect(workflowSource).toContain('--enforce-enterprise-freeze');
     expect(workflowSource).toContain('--enforce-release-posture-label');
+    expect(workflowSource).toContain('--enforce-claim-safety');
     expect(gateScriptSource).toContain('src/test/driftGuard.test.ts');
     expect(gateScriptSource).toContain('src/test/importStackParity.snapshot.test.ts');
     expect(gateScriptSource).toContain('src/test/impactScoreScenarioMatrix.test.ts');

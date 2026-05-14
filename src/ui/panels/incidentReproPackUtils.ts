@@ -138,6 +138,65 @@ function sanitizeAuditSummary(value: unknown): string {
   return normalized.length > 240 ? `${normalized.slice(0, 240)}...[TRUNCATED]` : normalized;
 }
 
+function sanitizeImportedReplayText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const redacted = trimmed
+    .replace(INCIDENT_AUDIT_AUTHORIZATION_PATTERN, 'authorization: [REDACTED]')
+    .replace(INCIDENT_AUDIT_SECRET_PATTERN, (_full, key: string) => `${key}=[REDACTED]`)
+    .replace(INCIDENT_AUDIT_BEARER_PATTERN, ' Bearer [REDACTED]')
+    .replace(INCIDENT_AUDIT_TOKEN_LITERAL_PATTERN, '[REDACTED]');
+
+  return redacted.length > 280 ? `${redacted.slice(0, 280)}...[TRUNCATED]` : redacted;
+}
+
+function normalizeImportedWorkspacePath(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return toLinkSafePath(trimmed);
+}
+
+function normalizeImportedRelatedFiles(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => toLinkSafePath(entry.trim()))
+    .filter((entry) => entry.length > 0)
+    .slice(0, 12);
+}
+
+function normalizeImportedStringList(value: unknown, maxItems: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => sanitizeImportedReplayText(entry))
+    .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    .slice(0, maxItems);
+}
+
+function hasRollbackRecoverySignal(values: string[]): boolean {
+  return values.some((entry) => /\b(rollback|roll back|revert|restore)\b/i.test(entry));
+}
+
 function deriveSensitivityLabel(input: {
   declared?: IncidentReproPackSensitivityLabel;
   riskLevel: IncidentReproPackRiskLevel;
@@ -204,20 +263,49 @@ export function buildIncidentReplayQuery(reproPack: {
   };
 }): string {
   const replayPayload = reproPack.replayPayload;
-  const verifyList = replayPayload.verifyChecklist.length
-    ? replayPayload.verifyChecklist
+  const replayRiskRequiresRollbackGuard =
+    replayPayload.riskLevel === 'high' || replayPayload.riskLevel === 'critical';
+
+  const sanitizedVerifyChecklist = replayPayload.verifyChecklist
+    .map((item) => sanitizeImportedReplayText(item))
+    .filter((item): item is string => typeof item === 'string' && item.length > 0);
+  const sanitizedBlockedReasons = replayPayload.blockedReasons
+    .map((item) => sanitizeImportedReplayText(item))
+    .filter((item): item is string => typeof item === 'string' && item.length > 0);
+
+  if (replayRiskRequiresRollbackGuard) {
+    if (!hasRollbackRecoverySignal(sanitizedVerifyChecklist)) {
+      sanitizedVerifyChecklist.push(
+        'Document one deterministic rollback/restore command before execution.'
+      );
+    }
+
+    if (!hasRollbackRecoverySignal(sanitizedBlockedReasons)) {
+      sanitizedBlockedReasons.push(
+        'Rollback path is mandatory for high-risk replay until explicitly documented.'
+      );
+    }
+  }
+
+  const sanitizedLikelyFailureMode = sanitizeImportedReplayText(replayPayload.likelyFailureMode);
+  const verifyList = sanitizedVerifyChecklist.length
+    ? sanitizedVerifyChecklist
         .slice(0, 8)
         .map((item, index) => `${index + 1}. ${item}`)
         .join('\n')
     : '1. Run deterministic verification checks before claiming completion.';
-  const blockedReasons = replayPayload.blockedReasons.length
-    ? replayPayload.blockedReasons
+  const blockedReasons = sanitizedBlockedReasons.length
+    ? sanitizedBlockedReasons
         .slice(0, 8)
         .map((item, index) => `${index + 1}. ${item}`)
         .join('\n')
     : '1. No blocked reasons were captured in this pack.';
   const relatedFiles = replayPayload.relatedFiles.length
-    ? replayPayload.relatedFiles.slice(0, 10).join(', ')
+    ? replayPayload.relatedFiles
+        .map((entry) => toLinkSafePath(entry))
+        .filter((entry) => entry.length > 0)
+        .slice(0, 10)
+        .join(', ')
     : 'none captured';
 
   return [
@@ -225,9 +313,7 @@ export function buildIncidentReplayQuery(reproPack: {
     `Pack ID: ${reproPack.packId}`,
     `Action type: ${replayPayload.actionType}`,
     `Risk level: ${replayPayload.riskLevel}`,
-    replayPayload.likelyFailureMode
-      ? `Likely failure mode: ${replayPayload.likelyFailureMode}`
-      : undefined,
+    sanitizedLikelyFailureMode ? `Likely failure mode: ${sanitizedLikelyFailureMode}` : undefined,
     `Related files: ${relatedFiles}`,
     'Blocked reasons:',
     blockedReasons,
@@ -359,16 +445,9 @@ export function buildLinkSafeExportBundle(
         sensitivity,
         localProcessingMode,
         decisionArtifacts: {
-          actionId:
-            typeof entry.decisionArtifacts?.actionId === 'string' &&
-            entry.decisionArtifacts.actionId.trim().length > 0
-              ? entry.decisionArtifacts.actionId.trim()
-              : reproPack.actionId || 'incident-repro-pack',
-          reproPackId:
-            typeof entry.decisionArtifacts?.reproPackId === 'string' &&
-            entry.decisionArtifacts.reproPackId.trim().length > 0
-              ? entry.decisionArtifacts.reproPackId.trim()
-              : reproPack.packId,
+          // Keep linkage fail-safe and canonical for replay artifacts.
+          actionId: reproPack.actionId || 'incident-repro-pack',
+          reproPackId: reproPack.packId,
           releaseReadinessArtifactId:
             typeof entry.decisionArtifacts?.releaseReadinessArtifactId === 'string' &&
             entry.decisionArtifacts.releaseReadinessArtifactId.trim().length > 0
@@ -455,40 +534,16 @@ export function parseImportedReproBundle(parsed: Record<string, unknown>): {
         ? importedPack.packId.trim()
         : `imported-${Date.now().toString(36)}`,
     replayPayload: {
-      workspacePath:
-        typeof replayPayloadRaw.workspacePath === 'string' && replayPayloadRaw.workspacePath.trim()
-          ? replayPayloadRaw.workspacePath.trim()
-          : undefined,
+      workspacePath: normalizeImportedWorkspacePath(replayPayloadRaw.workspacePath),
       actionType:
         typeof replayPayloadRaw.actionType === 'string' && replayPayloadRaw.actionType.trim()
           ? replayPayloadRaw.actionType.trim()
           : 'incident-repro-pack',
       riskLevel,
-      likelyFailureMode:
-        typeof replayPayloadRaw.likelyFailureMode === 'string'
-          ? replayPayloadRaw.likelyFailureMode
-          : undefined,
-      verifyChecklist: Array.isArray(replayPayloadRaw.verifyChecklist)
-        ? replayPayloadRaw.verifyChecklist
-            .filter(
-              (entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
-            )
-            .slice(0, 10)
-        : [],
-      blockedReasons: Array.isArray(replayPayloadRaw.blockedReasons)
-        ? replayPayloadRaw.blockedReasons
-            .filter(
-              (entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
-            )
-            .slice(0, 10)
-        : [],
-      relatedFiles: Array.isArray(replayPayloadRaw.relatedFiles)
-        ? replayPayloadRaw.relatedFiles
-            .filter(
-              (entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
-            )
-            .slice(0, 12)
-        : [],
+      likelyFailureMode: sanitizeImportedReplayText(replayPayloadRaw.likelyFailureMode),
+      verifyChecklist: normalizeImportedStringList(replayPayloadRaw.verifyChecklist, 10),
+      blockedReasons: normalizeImportedStringList(replayPayloadRaw.blockedReasons, 10),
+      relatedFiles: normalizeImportedRelatedFiles(replayPayloadRaw.relatedFiles),
     },
   };
 }
