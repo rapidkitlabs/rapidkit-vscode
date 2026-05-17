@@ -93,6 +93,7 @@ import {
   normalizeIncidentRollbackApprovalMode,
   normalizeIncidentRollbackProtectedPaths,
 } from './welcomePanelIncidentPolicy';
+import { getIncidentPrimaryCtaExperimentVariant } from './welcomePanelTelemetryExperiment';
 import {
   buildWorkspaceProjectCandidatesBlock,
   resolveScopedProjectForWorkspace,
@@ -2532,17 +2533,9 @@ No markdown, no explanation outside the JSON.`;
     return undefined;
   }
 
-  private _hashSeedToNumber(seed: string): number {
-    let hash = 0;
-    for (let index = 0; index < seed.length; index += 1) {
-      hash = ((hash << 5) - hash + seed.charCodeAt(index)) | 0;
-    }
-    return Math.abs(hash);
-  }
-
   private _getIncidentPrimaryCtaExperimentVariant(workspacePath?: string): 'single' | 'multi' {
     const seed = workspacePath || this._resolveTelemetryWorkspacePath() || 'global';
-    return this._hashSeedToNumber(seed) % 2 === 0 ? 'single' : 'multi';
+    return getIncidentPrimaryCtaExperimentVariant(seed);
   }
 
   private _trackStudioEvent(
