@@ -86,103 +86,29 @@ import {
   parseImportedReproBundle,
   toLinkSafePath,
 } from './incidentReproPackUtils';
+import {
+  deriveIncidentVerifyCommandPack,
+  derivePredictionConfidenceBand,
+  isIncidentRollbackProtectedPath,
+  normalizeIncidentRollbackApprovalMode,
+  normalizeIncidentRollbackProtectedPaths,
+} from './welcomePanelIncidentPolicy';
+import {
+  buildWorkspaceProjectCandidatesBlock,
+  resolveScopedProjectForWorkspace,
+  type WorkspaceProjectDiscoveryDeps,
+} from './welcomePanelProjectDiscovery.js';
 
-type IncidentWorkspaceGraphSnapshot = {
-  snapshotVersion: 'v1';
-  workspace: {
-    path?: string;
-    name?: string;
-  };
-  project: {
-    framework: string;
-    kit: string;
-    selectedProject: {
-      path: string;
-      name?: string;
-      type?: string;
-    } | null;
-  };
-  topology: {
-    modulesCount: number;
-    topModules: string[];
-  };
-  doctor: {
-    hasEvidence: boolean;
-    generatedAt?: string;
-    health?: {
-      passed: number;
-      warnings: number;
-      errors: number;
-      total: number;
-      percent: number;
-    };
-  };
-  git: {
-    diffStat: string;
-    hasDiffContext: boolean;
-  };
-  memory: {
-    context?: string;
-    conventionsCount: number;
-    decisionsCount: number;
-    hasMemory: boolean;
-    policyProfile: 'strict' | 'balanced' | 'permissive';
-    sensitivity: 'normal' | 'sensitive';
-    localProcessingMode: boolean;
-  };
-  telemetry: {
-    totalEvents: number;
-    lastCommand: string | null;
-    onboardingFollowupClickThroughRate: number;
-  };
-  evidence: {
-    hasDoctorEvidence: boolean;
-    hasGitDiff: boolean;
-    hasWorkspaceMemory: boolean;
-    localProcessingMode: boolean;
-    projectScoped: boolean;
-  };
-  completeness: 'fresh' | 'cached' | 'partial' | 'degraded';
-  lastUpdatedAt: number;
-};
-
-type IncidentMemoryInfluenceAuditEntry = {
-  memoryEventId: string;
-  timestamp: string;
-  source: 'workspace-memory' | 'incident-replay-learning';
-  influenceKind: 'context' | 'policy' | 'decision' | 'artifact-link';
-  summary: string;
-  policyProfile: 'strict' | 'balanced' | 'permissive';
-  sensitivity: 'normal' | 'sensitive';
-  localProcessingMode: boolean;
-  decisionArtifacts: {
-    actionId: string;
-    reproPackId?: string;
-    releaseReadinessArtifactId?: string;
-  };
-};
-
-type WorkspaceMarkerSnapshot = {
-  signature?: string;
-  createdBy?: string;
-  version?: string;
-  name?: string;
-};
+import {
+  asRecord,
+  isConversationMessageEntry,
+  normalizeRequestedModelId,
+  safeErrorMessage,
+  type IncidentMemoryInfluenceAuditEntry,
+  type IncidentWorkspaceGraphSnapshot,
+} from './welcomePanel.shared.js';
 
 type DoctorEvidenceSnapshot = Awaited<ReturnType<WelcomePanel['_readDoctorEvidenceSnapshot']>>;
-
-function normalizeRequestedModelId(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') {
-    return undefined;
-  }
-
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  return trimmed;
-}
 
 export class WelcomePanel {
   private static readonly UI_PREFS_KEY = 'rapidkit.welcome.uiPreferences';
@@ -669,339 +595,25 @@ export class WelcomePanel {
     return { name: ws.name, path: ws.path };
   }
 
-  private async _readWorkspaceMarkerSnapshot(
-    workspacePath: string
-  ): Promise<WorkspaceMarkerSnapshot | undefined> {
-    try {
-      const markerPath = path.join(workspacePath, '.rapidkit-workspace');
-      if (!(await fs.pathExists(markerPath))) {
-        return undefined;
-      }
-
-      const marker = (await fs.readJSON(markerPath)) as Record<string, unknown>;
-      if (!marker || typeof marker !== 'object') {
-        return undefined;
-      }
-
-      return {
-        signature: typeof marker.signature === 'string' ? marker.signature : undefined,
-        createdBy: typeof marker.createdBy === 'string' ? marker.createdBy : undefined,
-        version: typeof marker.version === 'string' ? marker.version : undefined,
-        name: typeof marker.name === 'string' ? marker.name : undefined,
-      };
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async _discoverRapidkitProjectPaths(workspacePath: string): Promise<string[]> {
-    const discovered = new Set<string>();
-    const queue: string[] = [workspacePath];
-    const visited = new Set<string>();
-    const ignoredDirNames = new Set([
-      '.git',
-      '.hg',
-      '.svn',
-      'node_modules',
-      'dist',
-      'build',
-      'target',
-      'coverage',
-      'htmlcov',
-      '.next',
-      '.nuxt',
-    ]);
-
-    while (queue.length > 0) {
-      const currentPath = queue.shift();
-      if (!currentPath || visited.has(currentPath)) {
-        continue;
-      }
-      visited.add(currentPath);
-
-      let entries: Array<{ isDirectory: () => boolean; name: string }> = [];
-      try {
-        entries = await fs.readdir(currentPath, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-
-      for (const entry of entries) {
-        if (!entry.isDirectory()) {
-          continue;
-        }
-        if (entry.name.startsWith('.') && entry.name !== '.rapidkit') {
-          continue;
-        }
-        if (ignoredDirNames.has(entry.name)) {
-          continue;
-        }
-
-        const candidatePath = path.resolve(path.join(currentPath, entry.name));
-        if (!isWorkspacePathAncestor(workspacePath, candidatePath)) {
-          continue;
-        }
-
-        const [hasProjectJson, hasContextJson] = await Promise.all([
-          fs.pathExists(path.join(candidatePath, '.rapidkit', 'project.json')),
-          fs.pathExists(path.join(candidatePath, '.rapidkit', 'context.json')),
-        ]);
-
-        if (hasProjectJson || hasContextJson) {
-          discovered.add(candidatePath);
-        }
-
-        queue.push(candidatePath);
-      }
-    }
-
-    return [...discovered].sort((a, b) => a.localeCompare(b));
-  }
-
-  private async _rankWorkspaceProjectCandidates(
-    workspacePath: string,
-    doctorSnapshot?: DoctorEvidenceSnapshot
-  ): Promise<
-    Array<{
-      name: string;
-      path: string;
-      type?: string;
-      score: number;
-      hasRegistry: boolean;
-      fromWorkspaceRegistry: boolean;
-      modulesCount?: number;
-      evidenceSources: string[];
-    }>
-  > {
-    const selectedWorkspace = WelcomePanel._workspaceExplorer?.getSelectedWorkspace();
-    const workspaceRecord =
-      selectedWorkspace?.path === workspacePath
-        ? selectedWorkspace
-        : WelcomePanel._workspaceExplorer?.getWorkspaceByPath(workspacePath);
-
-    const candidateMap = new Map<
-      string,
-      {
-        name: string;
-        path: string;
-        fromWorkspaceRegistry: boolean;
-      }
-    >();
-
-    for (const project of workspaceRecord?.projects || []) {
-      if (!isWorkspacePathAncestor(workspacePath, project.path)) {
-        continue;
-      }
-      const normalizedPath = path.resolve(project.path);
-      candidateMap.set(normalizedPath, {
-        name: project.name || path.basename(normalizedPath),
-        path: normalizedPath,
-        fromWorkspaceRegistry: true,
-      });
-    }
-
-    for (const project of doctorSnapshot?.projects || []) {
-      if (!project.path || !isWorkspacePathAncestor(workspacePath, project.path)) {
-        continue;
-      }
-      const normalizedPath = path.resolve(project.path);
-      if (!candidateMap.has(normalizedPath)) {
-        candidateMap.set(normalizedPath, {
-          name: project.name || path.basename(normalizedPath),
-          path: normalizedPath,
-          fromWorkspaceRegistry: false,
-        });
-      }
-    }
-
-    const discoveredProjectPaths = await this._discoverRapidkitProjectPaths(workspacePath);
-    for (const discoveredPath of discoveredProjectPaths) {
-      if (!candidateMap.has(discoveredPath)) {
-        candidateMap.set(discoveredPath, {
-          name: path.basename(discoveredPath),
-          path: discoveredPath,
-          fromWorkspaceRegistry: false,
-        });
-      }
-    }
-
-    try {
-      const entries = await fs.readdir(workspacePath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) {
-          continue;
-        }
-        const projectPath = path.resolve(path.join(workspacePath, entry.name));
-        if (!candidateMap.has(projectPath)) {
-          candidateMap.set(projectPath, {
-            name: entry.name,
-            path: projectPath,
-            fromWorkspaceRegistry: false,
-          });
-        }
-      }
-    } catch {
-      // Ignore unreadable workspace directories.
-    }
-
-    const ranked: Array<{
-      name: string;
-      path: string;
-      type?: string;
-      score: number;
-      hasRegistry: boolean;
-      fromWorkspaceRegistry: boolean;
-      modulesCount?: number;
-      evidenceSources: string[];
-    }> = [];
-
-    for (const candidate of candidateMap.values()) {
-      const candidatePath = candidate.path;
-      const doctorProjectMatch = (doctorSnapshot?.projects || []).find(
-        (project) =>
-          (project.path && path.resolve(project.path) === candidatePath) ||
-          project.name.toLowerCase() === candidate.name.toLowerCase()
-      );
-
-      const [
-        hasPrimaryRegistry,
-        hasLegacyRegistry,
-        hasProjectJson,
-        hasContextJson,
-        hasPyproject,
-        hasPackageJson,
-        hasGoMod,
-        hasPom,
-        hasGradle,
-        hasGradleKts,
-        hasSrcDir,
-        hasRapidkitScript,
-        hasVenv,
-        hasNodeModules,
-      ] = await Promise.all([
-        fs.pathExists(path.join(candidatePath, 'registry.json')),
-        fs.pathExists(path.join(candidatePath, '.rapidkit', 'registry.json')),
-        fs.pathExists(path.join(candidatePath, '.rapidkit', 'project.json')),
-        fs.pathExists(path.join(candidatePath, '.rapidkit', 'context.json')),
-        fs.pathExists(path.join(candidatePath, 'pyproject.toml')),
-        fs.pathExists(path.join(candidatePath, 'package.json')),
-        fs.pathExists(path.join(candidatePath, 'go.mod')),
-        fs.pathExists(path.join(candidatePath, 'pom.xml')),
-        fs.pathExists(path.join(candidatePath, 'build.gradle')),
-        fs.pathExists(path.join(candidatePath, 'build.gradle.kts')),
-        fs.pathExists(path.join(candidatePath, 'src')),
-        fs.pathExists(path.join(candidatePath, 'rapidkit')),
-        fs.pathExists(path.join(candidatePath, '.venv')),
-        fs.pathExists(path.join(candidatePath, 'node_modules')),
-      ]);
-
-      const hasRegistry = hasPrimaryRegistry || hasLegacyRegistry;
-      const hasFrameworkMarkers =
-        hasPyproject || hasPackageJson || hasGoMod || hasPom || hasGradle || hasGradleKts;
-      const hasRuntimeReadyMarkers = hasVenv || hasNodeModules;
-      const inferredType =
-        (await WelcomePanel._detectProjectTypeStatic(candidatePath)) || undefined;
-      const modulesCount =
-        hasRegistry && !doctorProjectMatch?.modulesCount
-          ? (await WelcomePanel._readInstalledModules(candidatePath)).length
-          : doctorProjectMatch?.modulesCount;
-      const evidenceSources = new Set<string>();
-
-      let score = 0;
-      if (candidate.fromWorkspaceRegistry) {
-        score += 20;
-        evidenceSources.add('workspace-registry');
-      }
-      if (hasRegistry) {
-        score += 40;
-        evidenceSources.add('project-registry');
-      }
-      if (hasProjectJson || hasContextJson) {
-        score += 25;
-        evidenceSources.add('rapidkit-context');
-      }
-      if (inferredType) {
-        score += 30;
-      }
-      if (hasFrameworkMarkers) {
-        score += 15;
-        evidenceSources.add('framework-markers');
-      }
-      if (hasSrcDir) {
-        score += 5;
-      }
-      if (hasRapidkitScript) {
-        score += 5;
-        evidenceSources.add('rapidkit-launcher');
-      }
-      if (hasRuntimeReadyMarkers) {
-        score += 5;
-      }
-      if (typeof modulesCount === 'number' && modulesCount > 0) {
-        score += Math.min(20, modulesCount * 2);
-        evidenceSources.add('installed-modules');
-      }
-      if (doctorProjectMatch) {
-        score += 35;
-        evidenceSources.add('doctor-evidence');
-        if (doctorProjectMatch.modulesHealthy) {
-          score += 10;
-        }
-      }
-
-      if (score <= 0) {
-        continue;
-      }
-
-      ranked.push({
-        name: candidate.name,
-        path: candidatePath,
-        type: inferredType,
-        score,
-        hasRegistry,
-        fromWorkspaceRegistry: candidate.fromWorkspaceRegistry,
-        modulesCount,
-        evidenceSources: [...evidenceSources].sort((a, b) => a.localeCompare(b)),
-      });
-    }
-
-    return ranked.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  private _getWorkspaceProjectDiscoveryDeps(): WorkspaceProjectDiscoveryDeps {
+    return {
+      workspaceExplorer: WelcomePanel._workspaceExplorer,
+      detectProjectType: async (projectPath: string) =>
+        (await WelcomePanel._detectProjectTypeStatic(projectPath)) || undefined,
+      readInstalledModules: (projectPath: string) =>
+        WelcomePanel._readInstalledModules(projectPath),
+    };
   }
 
   private async _buildWorkspaceProjectCandidatesBlock(
     workspacePath: string,
     doctorSnapshot?: DoctorEvidenceSnapshot
   ): Promise<string | undefined> {
-    const markerSnapshot = await this._readWorkspaceMarkerSnapshot(workspacePath);
-    const ranked = await this._rankWorkspaceProjectCandidates(workspacePath, doctorSnapshot);
-    if (ranked.length === 0) {
-      return undefined;
-    }
-
-    const lines = ['WORKSPACE PROJECT CANDIDATES:'];
-    if (markerSnapshot?.signature || markerSnapshot?.createdBy) {
-      lines.push(
-        `- Workspace marker: signature=${markerSnapshot.signature || 'unknown'}, createdBy=${markerSnapshot.createdBy || 'unknown'}`
-      );
-    }
-    for (const candidate of ranked.slice(0, 4)) {
-      lines.push(
-        `- ${candidate.name} (${candidate.type || 'unknown'}) — path: ${candidate.path} | score: ${candidate.score} | registry: ${candidate.hasRegistry ? 'yes' : 'no'} | modules: ${candidate.modulesCount ?? 'n/a'} | evidence: ${candidate.evidenceSources.join(', ') || 'none'}`
-      );
-    }
-
-    if (ranked.length > 1) {
-      const top = ranked[0];
-      const second = ranked[1];
-      const gap = top.score - second.score;
-      lines.push(
-        gap >= 15
-          ? '- Scope confidence: clear winner detected from project signals.'
-          : '- Scope confidence: ambiguous; avoid definitive per-project claims until a target path is confirmed.'
-      );
-    }
-
-    return lines.join('\n');
+    return buildWorkspaceProjectCandidatesBlock(
+      workspacePath,
+      this._getWorkspaceProjectDiscoveryDeps(),
+      doctorSnapshot
+    );
   }
 
   private async _resolveScopedProjectForWorkspace(options?: {
@@ -1011,59 +623,10 @@ export class WelcomePanel {
     projectType?: string;
     doctorSnapshot?: DoctorEvidenceSnapshot;
   }): Promise<{ name: string; path: string; type?: string } | null> {
-    const workspacePath = options?.workspacePath;
-    if (!workspacePath) {
-      return null;
-    }
-
-    if (options?.projectPath && isWorkspacePathAncestor(workspacePath, options.projectPath)) {
-      const inferredType =
-        options.projectType ||
-        (await WelcomePanel._detectProjectTypeStatic(options.projectPath)) ||
-        undefined;
-      return {
-        name: options.projectName || path.basename(options.projectPath),
-        path: options.projectPath,
-        type: inferredType,
-      };
-    }
-
-    if (
-      WelcomePanel._selectedProject &&
-      isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
-    ) {
-      return WelcomePanel._selectedProject;
-    }
-
-    const rankedCandidates = await this._rankWorkspaceProjectCandidates(
-      workspacePath,
-      options?.doctorSnapshot
+    return resolveScopedProjectForWorkspace(
+      options || {},
+      this._getWorkspaceProjectDiscoveryDeps()
     );
-    if (rankedCandidates.length === 0) {
-      return null;
-    }
-
-    const chooseByConfidence = () => {
-      if (rankedCandidates.length === 1) {
-        return rankedCandidates[0].score >= 35 ? rankedCandidates[0] : null;
-      }
-      const top = rankedCandidates[0];
-      const second = rankedCandidates[1];
-      const scoreGap = top.score - second.score;
-      const clearWinner = top.score >= 45 && scoreGap >= 15;
-      return clearWinner ? top : null;
-    };
-
-    const candidate = chooseByConfidence();
-    if (!candidate) {
-      return null;
-    }
-
-    return {
-      name: candidate.name || path.basename(candidate.path),
-      path: candidate.path,
-      type: candidate.type,
-    };
   }
 
   /**
@@ -1432,10 +995,10 @@ No markdown, no explanation outside the JSON.`;
                 command: 'aiModuleSuggestions',
                 data: { loading: false, modelId, suggestions },
               });
-            } catch (err: any) {
+            } catch (err: unknown) {
               panel.webview.postMessage({
                 command: 'aiModuleSuggestions',
-                data: { loading: false, error: err?.message ?? 'AI unavailable' },
+                data: { loading: false, error: safeErrorMessage(err) || 'AI unavailable' },
               });
             }
             break;
@@ -1498,15 +1061,7 @@ No markdown, no explanation outside the JSON.`;
                 ? (aiCtx as import('../../core/aiService').AIModalContext)
                 : undefined;
             const conversationHistory = Array.isArray(history)
-              ? history
-                  .filter(
-                    (h: any): h is { role: 'user' | 'assistant'; content: string } =>
-                      h &&
-                      typeof h === 'object' &&
-                      (h.role === 'user' || h.role === 'assistant') &&
-                      typeof h.content === 'string'
-                  )
-                  .slice(-8)
+              ? history.filter(isConversationMessageEntry).slice(-8)
               : [];
 
             const canTrackTelemetry =
@@ -3287,23 +2842,24 @@ No markdown, no explanation outside the JSON.`;
     };
   }
 
-  private async _handleAiChatStart(data: any, requestId?: string) {
+  private async _handleAiChatStart(data: unknown, requestId?: string) {
+    const input = asRecord(data) || {};
     const resumeConversationId =
-      typeof data?.resumeConversationId === 'string' ? data.resumeConversationId : undefined;
+      typeof input.resumeConversationId === 'string' ? input.resumeConversationId : undefined;
     const conversationId = resumeConversationId || `conv-${Date.now()}`;
 
-    const workspacePath = typeof data?.workspacePath === 'string' ? data.workspacePath : undefined;
+    const workspacePath = typeof input.workspacePath === 'string' ? input.workspacePath : undefined;
     const projectPath =
-      typeof data?.projectPath === 'string' && data.projectPath.trim()
-        ? data.projectPath.trim()
+      typeof input.projectPath === 'string' && input.projectPath.trim()
+        ? input.projectPath.trim()
         : undefined;
     const projectName =
-      typeof data?.projectName === 'string' && data.projectName.trim()
-        ? data.projectName.trim()
+      typeof input.projectName === 'string' && input.projectName.trim()
+        ? input.projectName.trim()
         : undefined;
     const projectType =
-      typeof data?.projectType === 'string' && data.projectType.trim()
-        ? data.projectType.trim()
+      typeof input.projectType === 'string' && input.projectType.trim()
+        ? input.projectType.trim()
         : undefined;
     const existingConversation = resumeConversationId
       ? this._chatBrainConversations.get(resumeConversationId)
@@ -3378,8 +2934,9 @@ No markdown, no explanation outside the JSON.`;
     });
   }
 
-  private async _handleAiChatSyncWorkspace(data: any, requestId?: string) {
-    const workspacePath = typeof data?.workspacePath === 'string' ? data.workspacePath : undefined;
+  private async _handleAiChatSyncWorkspace(data: unknown, requestId?: string) {
+    const input = asRecord(data) || {};
+    const workspacePath = typeof input.workspacePath === 'string' ? input.workspacePath : undefined;
 
     // If a stream is active for another workspace, cancel it before applying sync.
     const activeConversationId = this._activeChatBrainConversationId;
@@ -3407,9 +2964,9 @@ No markdown, no explanation outside the JSON.`;
     const cacheKey = `chat-brain-workspace-graph-${workspacePath || 'default'}-${selectedProjectPath}`;
     const now = Date.now();
     const cacheTtl = 2 * 60 * 1000;
-    const forceRefresh = data?.forceRefresh === true;
+    const forceRefresh = input.forceRefresh === true;
 
-    const cached = this._context.globalState.get<{ graph: any; timestamp: number }>(cacheKey);
+    const cached = this._context.globalState.get<{ graph: unknown; timestamp: number }>(cacheKey);
     if (!forceRefresh && cached && now - cached.timestamp < cacheTtl) {
       this._panel.webview.postMessage({
         command: 'aiChatWorkspaceSynced',
@@ -4082,53 +3639,17 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private _derivePredictionConfidenceBand(confidence: number): 'low' | 'medium' | 'high' {
-    if (confidence >= 75) {
-      return 'high';
-    }
-    if (confidence >= 50) {
-      return 'medium';
-    }
-    return 'low';
+    return derivePredictionConfidenceBand(confidence);
   }
 
   private _normalizeIncidentRollbackApprovalMode(
     value: unknown
   ): 'never' | 'high-risk-only' | 'mutating-only' | 'always' {
-    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    if (
-      normalized === 'never' ||
-      normalized === 'high-risk-only' ||
-      normalized === 'mutating-only' ||
-      normalized === 'always'
-    ) {
-      return normalized;
-    }
-
-    return 'high-risk-only';
+    return normalizeIncidentRollbackApprovalMode(value);
   }
 
   private _normalizeIncidentRollbackProtectedPaths(value: unknown): string[] {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    const unique: string[] = [];
-    for (const entry of value) {
-      if (typeof entry !== 'string') {
-        continue;
-      }
-
-      const normalized = entry.trim().replace(/\\/g, '/').replace(/^\.\//, '');
-      if (!normalized || unique.includes(normalized)) {
-        continue;
-      }
-      unique.push(normalized);
-      if (unique.length >= 32) {
-        break;
-      }
-    }
-
-    return unique;
+    return normalizeIncidentRollbackProtectedPaths(value);
   }
 
   private _resolveIncidentRollbackRuntimePolicy(input: {
@@ -4182,28 +3703,7 @@ No markdown, no explanation outside the JSON.`;
     candidatePath: string,
     protectedPathPrefixes: string[]
   ): boolean {
-    const normalizedCandidate = candidatePath
-      .replace(/\\/g, '/')
-      .replace(/^\.\//, '')
-      .toLowerCase();
-
-    for (const rawPrefix of protectedPathPrefixes) {
-      const normalizedPrefix = rawPrefix.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
-
-      if (!normalizedPrefix) {
-        continue;
-      }
-
-      const basePrefix = normalizedPrefix.endsWith('/')
-        ? normalizedPrefix.slice(0, -1)
-        : normalizedPrefix;
-
-      if (normalizedCandidate === basePrefix || normalizedCandidate.startsWith(`${basePrefix}/`)) {
-        return true;
-      }
-    }
-
-    return false;
+    return isIncidentRollbackProtectedPath(candidatePath, protectedPathPrefixes);
   }
 
   private _deriveIncidentVerifyCommandPack(input: {
@@ -4238,100 +3738,7 @@ No markdown, no explanation outside the JSON.`;
     }>;
     blockedReasons: string[];
   } {
-    const commands: Array<{
-      label: string;
-      command: string;
-      scope: 'workspace' | 'project';
-      required: boolean;
-    }> = [];
-
-    const addCommand = (candidate: {
-      label: string;
-      command: string;
-      scope: 'workspace' | 'project';
-      required: boolean;
-    }) => {
-      const normalized = candidate.command.trim();
-      if (!normalized) {
-        return;
-      }
-      if (commands.some((entry) => entry.command === normalized)) {
-        return;
-      }
-      commands.push({ ...candidate, command: normalized });
-    };
-
-    addCommand({
-      label: 'Workspace doctor proof',
-      command: 'rapidkit doctor workspace',
-      scope: 'workspace',
-      required: true,
-    });
-
-    if (input.projectPath) {
-      addCommand({
-        label: 'Project scope + diff proof',
-        command: `git -C "${input.projectPath}" status --short`,
-        scope: 'project',
-        required: true,
-      });
-    }
-
-    if (input.impactAssessment.affectedTests.length > 0) {
-      const topTest = input.impactAssessment.affectedTests[0];
-      if (/\.spec\.|\.test\./i.test(topTest)) {
-        addCommand({
-          label: 'Targeted impacted test',
-          command: `vitest run "${topTest}"`,
-          scope: 'project',
-          required: false,
-        });
-      }
-    }
-
-    let qualityScore = 35;
-    if (input.releaseGateEvidence.scopeKnown) {
-      qualityScore += 20;
-    }
-    if (input.releaseGateEvidence.verifyPathPresent) {
-      qualityScore += 20;
-    }
-    if (input.releaseGateEvidence.rollbackPathPresent) {
-      qualityScore += 10;
-    }
-    if ((input.doctorEvidence?.errors ?? 0) === 0) {
-      qualityScore += 10;
-    }
-    qualityScore += Math.min(10, commands.length * 3);
-    qualityScore -= Math.min(24, input.releaseGateEvidence.blockedReasons.length * 8);
-
-    if (input.actionPolicy.requiresVerifyPath && commands.length === 0) {
-      qualityScore -= 15;
-    }
-
-    qualityScore = Math.max(0, Math.min(100, Math.round(qualityScore)));
-
-    const blockedReasons = Array.from(new Set(input.releaseGateEvidence.blockedReasons)).slice(
-      0,
-      6
-    );
-    const readiness: 'ready' | 'needs-attention' =
-      qualityScore >= 70 && blockedReasons.length === 0 ? 'ready' : 'needs-attention';
-
-    const rationale =
-      readiness === 'ready'
-        ? 'Deterministic verify path is complete and release gates are currently satisfied.'
-        : blockedReasons.length > 0
-          ? `Verify path needs attention: ${blockedReasons[0]}`
-          : 'Verify path needs attention: collect stronger deterministic evidence before completion claim.';
-
-    return {
-      qualityScore,
-      readiness,
-      rationale,
-      commands,
-      blockedReasons,
-    };
+    return deriveIncidentVerifyCommandPack(input);
   }
 
   private _buildIncidentDiagnosisEvidence(input: {
