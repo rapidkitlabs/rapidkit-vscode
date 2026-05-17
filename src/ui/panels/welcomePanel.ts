@@ -8435,14 +8435,6 @@ No markdown, no explanation outside the JSON.`;
     };
   }
 
-  private _extractVerifyCommandCandidatesFromText(text: string): string[] {
-    return extractVerifyCommandCandidatesFromText(text);
-  }
-
-  private _toSandboxVerifyCommands(candidates: string[]): SandboxVerifyCommand[] {
-    return toSandboxVerifyCommands(candidates);
-  }
-
   private _buildSandboxVerifyCommands(input: {
     actionType: string;
     inlineQuery: string;
@@ -8478,10 +8470,10 @@ No markdown, no explanation outside the JSON.`;
       .filter((entry) => entry.role === 'assistant')
       .slice(-3);
     for (const entry of assistantHistory) {
-      candidates.push(...this._extractVerifyCommandCandidatesFromText(entry.content));
+      candidates.push(...extractVerifyCommandCandidatesFromText(entry.content));
     }
 
-    candidates.push(...this._extractVerifyCommandCandidatesFromText(input.inlineQuery));
+    candidates.push(...extractVerifyCommandCandidatesFromText(input.inlineQuery));
 
     // Add deterministic verify-pack profile commands as stable fallback candidates.
     const verifyPackPlan = buildVerifyPackPlan({
@@ -8499,7 +8491,7 @@ No markdown, no explanation outside the JSON.`;
       candidates.push(fallbackByActionType[input.actionType]);
     }
 
-    return this._toSandboxVerifyCommands(candidates);
+    return toSandboxVerifyCommands(candidates);
   }
 
   private async _sendModulesCatalog() {
