@@ -202,7 +202,7 @@ export class WelcomePanel {
   private static _pendingModal: string | null = null;
   private static _pendingAICreateMode: 'workspace' | 'project' = 'workspace';
   /** Module data queued to show as install modal after webview becomes ready */
-  private static _pendingModuleModal: any | null = null;
+  private static _pendingModuleModal: ModuleData | null = null;
   /** AI modal context queued to show after webview becomes ready */
   private static _pendingAIModal: import('../../core/aiService').AIModalContext | null = null;
   /** Incident Studio open request queued until webview is ready */
@@ -269,7 +269,7 @@ export class WelcomePanel {
    * Open the welcome panel and immediately show the module install modal.
    * Safe to call whether the panel is open or not.
    */
-  public static showModuleInstallModal(moduleData: any): void {
+  public static showModuleInstallModal(moduleData: ModuleData): void {
     const context = WelcomePanel._extensionContext;
     if (!context) {
       return;

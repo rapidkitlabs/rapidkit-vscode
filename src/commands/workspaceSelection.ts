@@ -32,6 +32,15 @@ type ModuleExplorerLike = {
   setProjectPath: (projectPath: string, projectType: string) => void;
 };
 
+type WorkspaceCommandItem = {
+  workspace?: WorkspaceLike;
+  path?: string;
+};
+
+type ProjectCommandItem = {
+  project?: ProjectLike;
+} & Partial<ProjectLike>;
+
 function resolveWorkspacePathFromItem(item: unknown): string | undefined {
   if (typeof item === 'string') {
     return item;
@@ -44,6 +53,46 @@ function resolveWorkspacePathFromItem(item: unknown): string | undefined {
   const treeItem = item as WorkspaceTreeItemLike;
   const candidate = treeItem.workspace?.path ?? treeItem.path;
   return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+}
+
+function resolveWorkspaceFromItem(
+  item: unknown,
+  workspaceExplorer?: WorkspaceExplorerLike
+): WorkspaceLike | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+
+  const typedItem = item as WorkspaceCommandItem;
+  if (typedItem.workspace?.path) {
+    return typedItem.workspace;
+  }
+
+  const workspacePath = resolveWorkspacePathFromItem(item);
+  if (!workspacePath || !workspaceExplorer) {
+    return undefined;
+  }
+
+  return workspaceExplorer.getWorkspaceByPath(workspacePath) ?? undefined;
+}
+
+function resolveProjectFromItem(item: unknown): ProjectLike | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+
+  const typedItem = item as ProjectCommandItem;
+  const projectCandidate = typedItem.project ?? typedItem;
+
+  if (
+    typeof projectCandidate.path === 'string' &&
+    typeof projectCandidate.name === 'string' &&
+    typeof projectCandidate.type === 'string'
+  ) {
+    return projectCandidate as ProjectLike;
+  }
+
+  return undefined;
 }
 
 export function registerWorkspaceSelectionCommands(options: {
@@ -143,7 +192,7 @@ export function registerWorkspaceSelectionCommands(options: {
       await getWorkspaceExplorer()?.importWorkspace();
     }),
 
-    vscode.commands.registerCommand('workspai.removeWorkspace', async (item: any) => {
+    vscode.commands.registerCommand('workspai.removeWorkspace', async (item: unknown) => {
       const workspacePath = resolveWorkspacePathFromItem(item);
       if (workspacePath && typeof workspacePath === 'string') {
         const workspaceExplorer = getWorkspaceExplorer();
@@ -157,14 +206,9 @@ export function registerWorkspaceSelectionCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.exportWorkspace', async (item: any) => {
+    vscode.commands.registerCommand('workspai.exportWorkspace', async (item: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
-      let workspace = item?.workspace;
-
-      const workspacePath = resolveWorkspacePathFromItem(item);
-      if (!workspace && workspacePath && workspaceExplorer) {
-        workspace = workspaceExplorer.getWorkspaceByPath(workspacePath);
-      }
+      const workspace = resolveWorkspaceFromItem(item, workspaceExplorer);
 
       if (workspace && workspaceExplorer) {
         await workspaceExplorer.exportWorkspace(workspace);
@@ -175,11 +219,11 @@ export function registerWorkspaceSelectionCommands(options: {
       await getWorkspaceExplorer()?.autoDiscover();
     }),
 
-    vscode.commands.registerCommand('workspai.selectProject', async (item: any) => {
+    vscode.commands.registerCommand('workspai.selectProject', async (item: unknown) => {
       const projectExplorer = getProjectExplorer();
       const moduleExplorer = getModuleExplorer();
       const workspaceExplorer = getWorkspaceExplorer();
-      const project = item?.project ?? item;
+      const project = resolveProjectFromItem(item);
 
       if (project?.path && projectExplorer) {
         projectExplorer.setSelectedProject(project);
@@ -202,21 +246,21 @@ export function registerWorkspaceSelectionCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.openWorkspaceFolder', async (item: any) => {
+    vscode.commands.registerCommand('workspai.openWorkspaceFolder', async (item: unknown) => {
       const workspacePath = resolveWorkspacePathFromItem(item);
       if (workspacePath && typeof workspacePath === 'string') {
         await openWorkspaceFolder(workspacePath);
       }
     }),
 
-    vscode.commands.registerCommand('workspai.openWorkspace', async (item: any) => {
+    vscode.commands.registerCommand('workspai.openWorkspace', async (item: unknown) => {
       const workspacePath = resolveWorkspacePathFromItem(item);
       if (workspacePath && typeof workspacePath === 'string') {
         await openWorkspace(workspacePath);
       }
     }),
 
-    vscode.commands.registerCommand('workspai.copyWorkspacePath', async (item: any) => {
+    vscode.commands.registerCommand('workspai.copyWorkspacePath', async (item: unknown) => {
       const workspacePath = resolveWorkspacePathFromItem(item);
       if (workspacePath && typeof workspacePath === 'string') {
         await copyWorkspacePath(workspacePath);
