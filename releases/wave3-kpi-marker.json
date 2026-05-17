@@ -50,31 +50,87 @@
                     },
                     {
                         "command": "workspai.studio.verify_passed",
-                        "at": "2026-04-28T10:02:00.000Z"
+                        "at": "2026-04-28T10:02:00.000Z",
+                        "props": {
+                            "actionId": "act-verify-1",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": true,
+                            "verifyRequired": true,
+                            "verifyPathPresent": true,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.verify_passed",
-                        "at": "2026-04-28T10:02:01.000Z"
+                        "at": "2026-04-28T10:02:01.000Z",
+                        "props": {
+                            "actionId": "act-verify-2",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": true,
+                            "verifyRequired": true,
+                            "verifyPathPresent": true,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.verify_passed",
-                        "at": "2026-04-28T10:02:02.000Z"
+                        "at": "2026-04-28T10:02:02.000Z",
+                        "props": {
+                            "actionId": "act-verify-3",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": true,
+                            "verifyRequired": true,
+                            "verifyPathPresent": true,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.verify_passed",
-                        "at": "2026-04-28T10:02:03.000Z"
+                        "at": "2026-04-28T10:02:03.000Z",
+                        "props": {
+                            "actionId": "act-verify-4",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": true,
+                            "verifyRequired": true,
+                            "verifyPathPresent": true,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.verify_failed",
-                        "at": "2026-04-28T10:02:04.000Z"
+                        "at": "2026-04-28T10:02:04.000Z",
+                        "props": {
+                            "actionId": "act-verify-5",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": false,
+                            "verifyRequired": true,
+                            "verifyPathPresent": false,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.verify_failed",
-                        "at": "2026-04-28T10:02:05.000Z"
+                        "at": "2026-04-28T10:02:05.000Z",
+                        "props": {
+                            "actionId": "act-verify-6",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": false,
+                            "verifyRequired": true,
+                            "verifyPathPresent": false,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.verify_failed",
-                        "at": "2026-04-28T10:02:06.000Z"
+                        "at": "2026-04-28T10:02:06.000Z",
+                        "props": {
+                            "actionId": "act-verify-7",
+                            "actionType": "apply-debug-patch",
+                            "verifyReady": false,
+                            "verifyRequired": true,
+                            "verifyPathPresent": false,
+                            "projectPath": "/workspace/app"
+                        }
                     },
                     {
                         "command": "workspai.studio.rollback_attempted",

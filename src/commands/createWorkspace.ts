@@ -21,6 +21,7 @@ import { runCommandsInTerminal, runShellCommandInTerminal } from '../utils/termi
 
 export async function createWorkspaceCommand(workspaceName?: string | Record<string, unknown>) {
   const logger = Logger.getInstance();
+  const PYTHON_REQUIRED_PROFILES = new Set(['python-only', 'polyglot', 'enterprise']);
   logger.info(
     'Create Workspace command initiated',
     workspaceName ? `with name: ${workspaceName}` : ''
@@ -60,69 +61,18 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
       }
     );
 
-    // Redirect to Setup Panel if Python is missing
+    // Python checks are advisory here. We enforce/confirm later based on selected profile.
     if (!pythonCheck.available) {
-      logger.warn('Python not installed - redirecting to Setup Panel');
-
-      vscode.window
-        .showInformationMessage(
-          '⚙️ Setup Required\n\n' +
-            'Python 3.10+ is required to create workspaces. Opening setup panel...',
-          'Open Setup'
-        )
-        .then((choice) => {
-          if (choice === 'Open Setup') {
-            vscode.commands.executeCommand('workspai.openSetup');
-          }
-        });
-
-      // Also auto-open Setup Panel
-      await vscode.commands.executeCommand('workspai.openSetup');
-      return;
+      logger.warn('Python not detected in pre-check; continuing with profile-aware flow');
+    } else if (!pythonCheck.meetsMinimumVersion) {
+      logger.warn(
+        `Python version ${pythonCheck.version} is below minimum; continuing with profile-aware flow`
+      );
+    } else if (!pythonCheck.venvSupport) {
+      logger.warn('Python venv support missing in pre-check; continuing with profile-aware flow');
+    } else {
+      logger.info(`Python ${pythonCheck.version} is available with venv support`);
     }
-
-    if (!pythonCheck.meetsMinimumVersion) {
-      logger.warn('Python version too old - redirecting to Setup Panel');
-
-      vscode.window
-        .showWarningMessage(
-          '⚙️ Python Upgrade Required\n\n' +
-            `Found: ${pythonCheck.version}\n` +
-            'Required: Python 3.10+\n\n' +
-            'Opening setup panel for details...',
-          'Open Setup'
-        )
-        .then((choice) => {
-          if (choice === 'Open Setup') {
-            vscode.commands.executeCommand('workspai.openSetup');
-          }
-        });
-
-      await vscode.commands.executeCommand('workspai.openSetup');
-      return;
-    }
-
-    if (!pythonCheck.venvSupport) {
-      logger.warn('Python venv missing - redirecting to Setup Panel');
-
-      vscode.window
-        .showWarningMessage(
-          '⚙️ Python venv Required\n\n' +
-            `${pythonCheck.error}\n\n` +
-            'Opening setup panel for installation guidance...',
-          'Open Setup'
-        )
-        .then((choice) => {
-          if (choice === 'Open Setup') {
-            vscode.commands.executeCommand('workspai.openSetup');
-          }
-        });
-
-      await vscode.commands.executeCommand('workspai.openSetup');
-      return;
-    }
-
-    logger.info(`Python ${pythonCheck.version} is available with venv support`);
 
     const modalConfig =
       typeof workspaceName === 'object' && workspaceName !== null ? (workspaceName as any) : null;
@@ -344,6 +294,44 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
     if (config.installMethod && config.installMethod !== 'auto') {
       logger.info(`Wizard override: install method → ${config.installMethod}`);
       chosenInstallMethod = config.installMethod as 'poetry' | 'venv' | 'pipx';
+    }
+
+    // Profile-aware Python enforcement: only gate Python-required profiles.
+    const selectedProfile = (config.profile || 'minimal') as string;
+    const requiresPython = PYTHON_REQUIRED_PROFILES.has(selectedProfile);
+    const pythonReady =
+      !!pythonCheck?.available && !!pythonCheck?.meetsMinimumVersion && !!pythonCheck?.venvSupport;
+
+    if (requiresPython && !pythonReady) {
+      const issueDetails = !pythonCheck?.available
+        ? 'Python 3.10+ was not detected on this system.'
+        : !pythonCheck?.meetsMinimumVersion
+          ? `Python ${pythonCheck?.version ?? 'unknown'} detected, but 3.10+ is required.`
+          : pythonCheck?.error || 'Python venv support is missing.';
+
+      const choice = await vscode.window.showWarningMessage(
+        `⚠️ Profile "${selectedProfile}" typically needs Python tooling.\n\n` +
+          `${issueDetails}\n\n` +
+          `Continue anyway? RapidKit CLI can auto-fallback to a compatible profile if needed.`,
+        { modal: true },
+        'Continue',
+        'Open Setup',
+        'Cancel'
+      );
+
+      if (choice === 'Open Setup') {
+        await vscode.commands.executeCommand('workspai.openSetup');
+        return;
+      }
+
+      if (choice !== 'Continue') {
+        logger.info('User cancelled workspace creation at Python profile confirmation');
+        return;
+      }
+
+      logger.warn(
+        `Proceeding with Python-required profile ${selectedProfile} despite missing prerequisites; npm CLI fallback may adjust profile.`
+      );
     }
 
     // Execute with progress

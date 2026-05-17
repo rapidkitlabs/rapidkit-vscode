@@ -159,7 +159,7 @@ export class WorkspaceWizard {
         {
           label: '$(package) Poetry',
           description: 'Force Poetry as the dependency manager',
-          detail: 'Workspace creation will fail if Poetry is not installed',
+          detail: 'If Poetry is not available, CLI can fallback to a compatible setup',
           value: 'poetry',
         },
         {

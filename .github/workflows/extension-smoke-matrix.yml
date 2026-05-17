@@ -44,6 +44,9 @@ jobs:
       - name: Shared parity contract snapshot
         run: npm run test:parity-contract
 
+      - name: Stabilization debt budget
+        run: npm run stabilization:debt-budget
+
       - name: Open issue severity report
         env:
           GITHUB_TOKEN: ${{ github.token }}

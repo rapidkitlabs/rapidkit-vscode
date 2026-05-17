@@ -32,6 +32,17 @@ function summarizeC06Health(input: {
 
 type WorkspaceHealthAction = 'check' | 'fix' | 'compliance' | 'version' | 'upgrade';
 type WorkspaceRunStage = 'init' | 'test' | 'build' | 'start';
+type WorkspaceBootstrapProfile =
+  | 'minimal'
+  | 'python-only'
+  | 'node-only'
+  | 'go-only'
+  | 'java-only'
+  | 'polyglot'
+  | 'enterprise';
+
+type ProfileQuickPickItem = vscode.QuickPickItem & { value: WorkspaceBootstrapProfile };
+type RuntimeQuickPickItem = vscode.QuickPickItem & { value: 'python' | 'node' | 'go' | 'java' };
 
 function toSafePathHint(rawPath: string): string {
   const normalized = rawPath.replace(/\\/g, '/').trim();
@@ -315,7 +326,7 @@ export function registerWorkspaceOperationsCommands(options: {
         return;
       }
       const wsName = workspaceName || path.basename(workspacePath);
-      const profile = await vscode.window.showQuickPick(
+      const profile = await vscode.window.showQuickPick<ProfileQuickPickItem>(
         [
           {
             label: '$(zap) minimal',
@@ -368,17 +379,23 @@ export function registerWorkspaceOperationsCommands(options: {
         const fsBootstrap = await import('fs-extra');
         if (await fsBootstrap.default.pathExists(manifestPath)) {
           const manifest = await fsBootstrap.default.readJSON(manifestPath);
-          manifest.profile = (profile as any).value;
+          manifest.profile = profile.value;
           await fsBootstrap.default.writeJSON(manifestPath, manifest, { spaces: 2 });
         }
       } catch (error) {
-        void error;
+        logger.warn('Failed to update workspace profile in manifest', {
+          code: 'WORKSPACE_MANIFEST_PROFILE_UPDATE_FAILED',
+          workspacePath: toSafePathHint(workspacePath),
+          manifestPath: toSafePathHint(manifestPath),
+          error: error instanceof Error ? error.message : String(error),
+          isRecoverable: true,
+        });
       }
 
       runRapidkitCommandsInTerminal({
         name: `Workspai: Bootstrap — ${wsName}`,
         cwd: workspacePath,
-        commands: [['bootstrap', '--profile', (profile as any).value]],
+        commands: [['bootstrap', '--profile', profile.value]],
       });
     }),
 
@@ -392,7 +409,7 @@ export function registerWorkspaceOperationsCommands(options: {
         return;
       }
       const wsName = workspaceName || path.basename(workspacePath);
-      const runtime = await vscode.window.showQuickPick(
+      const runtime = await vscode.window.showQuickPick<RuntimeQuickPickItem>(
         [
           {
             label: '$(symbol-namespace) python',
@@ -430,7 +447,7 @@ export function registerWorkspaceOperationsCommands(options: {
         env: {
           RAPIDKIT_ENABLE_RUNTIME_ADAPTERS: '1',
         },
-        commands: [['setup', (runtime as any).value]],
+        commands: [['setup', runtime.value]],
       });
     }),
 

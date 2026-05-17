@@ -6,6 +6,7 @@ import { openWorkspace, openWorkspaceFolder, copyWorkspacePath } from './workspa
 
 type WorkspaceLike = { path: string; name?: string };
 type ProjectLike = { path: string; name: string; type: string; workspacePath?: string };
+type WorkspaceTreeItemLike = { path?: unknown; workspace?: { path?: unknown } };
 
 type WorkspaceExplorerLike = {
   refresh: () => void;
@@ -40,7 +41,8 @@ function resolveWorkspacePathFromItem(item: unknown): string | undefined {
     return undefined;
   }
 
-  const candidate = (item as any).workspace?.path ?? (item as any).path;
+  const treeItem = item as WorkspaceTreeItemLike;
+  const candidate = treeItem.workspace?.path ?? treeItem.path;
   return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
 }
 
@@ -116,7 +118,12 @@ export function registerWorkspaceSelectionCommands(options: {
         const catalogService = ModulesCatalogService.getInstance();
         await catalogService.invalidateCache(workspacePath);
       } catch (error) {
-        void error;
+        logger.warn('Workspace catalog cache invalidation failed', {
+          code: 'WORKSPACE_CATALOG_INVALIDATE_FAILED',
+          workspacePath,
+          error: error instanceof Error ? error.message : String(error),
+          isRecoverable: true,
+        });
       }
 
       await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', true);

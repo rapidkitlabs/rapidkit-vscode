@@ -374,7 +374,7 @@ describe('contract drift guard', () => {
     const operationsSource = `${extensionSource}\n${workspaceOpsSource}`;
 
     expect(operationsSource).toContain("commands: [['bootstrap', '--profile'");
-    expect(operationsSource).toContain("commands: [['setup', (runtime as any).value]]");
+    expect(operationsSource).toContain("commands: [['setup', runtime.value]]");
     expect(operationsSource).toContain("commands: [['workspace', 'run', 'init']]");
     expect(operationsSource).toContain("commands: [['workspace', 'run', stage, ...flags]]");
 

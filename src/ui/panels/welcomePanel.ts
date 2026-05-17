@@ -1793,8 +1793,7 @@ No markdown, no explanation outside the JSON.`;
                 await vscode.commands.executeCommand('workspai.createWorkspace', wsConfig);
 
                 // Compute the expected workspace path (always created under ~/Workspai/rapidkits/<name>)
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const os = require('os') as typeof import('os');
+                const os = await import('os');
                 const wsPath = path.join(os.homedir(), 'Workspai', 'rapidkits', plan.workspaceName);
                 const wsExists = await fs.pathExists(wsPath);
 
@@ -1839,10 +1838,11 @@ No markdown, no explanation outside the JSON.`;
                 // the webview via plan.targetWorkspacePath) so we don't silently create in a
                 // different workspace if the user changed the sidebar selection while the modal
                 // was open.
+                const typedPlan = plan as { targetWorkspacePath?: unknown };
                 const workspacePath: string | undefined =
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (plan as any).targetWorkspacePath ||
-                  WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path;
+                  (typeof typedPlan.targetWorkspacePath === 'string'
+                    ? typedPlan.targetWorkspacePath
+                    : undefined) || WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path;
                 const { createProjectCommand } = await import('../../commands/createProject.js');
                 await createProjectCommand(
                   workspacePath,
