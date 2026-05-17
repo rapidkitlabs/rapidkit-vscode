@@ -7821,17 +7821,6 @@ No markdown, no explanation outside the JSON.`;
     return undefined;
   }
 
-  private _normalizeIncidentStudioDisplayMode(value: unknown): 'lite' | 'full' {
-    return normalizeIncidentStudioDisplayMode(value);
-  }
-
-  private _getIncidentStudioDisplayMode(
-    prefs: Record<string, unknown>,
-    workspacePath?: string
-  ): 'lite' | 'full' {
-    return getIncidentStudioDisplayMode(prefs, workspacePath);
-  }
-
   private _getUiPreferences(workspacePath?: string): {
     setupStatusCardHidden: boolean;
     incidentUserMode: 'guided' | 'standard' | 'expert';
@@ -7849,7 +7838,7 @@ No markdown, no explanation outside the JSON.`;
     return {
       setupStatusCardHidden: prefs?.setupStatusCardHidden === true,
       incidentUserMode,
-      incidentStudioDisplayMode: this._getIncidentStudioDisplayMode(prefs, workspacePath),
+      incidentStudioDisplayMode: getIncidentStudioDisplayMode(prefs, workspacePath),
       incidentAutoLearningPrompt: prefs?.incidentAutoLearningPrompt !== false,
       incidentPrimaryCtaExperimentVariant: this._getIncidentPrimaryCtaExperimentVariant(),
       incidentRollbackApprovalMode: this._normalizeIncidentRollbackApprovalMode(
@@ -7878,7 +7867,7 @@ No markdown, no explanation outside the JSON.`;
 
     if (key === 'incidentStudioDisplayMode') {
       const resolvedWorkspacePath = this._resolveUiPreferenceWorkspacePath(workspacePath);
-      const normalizedDisplayMode = this._normalizeIncidentStudioDisplayMode(value);
+      const normalizedDisplayMode = normalizeIncidentStudioDisplayMode(value);
       const existingByWorkspace =
         current?.incidentStudioDisplayModeByWorkspace &&
         typeof current.incidentStudioDisplayModeByWorkspace === 'object'
