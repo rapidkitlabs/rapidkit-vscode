@@ -24,6 +24,51 @@ type ProjectExplorerLike = {
   refresh: () => void;
 };
 
+type ProjectCommandItem = {
+  project?: {
+    path?: unknown;
+    name?: unknown;
+    type?: unknown;
+  };
+  projectPath?: unknown;
+  preferredAction?: unknown;
+};
+
+type ProjectCommandTarget = {
+  projectPath?: string;
+  projectName: string;
+  projectType: string;
+  preferredAction?: string;
+};
+
+function resolveProjectCommandTarget(item: unknown): ProjectCommandTarget {
+  const typed = item && typeof item === 'object' ? (item as ProjectCommandItem) : undefined;
+
+  const projectPathCandidate = typed?.project?.path ?? typed?.projectPath;
+  const projectNameCandidate = typed?.project?.name;
+  const projectTypeCandidate = typed?.project?.type;
+  const preferredActionCandidate = typed?.preferredAction;
+
+  return {
+    projectPath:
+      typeof projectPathCandidate === 'string' && projectPathCandidate.length > 0
+        ? projectPathCandidate
+        : undefined,
+    projectName:
+      typeof projectNameCandidate === 'string' && projectNameCandidate.length > 0
+        ? projectNameCandidate
+        : 'Project',
+    projectType:
+      typeof projectTypeCandidate === 'string' && projectTypeCandidate.length > 0
+        ? projectTypeCandidate
+        : 'fastapi',
+    preferredAction:
+      typeof preferredActionCandidate === 'string' && preferredActionCandidate.length > 0
+        ? preferredActionCandidate
+        : undefined,
+  };
+}
+
 export function registerProjectLifecycleCommands(options: {
   logger: Logger;
   runningServers: Map<string, vscode.Terminal>;
@@ -32,21 +77,19 @@ export function registerProjectLifecycleCommands(options: {
   const { logger, runningServers, getProjectExplorer } = options;
 
   return [
-    vscode.commands.registerCommand('workspai.projectTerminal', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
+    vscode.commands.registerCommand('workspai.projectTerminal', async (item: unknown) => {
+      const { projectPath, projectName } = resolveProjectCommandTarget(item);
       if (projectPath) {
         openTerminal({
-          name: `Workspai: ${item?.project?.name || 'Project'}`,
+          name: `Workspai: ${projectName}`,
           cwd: projectPath,
         });
         logger.info(`Opened terminal for project: ${projectPath}`);
       }
     }),
 
-    vscode.commands.registerCommand('workspai.projectInit', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
-      const projectName = item?.project?.name || 'Project';
-      const projectType = item?.project?.type || 'fastapi';
+    vscode.commands.registerCommand('workspai.projectInit', async (item: unknown) => {
+      const { projectPath, projectName, projectType } = resolveProjectCommandTarget(item);
 
       if (projectPath) {
         runRapidkitCommandsInTerminal({
@@ -65,10 +108,8 @@ export function registerProjectLifecycleCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.projectDev', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
-      const projectName = item?.project?.name || 'Project';
-      const projectType = item?.project?.type || 'fastapi';
+    vscode.commands.registerCommand('workspai.projectDev', async (item: unknown) => {
+      const { projectPath, projectName, projectType } = resolveProjectCommandTarget(item);
 
       if (projectPath) {
         const fs = await import('fs');
@@ -364,9 +405,8 @@ export function registerProjectLifecycleCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.projectStop', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
-      const projectName = item?.project?.name || 'Project';
+    vscode.commands.registerCommand('workspai.projectStop', async (item: unknown) => {
+      const { projectPath, projectName } = resolveProjectCommandTarget(item);
       if (projectPath) {
         const existingTerminal = runningServers.get(projectPath);
         if (existingTerminal) {
@@ -386,9 +426,8 @@ export function registerProjectLifecycleCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.projectTest', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
-      const projectName = item?.project?.name || 'Project';
+    vscode.commands.registerCommand('workspai.projectTest', async (item: unknown) => {
+      const { projectPath, projectName } = resolveProjectCommandTarget(item);
 
       if (projectPath) {
         runRapidkitCommandsInTerminal({
@@ -401,9 +440,8 @@ export function registerProjectLifecycleCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.projectDoctor', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
-      const projectName = item?.project?.name || 'Project';
+    vscode.commands.registerCommand('workspai.projectDoctor', async (item: unknown) => {
+      const { projectPath, projectName, preferredAction } = resolveProjectCommandTarget(item);
 
       if (!projectPath) {
         vscode.window.showErrorMessage(
@@ -412,12 +450,11 @@ export function registerProjectLifecycleCommands(options: {
         return;
       }
 
-      const preferredAction =
-        typeof item?.preferredAction === 'string' ? item.preferredAction.trim().toLowerCase() : '';
+      const normalizedPreferredAction = preferredAction?.trim().toLowerCase() ?? '';
 
       let action: 'check' | 'fix' | undefined;
-      if (preferredAction === 'check' || preferredAction === 'fix') {
-        action = preferredAction;
+      if (normalizedPreferredAction === 'check' || normalizedPreferredAction === 'fix') {
+        action = normalizedPreferredAction;
       } else {
         const selected = await vscode.window.showQuickPick(
           [
@@ -455,9 +492,8 @@ export function registerProjectLifecycleCommands(options: {
       logger.info(`Running project doctor (${action}) for project: ${projectPath}`);
     }),
 
-    vscode.commands.registerCommand('workspai.projectBrowser', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
-      const projectType = item?.project?.type || 'fastapi';
+    vscode.commands.registerCommand('workspai.projectBrowser', async (item: unknown) => {
+      const { projectPath, projectType } = resolveProjectCommandTarget(item);
       const isFastAPI = projectType === 'fastapi';
       const isSpringBootProject = projectType === 'springboot';
 

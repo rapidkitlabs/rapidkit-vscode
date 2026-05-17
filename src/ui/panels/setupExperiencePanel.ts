@@ -4,6 +4,10 @@
  */
 
 import * as vscode from 'vscode';
+import { constants as fsConstants, readFileSync } from 'fs';
+import * as https from 'https';
+import * as os from 'os';
+import * as path from 'path';
 import { runCommandsInTerminal, runRapidkitCommandsInTerminal } from '../../utils/terminalExecutor';
 import { run } from '../../utils/exec';
 
@@ -249,7 +253,7 @@ export class SetupPanel {
                 saveLabel: 'Export setup report',
                 filters: { JSON: ['json'] },
                 defaultUri: vscode.Uri.file(
-                  `${require('os').homedir()}/workspai-setup-report-${Date.now()}.json`
+                  `${os.homedir()}/workspai-setup-report-${Date.now()}.json`
                 ),
               });
 
@@ -894,7 +898,7 @@ export class SetupPanel {
   /**
    * Safely post a message to the webview if it hasn't been disposed
    */
-  private _safePostMessage(message: any): void {
+  private _safePostMessage(message: unknown): void {
     if (!this._isDisposing && this._panel && this._panel.webview) {
       try {
         this._panel.webview.postMessage(message);
@@ -1681,13 +1685,17 @@ export class SetupPanel {
       }
     }
 
-    const fetchJson = (url: string): Promise<any> => {
+    const fetchJson = (url: string): Promise<Record<string, unknown>> => {
       return new Promise((resolve, reject) => {
-        const https = require('https');
         https
-          .get(url, (res: any) => {
+          .get(url, (res) => {
             if (res.statusCode === 301 || res.statusCode === 302) {
-              fetchJson(res.headers.location).then(resolve).catch(reject);
+              const redirectLocation = res.headers.location;
+              if (!redirectLocation) {
+                reject(new Error('Missing redirect location header.'));
+                return;
+              }
+              fetchJson(redirectLocation).then(resolve).catch(reject);
               return;
             }
             if (res.statusCode !== 200) {
@@ -1700,7 +1708,12 @@ export class SetupPanel {
             });
             res.on('end', () => {
               try {
-                resolve(JSON.parse(data));
+                const parsed = JSON.parse(data);
+                if (!parsed || typeof parsed !== 'object') {
+                  reject(new Error('Invalid JSON payload.'));
+                  return;
+                }
+                resolve(parsed as Record<string, unknown>);
               } catch (e) {
                 reject(e);
               }
@@ -1722,7 +1735,8 @@ export class SetupPanel {
       } catch {
         try {
           const data = await fetchJson('https://registry.npmjs.org/rapidkit/latest');
-          status.latestNpmVersion = data.version;
+          status.latestNpmVersion =
+            typeof data.version === 'string' ? data.version : status.latestNpmVersion;
         } catch {
           // ignore
         }
@@ -1731,7 +1745,9 @@ export class SetupPanel {
       try {
         const data = await fetchJson('https://pypi.org/pypi/rapidkit-core/json');
 
-        const releases = Object.keys(data.releases || {});
+        const releasesObject =
+          data.releases && typeof data.releases === 'object' ? data.releases : {};
+        const releases = Object.keys(releasesObject);
         if (releases.length > 0) {
           const stableVersions: string[] = [];
           const prereleaseVersions: string[] = [];
@@ -1770,8 +1786,13 @@ export class SetupPanel {
           }
 
           // Fallback: use PyPI's reported latest
-          if (data.info && data.info.version) {
-            const reported = data.info.version;
+          const infoRecord =
+            data.info && typeof data.info === 'object'
+              ? (data.info as Record<string, unknown>)
+              : undefined;
+          const reported =
+            infoRecord && typeof infoRecord.version === 'string' ? infoRecord.version : undefined;
+          if (reported) {
             if (reported.match(/\d+\.\d+\.\d+$/)) {
               status.latestCoreStable = reported;
             }
@@ -1820,8 +1841,6 @@ export class SetupPanel {
   }
 
   private _getDefaultProfileForShell(shellName: string): string | undefined {
-    const os = require('os');
-    const path = require('path');
     const home = os.homedir();
 
     if (process.platform === 'win32') {
@@ -1842,7 +1861,6 @@ export class SetupPanel {
   }
 
   private _resolveShellProfile() {
-    const path = require('path');
     const shellRaw = process.env.SHELL || process.env.COMSPEC || 'unknown';
     const shellName = process.platform === 'win32' ? 'powershell' : path.basename(shellRaw);
     const targetFile = this._getDefaultProfileForShell(shellName);
@@ -1854,7 +1872,6 @@ export class SetupPanel {
   }
 
   private _getPathDoctorEntries(): string[] {
-    const path = require('path');
     const rawPath = process.env.PATH || '';
     return rawPath
       .split(path.delimiter)
@@ -1863,9 +1880,6 @@ export class SetupPanel {
   }
 
   private _commonPathEntries(): string[] {
-    const os = require('os');
-    const path = require('path');
-
     if (process.platform === 'win32') {
       const javaHome = process.env.JAVA_HOME;
       return [
@@ -1955,7 +1969,6 @@ export class SetupPanel {
     report: PathDoctorReport,
     manualPath?: string
   ): string[] {
-    const path = require('path');
     const commands: string[] = [];
     const targetFile = report.targetFile;
 
@@ -2058,7 +2071,7 @@ export class SetupPanel {
 
     if (process.platform !== 'win32') {
       try {
-        await fs.access(normalized, require('fs').constants.X_OK);
+        await fs.access(normalized, fsConstants.X_OK);
       } catch {
         return {
           tool,
@@ -2312,7 +2325,6 @@ export class SetupPanel {
   }
 
   private _getReactHtmlContent(context: vscode.ExtensionContext): string {
-    const fs = require('fs');
     const rapidkitIconUri = this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(context.extensionUri, 'media', 'icons', 'rapidkit.svg')
     );
@@ -2343,7 +2355,7 @@ export class SetupPanel {
     const cssFilePath = vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview.css').fsPath;
     let inlineCss = '';
     try {
-      inlineCss = fs.readFileSync(cssFilePath, 'utf8');
+      inlineCss = readFileSync(cssFilePath, 'utf8');
     } catch {
       inlineCss = '';
     }

@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import path from 'path';
 import { ActionsWebviewProvider } from './ui/webviews/actionsWebviewProvider';
 import { WorkspaceExplorerProvider } from './ui/treeviews/workspaceExplorer';
 import {
@@ -52,6 +53,7 @@ import {
   buildWorkspaceShareBundleDashboardSummary,
   parseWorkspaceShareBundle,
 } from './utils/workspaceShareBundle';
+import { WorkspaiWorkspace } from './types';
 
 let statusBar: WorkspaiStatusBar;
 let actionsWebviewProvider: ActionsWebviewProvider;
@@ -68,6 +70,63 @@ const AI_ONBOARDING_VERSION = '0.20.0-ai-ux-tour-1';
 const AI_ONBOARDING_TOAST_VARIANT_KEY = 'workspai.aiOnboarding.toastVariant';
 
 type AIFollowupToastVariant = 'control' | 'compact';
+
+type AIContextWorkspace = {
+  name?: string;
+  path?: string;
+};
+
+type AIContextProject = {
+  name?: string;
+  path?: string;
+  type?: string;
+  workspacePath?: string;
+};
+
+type AIContextModule = {
+  displayName?: string;
+  name?: string;
+  slug?: string;
+  id?: string;
+  description?: string;
+};
+
+type AIContextItem = {
+  workspace?: AIContextWorkspace;
+  project?: AIContextProject;
+  module?: AIContextModule;
+  preferredDisplayMode?: unknown;
+  preferredArchitectureLensView?: unknown;
+};
+
+function asAIContextItem(value: unknown): AIContextItem | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  return value as AIContextItem;
+}
+
+function asWorkspaiWorkspace(value: unknown): WorkspaiWorkspace | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<WorkspaiWorkspace>;
+  if (typeof candidate.name !== 'string' || typeof candidate.path !== 'string') {
+    return null;
+  }
+
+  const mode = candidate.mode === 'demo' || candidate.mode === 'full' ? candidate.mode : 'full';
+  const projects = Array.isArray(candidate.projects) ? candidate.projects : [];
+
+  return {
+    ...candidate,
+    name: candidate.name,
+    path: candidate.path,
+    mode,
+    projects,
+  } as WorkspaiWorkspace;
+}
 
 function parseUriListToFsPaths(uriList: string): string[] {
   return uriList
@@ -232,7 +291,7 @@ export async function activate(context: vscode.ExtensionContext) {
   logger.info('🚀 Workspai extension is activating...');
 
   // Store context globally for access from commands
-  (global as any).extensionContext = context;
+  (globalThis as { extensionContext?: vscode.ExtensionContext }).extensionContext = context;
 
   // Set extension path for custom icons
   setExtensionPath(context.extensionPath);
@@ -282,9 +341,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // AI context commands — triggered from tree view inline buttons
     context.subscriptions.push(
-      vscode.commands.registerCommand('workspai.aiForWorkspace', (item?: any) => {
-        const ws = item?.workspace || workspaceExplorer?.getSelectedWorkspace();
-        if (!ws) {
+      vscode.commands.registerCommand('workspai.aiForWorkspace', (item?: unknown) => {
+        const contextItem = asAIContextItem(item);
+        const ws = contextItem?.workspace || workspaceExplorer?.getSelectedWorkspace();
+        if (!ws || typeof ws.name !== 'string' || typeof ws.path !== 'string') {
           vscode.window.showWarningMessage('Select a workspace first.');
           return;
         }
@@ -295,9 +355,10 @@ export async function activate(context: vscode.ExtensionContext) {
         });
       }),
       // Edit / create workspace memory — opens .rapidkit/workspace-memory.json
-      vscode.commands.registerCommand('workspai.editWorkspaceMemory', async (item?: any) => {
-        const ws = item?.workspace || workspaceExplorer?.getSelectedWorkspace();
-        if (!ws) {
+      vscode.commands.registerCommand('workspai.editWorkspaceMemory', async (item?: unknown) => {
+        const contextItem = asAIContextItem(item);
+        const ws = contextItem?.workspace || workspaceExplorer?.getSelectedWorkspace();
+        if (!ws || typeof ws.path !== 'string') {
           vscode.window.showWarningMessage('Select a workspace first.');
           return;
         }
@@ -306,18 +367,17 @@ export async function activate(context: vscode.ExtensionContext) {
           // Seed with a template so the user has something to start from
           await memSvc.writeTemplate(ws.path);
         }
-        const memUri = vscode.Uri.file(
-          require('path').join(ws.path, '.rapidkit', 'workspace-memory.json')
-        );
+        const memUri = vscode.Uri.file(path.join(ws.path, '.rapidkit', 'workspace-memory.json'));
         await vscode.window.showTextDocument(memUri, { preview: false });
         vscode.window.showInformationMessage(
           'Edit your workspace memory — the AI will include it in every prompt.',
           'OK'
         );
       }),
-      vscode.commands.registerCommand('workspai.aiForProject', (item?: any) => {
-        const project = item?.project || projectExplorer?.getSelectedProject();
-        if (!project) {
+      vscode.commands.registerCommand('workspai.aiForProject', (item?: unknown) => {
+        const contextItem = asAIContextItem(item);
+        const project = contextItem?.project || projectExplorer?.getSelectedProject();
+        if (!project || typeof project.name !== 'string') {
           vscode.window.showWarningMessage('Select a project first.');
           return;
         }
@@ -328,21 +388,23 @@ export async function activate(context: vscode.ExtensionContext) {
           framework: project.type,
         });
       }),
-      vscode.commands.registerCommand('workspai.aiForModule', (item?: any) => {
-        const mod = item?.module;
+      vscode.commands.registerCommand('workspai.aiForModule', (item?: unknown) => {
+        const contextItem = asAIContextItem(item);
+        const mod = contextItem?.module;
         const project = projectExplorer?.getSelectedProject();
         WelcomePanel.showAIModal(context, {
           type: 'module',
           name: mod?.displayName || mod?.name || 'Module',
           path: project?.path,
           framework: project?.type,
-          moduleSlug: (mod as any)?.slug || mod?.id,
+          moduleSlug: mod?.slug || mod?.id,
           moduleDescription: mod?.description,
         });
       }),
-      vscode.commands.registerCommand('workspai.openIncidentStudio', (item?: any) => {
-        const workspaceFromItem = item?.workspace;
-        const projectFromItem = item?.project;
+      vscode.commands.registerCommand('workspai.openIncidentStudio', (item?: unknown) => {
+        const contextItem = asAIContextItem(item);
+        const workspaceFromItem = contextItem?.workspace;
+        const projectFromItem = contextItem?.project;
 
         const selectedWorkspace = workspaceExplorer?.getSelectedWorkspace();
 
@@ -383,14 +445,15 @@ export async function activate(context: vscode.ExtensionContext) {
               : undefined,
           initialQuery,
           preferredDisplayMode:
-            item?.preferredDisplayMode === 'full' || item?.preferredDisplayMode === 'lite'
-              ? item.preferredDisplayMode
+            contextItem?.preferredDisplayMode === 'full' ||
+            contextItem?.preferredDisplayMode === 'lite'
+              ? contextItem.preferredDisplayMode
               : undefined,
           preferredArchitectureLensView:
-            item?.preferredArchitectureLensView === 'dependency' ||
-            item?.preferredArchitectureLensView === 'runtime' ||
-            item?.preferredArchitectureLensView === 'tree'
-              ? item.preferredArchitectureLensView
+            contextItem?.preferredArchitectureLensView === 'dependency' ||
+            contextItem?.preferredArchitectureLensView === 'runtime' ||
+            contextItem?.preferredArchitectureLensView === 'tree'
+              ? contextItem.preferredArchitectureLensView
               : undefined,
         });
       }),
@@ -641,8 +704,8 @@ export async function activate(context: vscode.ExtensionContext) {
         }
       ),
       // Refresh evidence panel whenever workspace selection changes
-      vscode.commands.registerCommand('workspai.workspaceSelected', (workspace: any) => {
-        projectExplorer?.setWorkspace(workspace);
+      vscode.commands.registerCommand('workspai.workspaceSelected', (workspace: unknown) => {
+        projectExplorer?.setWorkspace(asWorkspaiWorkspace(workspace));
         doctorEvidenceExplorer.refresh();
       })
     );
