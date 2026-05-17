@@ -95,6 +95,11 @@ import {
 } from './welcomePanelIncidentPolicy';
 import { getIncidentPrimaryCtaExperimentVariant } from './welcomePanelTelemetryExperiment';
 import {
+  getIncidentStudioDisplayMode,
+  normalizeIncidentStudioDisplayMode,
+  normalizeIncidentUserMode,
+} from './welcomePanelUiPreferences';
+import {
   buildWorkspaceProjectCandidatesBlock,
   resolveScopedProjectForWorkspace,
   type WorkspaceProjectDiscoveryDeps,
@@ -7883,34 +7888,14 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private _normalizeIncidentStudioDisplayMode(value: unknown): 'lite' | 'full' {
-    return value === 'full' ? 'full' : 'lite';
+    return normalizeIncidentStudioDisplayMode(value);
   }
 
   private _getIncidentStudioDisplayMode(
     prefs: Record<string, unknown>,
     workspacePath?: string
   ): 'lite' | 'full' {
-    const displayModeByWorkspace =
-      prefs?.incidentStudioDisplayModeByWorkspace &&
-      typeof prefs.incidentStudioDisplayModeByWorkspace === 'object'
-        ? (prefs.incidentStudioDisplayModeByWorkspace as Record<string, unknown>)
-        : {};
-
-    if (workspacePath) {
-      const scoped = displayModeByWorkspace[workspacePath];
-      if (scoped === 'lite' || scoped === 'full') {
-        return scoped;
-      }
-    }
-
-    if (
-      prefs?.incidentStudioDisplayMode === 'lite' ||
-      prefs?.incidentStudioDisplayMode === 'full'
-    ) {
-      return prefs.incidentStudioDisplayMode as 'lite' | 'full';
-    }
-
-    return 'lite';
+    return getIncidentStudioDisplayMode(prefs, workspacePath);
   }
 
   private _getUiPreferences(workspacePath?: string): {
@@ -7926,12 +7911,7 @@ No markdown, no explanation outside the JSON.`;
       WelcomePanel.UI_PREFS_KEY,
       {}
     );
-    const incidentUserMode =
-      prefs?.incidentUserMode === 'guided' ||
-      prefs?.incidentUserMode === 'standard' ||
-      prefs?.incidentUserMode === 'expert'
-        ? (prefs.incidentUserMode as 'guided' | 'standard' | 'expert')
-        : 'standard';
+    const incidentUserMode = normalizeIncidentUserMode(prefs?.incidentUserMode);
     return {
       setupStatusCardHidden: prefs?.setupStatusCardHidden === true,
       incidentUserMode,
