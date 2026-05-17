@@ -97,7 +97,6 @@ import {
   buildChatBrainFallbackBoard,
   deriveChatBrainFailureCode,
   isRetryableChatBrainError,
-  type ChatBrainFallbackBoard,
 } from './welcomePanelChatBrainFallback';
 import {
   trackChatBrainRequestComplete,
@@ -5468,21 +5467,6 @@ No markdown, no explanation outside the JSON.`;
     );
   }
 
-  private _isRetryableChatBrainError(err: unknown): boolean {
-    return isRetryableChatBrainError(err);
-  }
-
-  private _deriveChatBrainFailureCode(err: unknown): string {
-    return deriveChatBrainFailureCode(err);
-  }
-
-  private _buildChatBrainFallbackBoard(
-    actionType: string,
-    projectName?: string
-  ): ChatBrainFallbackBoard {
-    return buildChatBrainFallbackBoard(actionType, projectName);
-  }
-
   private async _handleAiChatQuery(data: any, requestId?: string) {
     const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : '';
     const message = typeof data?.message === 'string' ? data.message.trim() : '';
@@ -5785,7 +5769,7 @@ No markdown, no explanation outside the JSON.`;
           break;
         } catch (streamErr) {
           lastStreamError = streamErr;
-          const retryable = !attemptReceivedChunk && this._isRetryableChatBrainError(streamErr);
+          const retryable = !attemptReceivedChunk && isRetryableChatBrainError(streamErr);
           const canRetry =
             attempt < maxAttempts && retryable && !tokenSource.token.isCancellationRequested;
 
@@ -5941,8 +5925,8 @@ No markdown, no explanation outside the JSON.`;
     } catch (err) {
       if (!tokenSource.token.isCancellationRequested) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        const failureCode = this._deriveChatBrainFailureCode(err);
-        const retryable = this._isRetryableChatBrainError(err);
+        const failureCode = deriveChatBrainFailureCode(err);
+        const retryable = isRetryableChatBrainError(err);
         this._panel.webview.postMessage({
           command: 'aiChatPartialFailure',
           data: {
@@ -5950,7 +5934,7 @@ No markdown, no explanation outside the JSON.`;
             code: failureCode,
             message: errMsg,
             retryable,
-            board: this._buildChatBrainFallbackBoard(actionType, current.projectName),
+            board: buildChatBrainFallbackBoard(actionType, current.projectName),
           },
           meta: { requestId, version: 'v1' },
         });
