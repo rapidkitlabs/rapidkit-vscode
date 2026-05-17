@@ -10,7 +10,7 @@ import * as os from 'os';
 import { WorkspaceWizard } from '../ui/wizards/workspaceWizard';
 import { Logger } from '../utils/logger';
 import { parseRapidKitError, formatErrorMessage, logDetailedError } from '../utils/errorParser';
-import { WorkspaiCLI } from '../core/rapidkitCLI';
+import { CreateWorkspaceOptions, WorkspaiCLI } from '../core/rapidkitCLI';
 import { WorkspaceManager } from '../core/workspaceManager';
 import { isFirstTimeSetup, showFirstTimeSetupMessage } from '../utils/firstTimeSetup';
 import { updateWorkspaceMetadata } from '../utils/workspaceMarker';
@@ -18,6 +18,47 @@ import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { isPoetryInstalledCached } from '../utils/poetryHelper';
 import { checkPythonEnvironmentCached } from '../utils/pythonChecker';
 import { runCommandsInTerminal, runShellCommandInTerminal } from '../utils/terminalExecutor';
+
+type InstallMethod = 'poetry' | 'venv' | 'pipx' | 'auto';
+type BootstrapProfile = NonNullable<CreateWorkspaceOptions['profile']>;
+type PolicyMode = 'warn' | 'strict' | 'disabled';
+type DependencySharing = 'isolated' | 'shared';
+
+type PythonEnvironmentCheck = {
+  available: boolean;
+  meetsMinimumVersion: boolean;
+  venvSupport: boolean;
+  version?: string;
+  error?: string;
+};
+
+type WorkspaceModalConfig = {
+  name: string;
+  initGit?: boolean;
+  profile?: BootstrapProfile;
+  installMethod?: InstallMethod;
+  policyMode?: PolicyMode;
+  dependencySharing?: DependencySharing;
+};
+
+type WorkspaceCreationConfig = {
+  name: string;
+  path: string;
+  initGit: boolean;
+  profile?: BootstrapProfile;
+  installMethod?: InstallMethod;
+  policyMode?: PolicyMode;
+  dependencySharing?: DependencySharing;
+};
+
+function isWorkspaceModalConfig(value: unknown): value is WorkspaceModalConfig {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<WorkspaceModalConfig>;
+  return typeof candidate.name === 'string' && candidate.name.trim().length > 0;
+}
 
 export async function createWorkspaceCommand(workspaceName?: string | Record<string, unknown>) {
   const logger = Logger.getInstance();
@@ -29,7 +70,11 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
 
   try {
     // Show progress notification while checking system requirements
-    let pythonCheck: any;
+    let pythonCheck: PythonEnvironmentCheck = {
+      available: false,
+      meetsMinimumVersion: false,
+      venvSupport: false,
+    };
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -74,8 +119,7 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
       logger.info(`Python ${pythonCheck.version} is available with venv support`);
     }
 
-    const modalConfig =
-      typeof workspaceName === 'object' && workspaceName !== null ? (workspaceName as any) : null;
+    const modalConfig = isWorkspaceModalConfig(workspaceName) ? workspaceName : null;
     const modalInstallMethod = modalConfig?.installMethod as
       | 'poetry'
       | 'venv'
@@ -252,22 +296,21 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
     }
 
     // Get workspace configuration
-    let config: any;
+    let config: WorkspaceCreationConfig;
 
     if (workspaceName) {
-      if (typeof workspaceName === 'object' && workspaceName !== null) {
+      if (isWorkspaceModalConfig(workspaceName)) {
         // Full config object sent from the webview modal
-        const wc = workspaceName as any;
-        logger.info('Using full config from webview modal:', wc.name);
+        logger.info('Using full config from webview modal:', workspaceName.name);
         const defaultPath = path.join(os.homedir(), 'Workspai', 'rapidkits');
         config = {
-          name: wc.name,
-          path: path.join(defaultPath, wc.name),
-          initGit: wc.initGit !== undefined ? wc.initGit : true,
-          profile: wc.profile || 'minimal',
-          installMethod: wc.installMethod || 'auto',
-          policyMode: wc.policyMode || 'warn',
-          dependencySharing: wc.dependencySharing || 'isolated',
+          name: workspaceName.name,
+          path: path.join(defaultPath, workspaceName.name),
+          initGit: workspaceName.initGit !== undefined ? workspaceName.initGit : true,
+          profile: workspaceName.profile || 'minimal',
+          installMethod: workspaceName.installMethod || 'auto',
+          policyMode: workspaceName.policyMode || 'warn',
+          dependencySharing: workspaceName.dependencySharing || 'isolated',
         };
       } else {
         // Legacy: plain name string (from command palette or internal calls)
@@ -282,12 +325,22 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
     } else {
       // Show wizard to collect user input
       const wizard = new WorkspaceWizard();
-      config = await wizard.show();
+      const wizardConfig = await wizard.show();
 
-      if (!config) {
+      if (!wizardConfig) {
         logger.info('Workspace creation cancelled by user');
         return;
       }
+
+      config = {
+        name: wizardConfig.name,
+        path: wizardConfig.path,
+        initGit: wizardConfig.initGit,
+        profile: wizardConfig.profile,
+        installMethod: wizardConfig.installMethod,
+        policyMode: wizardConfig.policyMode,
+        dependencySharing: wizardConfig.dependencySharing,
+      };
     }
 
     // Honour install method explicitly chosen in the wizard (overrides auto-detection)
@@ -384,7 +437,7 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
           }
 
           // Check if it's a default location (~/Workspai/rapidkits/<name>)
-          const homeDir = require('os').homedir();
+          const homeDir = os.homedir();
           const defaultWorkspacePath = path.join(homeDir, 'Workspai', 'rapidkits', config.name);
           const isDefaultLocation = config.path === defaultWorkspacePath;
 
@@ -742,7 +795,8 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
           }
 
           // Refresh welcome page if it's open
-          const context = (global as any).extensionContext;
+          const context = (globalThis as { extensionContext?: vscode.ExtensionContext })
+            .extensionContext;
           if (context) {
             WelcomePanel.refreshRecentWorkspaces();
           }
