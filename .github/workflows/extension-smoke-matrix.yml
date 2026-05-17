@@ -31,6 +31,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint stabilization budget
+        run: npm run lint:stabilization
+
       - name: Format check
         if: runner.os != 'Windows'
         run: npm run format:check

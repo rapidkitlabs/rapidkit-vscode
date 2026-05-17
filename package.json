@@ -1552,6 +1552,7 @@
     "dev": "concurrently \"npm run esbuild-watch\" \"npm run webview:watch\"",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
+    "lint:stabilization": "eslint src --ext ts --max-warnings 170",
     "lint:fix": "eslint src --ext ts --fix",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -13,6 +13,16 @@ type WorkspaceExplorerLike = {
   getSelectedWorkspace?: () => { path: string; name?: string } | null | undefined;
 };
 
+type WorkspaceCommandItem = {
+  workspace?: { path?: unknown; name?: unknown };
+  path?: unknown;
+  name?: unknown;
+  since?: unknown;
+  maxWorkers?: unknown;
+  stage?: unknown;
+  preferredAction?: unknown;
+};
+
 type WorkspaceTarget = {
   workspacePath?: string;
   workspaceName?: string;
@@ -43,6 +53,45 @@ type WorkspaceBootstrapProfile =
 
 type ProfileQuickPickItem = vscode.QuickPickItem & { value: WorkspaceBootstrapProfile };
 type RuntimeQuickPickItem = vscode.QuickPickItem & { value: 'python' | 'node' | 'go' | 'java' };
+
+function asWorkspaceCommandItem(item: unknown): WorkspaceCommandItem | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+  return item as WorkspaceCommandItem;
+}
+
+function getWorkspaceItemPath(item: unknown): string | undefined {
+  if (typeof item === 'string') {
+    return item;
+  }
+
+  const typed = asWorkspaceCommandItem(item);
+  const candidate = typed?.workspace?.path ?? typed?.path;
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+}
+
+function getWorkspaceItemName(item: unknown): string | undefined {
+  const typed = asWorkspaceCommandItem(item);
+  const candidate = typed?.workspace?.name ?? typed?.name;
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+}
+
+function reportCommandHandlerError(input: {
+  logger: Logger;
+  message: string;
+  error: unknown;
+  code: string;
+  workspacePath?: string;
+  isRecoverable?: boolean;
+}): void {
+  input.logger.error(input.message, {
+    errorCode: input.code,
+    isRecoverable: input.isRecoverable ?? false,
+    workspacePath: input.workspacePath ? toSafePathHint(input.workspacePath) : undefined,
+    error: input.error instanceof Error ? input.error.message : String(input.error),
+  });
+}
 
 function toSafePathHint(rawPath: string): string {
   const normalized = rawPath.replace(/\\/g, '/').trim();
@@ -252,17 +301,8 @@ function resolveWorkspaceTarget(
 ): WorkspaceTarget {
   const selectedWorkspace = workspaceExplorer?.getSelectedWorkspace?.();
 
-  const itemWorkspacePath =
-    typeof item === 'string'
-      ? item
-      : item && typeof item === 'object'
-        ? ((item as any).workspace?.path ?? (item as any).path)
-        : undefined;
-
-  const itemWorkspaceName =
-    item && typeof item === 'object'
-      ? ((item as any).workspace?.name ?? (item as any).name)
-      : undefined;
+  const itemWorkspacePath = getWorkspaceItemPath(item);
+  const itemWorkspaceName = getWorkspaceItemName(item);
 
   const workspacePath =
     typeof itemWorkspacePath === 'string' && itemWorkspacePath.length > 0
@@ -284,7 +324,7 @@ export function registerWorkspaceOperationsCommands(options: {
 }): vscode.Disposable[] {
   const { logger, getWorkspaceExplorer, context } = options;
 
-  const runWorkspaceStageCommand = async (item: any, stage: WorkspaceRunStage) => {
+  const runWorkspaceStageCommand = async (item: unknown, stage: WorkspaceRunStage) => {
     const workspaceExplorer = getWorkspaceExplorer();
     const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
     if (!workspacePath) {
@@ -295,11 +335,12 @@ export function registerWorkspaceOperationsCommands(options: {
     }
 
     const wsName = workspaceName || path.basename(workspacePath);
+    const typedItem = asWorkspaceCommandItem(item);
     const preferredSince =
-      typeof item?.since === 'string' && item.since.trim().length > 0
-        ? item.since.trim()
+      typeof typedItem?.since === 'string' && typedItem.since.trim().length > 0
+        ? typedItem.since.trim()
         : undefined;
-    const preferredMaxWorkers = parsePositiveInteger(item?.maxWorkers);
+    const preferredMaxWorkers = parsePositiveInteger(typedItem?.maxWorkers);
     const flags = await pickWorkspaceRunFlags(stage, wsName, {
       preferredSince,
       preferredMaxWorkers,
@@ -316,7 +357,7 @@ export function registerWorkspaceOperationsCommands(options: {
   };
 
   return [
-    vscode.commands.registerCommand('workspai.workspaceBootstrap', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceBootstrap', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -399,7 +440,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceSetup', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceSetup', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -451,7 +492,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceInit', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceInit', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -468,24 +509,25 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceRunInit', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceRunInit', async (item?: unknown) => {
       await runWorkspaceStageCommand(item, 'init');
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceRunTest', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceRunTest', async (item?: unknown) => {
       await runWorkspaceStageCommand(item, 'test');
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceRunBuild', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceRunBuild', async (item?: unknown) => {
       await runWorkspaceStageCommand(item, 'build');
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceRunStart', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspaceRunStart', async (item?: unknown) => {
       await runWorkspaceStageCommand(item, 'start');
     }),
 
-    vscode.commands.registerCommand('workspai.workspaceRunStage', async (item?: any) => {
-      const requestedStage = parseWorkspaceRunStage(item?.stage);
+    vscode.commands.registerCommand('workspai.workspaceRunStage', async (item?: unknown) => {
+      const typedItem = asWorkspaceCommandItem(item);
+      const requestedStage = parseWorkspaceRunStage(typedItem?.stage);
       if (requestedStage) {
         await runWorkspaceStageCommand(item, requestedStage);
         return;
@@ -512,7 +554,7 @@ export function registerWorkspaceOperationsCommands(options: {
       await runWorkspaceStageCommand(item, selected.value);
     }),
 
-    vscode.commands.registerCommand('workspai.workspacePolicyShow', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspacePolicyShow', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -528,73 +570,76 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.exportWorkspaceShareBundle', async (item?: any) => {
-      const workspaceExplorer = getWorkspaceExplorer();
-      const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
-      if (!workspacePath) {
-        vscode.window.showErrorMessage('No workspace selected.');
-        return;
-      }
-
-      const wsName = workspaceName || path.basename(workspacePath);
-      const selectedFlags = await vscode.window.showQuickPick(
-        [
-          {
-            label: 'Include absolute paths',
-            description: 'Adds absolute workspace/project paths to the share bundle',
-            value: 'include-paths',
-          },
-          {
-            label: 'Exclude doctor evidence',
-            description: 'Skips doctor section in exported bundle',
-            value: 'no-doctor',
-          },
-        ],
-        {
-          title: `Workspace Share Export: ${wsName}`,
-          placeHolder: 'Choose export options (optional)',
-          canPickMany: true,
-          ignoreFocusOut: true,
+    vscode.commands.registerCommand(
+      'workspai.exportWorkspaceShareBundle',
+      async (item?: unknown) => {
+        const workspaceExplorer = getWorkspaceExplorer();
+        const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
+        if (!workspacePath) {
+          vscode.window.showErrorMessage('No workspace selected.');
+          return;
         }
-      );
 
-      if (!selectedFlags) {
-        return;
+        const wsName = workspaceName || path.basename(workspacePath);
+        const selectedFlags = await vscode.window.showQuickPick(
+          [
+            {
+              label: 'Include absolute paths',
+              description: 'Adds absolute workspace/project paths to the share bundle',
+              value: 'include-paths',
+            },
+            {
+              label: 'Exclude doctor evidence',
+              description: 'Skips doctor section in exported bundle',
+              value: 'no-doctor',
+            },
+          ],
+          {
+            title: `Workspace Share Export: ${wsName}`,
+            placeHolder: 'Choose export options (optional)',
+            canPickMany: true,
+            ignoreFocusOut: true,
+          }
+        );
+
+        if (!selectedFlags) {
+          return;
+        }
+
+        const defaultUri = vscode.Uri.file(
+          path.join(workspacePath, '.rapidkit', 'reports', 'share-bundle.json')
+        );
+
+        const outputUri = await vscode.window.showSaveDialog({
+          title: `Export Workspace Share Bundle: ${wsName}`,
+          saveLabel: 'Export Share Bundle',
+          defaultUri,
+          filters: {
+            JSON: ['json'],
+          },
+        });
+
+        if (!outputUri) {
+          return;
+        }
+
+        const command: string[] = ['workspace', 'share', '--output', outputUri.fsPath];
+        if (selectedFlags.some((item) => item.value === 'include-paths')) {
+          command.push('--include-paths');
+        }
+        if (selectedFlags.some((item) => item.value === 'no-doctor')) {
+          command.push('--no-doctor');
+        }
+
+        runRapidkitCommandsInTerminal({
+          name: `Workspai: Share Export — ${wsName}`,
+          cwd: workspacePath,
+          commands: [command],
+        });
       }
+    ),
 
-      const defaultUri = vscode.Uri.file(
-        path.join(workspacePath, '.rapidkit', 'reports', 'share-bundle.json')
-      );
-
-      const outputUri = await vscode.window.showSaveDialog({
-        title: `Export Workspace Share Bundle: ${wsName}`,
-        saveLabel: 'Export Share Bundle',
-        defaultUri,
-        filters: {
-          JSON: ['json'],
-        },
-      });
-
-      if (!outputUri) {
-        return;
-      }
-
-      const command: string[] = ['workspace', 'share', '--output', outputUri.fsPath];
-      if (selectedFlags.some((item) => item.value === 'include-paths')) {
-        command.push('--include-paths');
-      }
-      if (selectedFlags.some((item) => item.value === 'no-doctor')) {
-        command.push('--no-doctor');
-      }
-
-      runRapidkitCommandsInTerminal({
-        name: `Workspai: Share Export — ${wsName}`,
-        cwd: workspacePath,
-        commands: [command],
-      });
-    }),
-
-    vscode.commands.registerCommand('workspai.workspacePolicySet', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.workspacePolicySet', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -687,7 +732,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.cacheStatus', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.cacheStatus', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -701,7 +746,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.cacheClear', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.cacheClear', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -724,7 +769,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.cachePrune', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.cachePrune', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -738,7 +783,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.cacheRepair', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.cacheRepair', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -752,7 +797,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.mirrorStatus', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.mirrorStatus', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -766,7 +811,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.mirrorSync', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.mirrorSync', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -780,7 +825,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.mirrorVerify', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.mirrorVerify', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -794,7 +839,7 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.mirrorRotate', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.mirrorRotate', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
       if (!workspacePath) {
@@ -818,12 +863,13 @@ export function registerWorkspaceOperationsCommands(options: {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.checkWorkspaceHealth', async (item: any) => {
+    vscode.commands.registerCommand('workspai.checkWorkspaceHealth', async (item: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const target = resolveWorkspaceTarget(item, workspaceExplorer);
       const workspacePath = target.workspacePath;
       let workspaceName = target.workspaceName;
-      const preferredAction = parsePreferredHealthAction(item?.preferredAction);
+      const typedItem = asWorkspaceCommandItem(item);
+      const preferredAction = parsePreferredHealthAction(typedItem?.preferredAction);
 
       if (!workspacePath) {
         vscode.window.showErrorMessage('No workspace selected');
@@ -893,7 +939,14 @@ export function registerWorkspaceOperationsCommands(options: {
                   'OK'
                 );
               } catch (error) {
-                logger.error('Error running doctor check:', error);
+                reportCommandHandlerError({
+                  logger,
+                  message: 'Error running doctor check',
+                  error,
+                  code: 'WORKSPACE_DOCTOR_CHECK_FAILED',
+                  workspacePath,
+                  isRecoverable: true,
+                });
                 vscode.window.showErrorMessage(
                   `Failed to run health check: ${error instanceof Error ? error.message : String(error)}`
                 );
@@ -926,7 +979,14 @@ export function registerWorkspaceOperationsCommands(options: {
                   'OK'
                 );
               } catch (error) {
-                logger.error('Error running doctor fix:', error);
+                reportCommandHandlerError({
+                  logger,
+                  message: 'Error running doctor fix',
+                  error,
+                  code: 'WORKSPACE_DOCTOR_FIX_FAILED',
+                  workspacePath,
+                  isRecoverable: true,
+                });
                 vscode.window.showErrorMessage(
                   `Failed to run doctor fix: ${error instanceof Error ? error.message : String(error)}`
                 );
@@ -1018,9 +1078,12 @@ export function registerWorkspaceOperationsCommands(options: {
                     }
                   }
                 } else if (typeof checks === 'object') {
-                  for (const [rule, result] of Object.entries(checks as Record<string, any>)) {
+                  for (const [rule, result] of Object.entries(checks as Record<string, unknown>)) {
+                    const typedResult = result as { status?: string; passed?: boolean };
                     const pass =
-                      result === true || result?.status === 'pass' || result?.passed === true;
+                      result === true ||
+                      typedResult?.status === 'pass' ||
+                      typedResult?.passed === true;
                     output.appendLine(`  ${pass ? '✅' : '❌'} ${rule}`);
                   }
                 }
@@ -1069,14 +1132,26 @@ export function registerWorkspaceOperationsCommands(options: {
                 `${hygieneIcon} Overall hygiene: ${hygieneReport.overallStatus.toUpperCase()}`
               );
             } catch (hygieneErr) {
-              logger.warn('Hygiene probes failed (non-fatal):', hygieneErr);
+              logger.warn('Hygiene probes failed (non-fatal)', {
+                errorCode: 'WORKSPACE_HYGIENE_PROBES_FAILED',
+                isRecoverable: true,
+                workspacePath: toSafePathHint(workspacePath),
+                error: hygieneErr instanceof Error ? hygieneErr.message : String(hygieneErr),
+              });
             }
 
             output.appendLine('');
             output.appendLine('All reports: .rapidkit/reports');
             output.show();
           } catch (error) {
-            logger.error('Error reading compliance reports:', error);
+            reportCommandHandlerError({
+              logger,
+              message: 'Error reading compliance reports',
+              error,
+              code: 'WORKSPACE_COMPLIANCE_READ_FAILED',
+              workspacePath,
+              isRecoverable: true,
+            });
             vscode.window.showErrorMessage(
               `Failed to read compliance reports: ${error instanceof Error ? error.message : String(error)}`
             );
@@ -1145,7 +1220,7 @@ export function registerWorkspaceOperationsCommands(options: {
       await forceCheckForUpdates(context);
     }),
 
-    vscode.commands.registerCommand('workspai.exportVerifyPackContract', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.exportVerifyPackContract', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
 
@@ -1187,7 +1262,14 @@ export function registerWorkspaceOperationsCommands(options: {
           }
         }
       } catch (err) {
-        logger.error('Error scanning workspace projects:', err);
+        reportCommandHandlerError({
+          logger,
+          message: 'Error scanning workspace projects',
+          error: err,
+          code: 'WORKSPACE_PROJECT_SCAN_FAILED',
+          workspacePath,
+          isRecoverable: true,
+        });
       }
 
       if (projectEntries.length === 0) {
@@ -1261,7 +1343,13 @@ export function registerWorkspaceOperationsCommands(options: {
           }
         }
       } catch (err) {
-        logger.warn('Failed to detect project type — using generic profile:', err);
+        logger.warn('Failed to detect project type — using generic profile', {
+          errorCode: 'VERIFY_PACK_PROJECT_TYPE_DETECTION_FAILED',
+          isRecoverable: true,
+          workspacePath: toSafePathHint(workspacePath),
+          projectPath: toSafePathHint(projectPath),
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
 
       await vscode.window.withProgress(
@@ -1313,7 +1401,14 @@ export function registerWorkspaceOperationsCommands(options: {
               );
             }
           } catch (err) {
-            logger.error('Export verify-pack contract failed:', err);
+            reportCommandHandlerError({
+              logger,
+              message: 'Export verify-pack contract failed',
+              error: err,
+              code: 'VERIFY_PACK_EXPORT_FAILED',
+              workspacePath,
+              isRecoverable: true,
+            });
             vscode.window.showErrorMessage(
               `Verify-pack export failed: ${err instanceof Error ? err.message : String(err)}`
             );
