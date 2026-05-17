@@ -99,6 +99,10 @@ import {
   isRetryableChatBrainError,
   type ChatBrainFallbackBoard,
 } from './welcomePanelChatBrainFallback';
+import {
+  trackChatBrainRequestComplete,
+  trackChatBrainRequestStart,
+} from './welcomePanelChatBrainRequestTracker';
 import { getIncidentPrimaryCtaExperimentVariant } from './welcomePanelTelemetryExperiment';
 import {
   getIncidentStudioDisplayMode,
@@ -5449,35 +5453,19 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private _trackChatBrainRequestStart(requestId?: string): boolean {
-    if (!requestId) {
-      return true;
-    }
-    if (
-      this._chatBrainInFlightRequestIds.has(requestId) ||
-      this._chatBrainCompletedRequestIds.includes(requestId)
-    ) {
-      return false;
-    }
-
-    this._chatBrainInFlightRequestIds.add(requestId);
-    return true;
+    return trackChatBrainRequestStart(
+      requestId,
+      this._chatBrainInFlightRequestIds,
+      this._chatBrainCompletedRequestIds
+    );
   }
 
   private _trackChatBrainRequestComplete(requestId?: string): void {
-    if (!requestId) {
-      return;
-    }
-
-    this._chatBrainInFlightRequestIds.delete(requestId);
-    if (!this._chatBrainCompletedRequestIds.includes(requestId)) {
-      this._chatBrainCompletedRequestIds.push(requestId);
-      if (this._chatBrainCompletedRequestIds.length > 240) {
-        this._chatBrainCompletedRequestIds.splice(
-          0,
-          this._chatBrainCompletedRequestIds.length - 240
-        );
-      }
-    }
+    trackChatBrainRequestComplete(
+      requestId,
+      this._chatBrainInFlightRequestIds,
+      this._chatBrainCompletedRequestIds
+    );
   }
 
   private _isRetryableChatBrainError(err: unknown): boolean {
