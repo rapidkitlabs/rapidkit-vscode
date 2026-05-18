@@ -3653,16 +3653,6 @@ No markdown, no explanation outside the JSON.`;
     return derivePredictionConfidenceBand(confidence);
   }
 
-  private _normalizeIncidentRollbackApprovalMode(
-    value: unknown
-  ): 'never' | 'high-risk-only' | 'mutating-only' | 'always' {
-    return normalizeIncidentRollbackApprovalMode(value);
-  }
-
-  private _normalizeIncidentRollbackProtectedPaths(value: unknown): string[] {
-    return normalizeIncidentRollbackProtectedPaths(value);
-  }
-
   private _resolveIncidentRollbackRuntimePolicy(input: {
     workspacePath?: string;
     actionPolicy: ReturnType<typeof classifyIncidentActionPolicy>;
@@ -3677,17 +3667,17 @@ No markdown, no explanation outside the JSON.`;
     const config = vscode.workspace.getConfiguration('workspai', workspaceUri);
     const uiPrefs = this._getUiPreferences();
 
-    const approvalMode = this._normalizeIncidentRollbackApprovalMode(
+    const approvalMode = normalizeIncidentRollbackApprovalMode(
       config.get('incidentStudio.rollbackApprovalMode') ?? uiPrefs.incidentRollbackApprovalMode
     );
 
-    const configProtectedPaths = this._normalizeIncidentRollbackProtectedPaths(
+    const configProtectedPaths = normalizeIncidentRollbackProtectedPaths(
       config.get('incidentStudio.rollbackProtectedPaths')
     );
     const protectedPathPrefixes =
       configProtectedPaths.length > 0
         ? configProtectedPaths
-        : this._normalizeIncidentRollbackProtectedPaths(uiPrefs.incidentRollbackProtectedPaths);
+        : normalizeIncidentRollbackProtectedPaths(uiPrefs.incidentRollbackProtectedPaths);
 
     const requiresManualApproval =
       approvalMode === 'always' ||
@@ -7825,10 +7815,10 @@ No markdown, no explanation outside the JSON.`;
       incidentStudioDisplayMode: getIncidentStudioDisplayMode(prefs, workspacePath),
       incidentAutoLearningPrompt: prefs?.incidentAutoLearningPrompt !== false,
       incidentPrimaryCtaExperimentVariant: this._getIncidentPrimaryCtaExperimentVariant(),
-      incidentRollbackApprovalMode: this._normalizeIncidentRollbackApprovalMode(
+      incidentRollbackApprovalMode: normalizeIncidentRollbackApprovalMode(
         prefs?.incidentRollbackApprovalMode
       ),
-      incidentRollbackProtectedPaths: this._normalizeIncidentRollbackProtectedPaths(
+      incidentRollbackProtectedPaths: normalizeIncidentRollbackProtectedPaths(
         prefs?.incidentRollbackProtectedPaths
       ),
     };
