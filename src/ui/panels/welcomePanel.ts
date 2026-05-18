@@ -3700,13 +3700,6 @@ No markdown, no explanation outside the JSON.`;
     };
   }
 
-  private _isIncidentRollbackProtectedPath(
-    candidatePath: string,
-    protectedPathPrefixes: string[]
-  ): boolean {
-    return isIncidentRollbackProtectedPath(candidatePath, protectedPathPrefixes);
-  }
-
   private _deriveIncidentVerifyCommandPack(input: {
     actionType: string;
     actionPolicy: ReturnType<typeof classifyIncidentActionPolicy>;
@@ -8312,10 +8305,7 @@ No markdown, no explanation outside the JSON.`;
       .filter((entry) => entry.untracked)
       .map((entry) => entry.path);
     const protectedCandidates = trackedCandidates.filter((candidatePath) =>
-      this._isIncidentRollbackProtectedPath(
-        candidatePath,
-        runtimePolicy?.protectedPathPrefixes ?? []
-      )
+      isIncidentRollbackProtectedPath(candidatePath, runtimePolicy?.protectedPathPrefixes ?? [])
     );
     const eligibleTrackedCandidates = trackedCandidates.filter(
       (candidatePath) => !protectedCandidates.includes(candidatePath)
