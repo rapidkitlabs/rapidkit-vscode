@@ -180,7 +180,7 @@ describe('incidentStudioPromptPolicy', () => {
 
     expect(source).toContain('welcomePanelProjectDiscovery.js');
     expect(source).toContain('buildWorkspaceProjectCandidatesBlock(');
-    expect(source).toContain('this._getWorkspaceProjectDiscoveryDeps()');
+    expect(source).toContain('WelcomePanel._workspaceExplorer');
   });
 
   it('scope resolver uses doctor evidence + recursive rapidkit project discovery signals', () => {

@@ -115,7 +115,6 @@ import {
 import {
   buildWorkspaceProjectCandidatesBlock,
   resolveScopedProjectForWorkspace,
-  type WorkspaceProjectDiscoveryDeps,
 } from './welcomePanelProjectDiscovery.js';
 import { resolveTelemetryWorkspacePath } from './welcomePanelTelemetryWorkspace.js';
 import {
@@ -614,23 +613,19 @@ export class WelcomePanel {
     return { name: ws.name, path: ws.path };
   }
 
-  private _getWorkspaceProjectDiscoveryDeps(): WorkspaceProjectDiscoveryDeps {
-    return {
-      workspaceExplorer: WelcomePanel._workspaceExplorer,
-      detectProjectType: async (projectPath: string) =>
-        (await WelcomePanel._detectProjectTypeStatic(projectPath)) || undefined,
-      readInstalledModules: (projectPath: string) =>
-        WelcomePanel._readInstalledModules(projectPath),
-    };
-  }
-
   private async _buildWorkspaceProjectCandidatesBlock(
     workspacePath: string,
     doctorSnapshot?: DoctorEvidenceSnapshot
   ): Promise<string | undefined> {
     return buildWorkspaceProjectCandidatesBlock(
       workspacePath,
-      this._getWorkspaceProjectDiscoveryDeps(),
+      {
+        workspaceExplorer: WelcomePanel._workspaceExplorer,
+        detectProjectType: async (projectPath: string) =>
+          (await WelcomePanel._detectProjectTypeStatic(projectPath)) || undefined,
+        readInstalledModules: (projectPath: string) =>
+          WelcomePanel._readInstalledModules(projectPath),
+      },
       doctorSnapshot
     );
   }
@@ -642,10 +637,13 @@ export class WelcomePanel {
     projectType?: string;
     doctorSnapshot?: DoctorEvidenceSnapshot;
   }): Promise<{ name: string; path: string; type?: string } | null> {
-    return resolveScopedProjectForWorkspace(
-      options || {},
-      this._getWorkspaceProjectDiscoveryDeps()
-    );
+    return resolveScopedProjectForWorkspace(options || {}, {
+      workspaceExplorer: WelcomePanel._workspaceExplorer,
+      detectProjectType: async (projectPath: string) =>
+        (await WelcomePanel._detectProjectTypeStatic(projectPath)) || undefined,
+      readInstalledModules: (projectPath: string) =>
+        WelcomePanel._readInstalledModules(projectPath),
+    });
   }
 
   /**
