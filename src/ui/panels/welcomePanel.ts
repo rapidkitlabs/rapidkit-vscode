@@ -7760,19 +7760,6 @@ No markdown, no explanation outside the JSON.`;
     });
   }
 
-  private _resolveUiPreferenceWorkspacePath(explicitWorkspacePath?: unknown): string | undefined {
-    if (typeof explicitWorkspacePath === 'string' && explicitWorkspacePath.trim().length > 0) {
-      return explicitWorkspacePath;
-    }
-
-    const selectedWorkspace = WelcomePanel._workspaceExplorer?.getSelectedWorkspace();
-    if (selectedWorkspace?.path) {
-      return selectedWorkspace.path;
-    }
-
-    return undefined;
-  }
-
   private _getUiPreferences(workspacePath?: string): {
     setupStatusCardHidden: boolean;
     incidentUserMode: 'guided' | 'standard' | 'expert';
@@ -7820,7 +7807,10 @@ No markdown, no explanation outside the JSON.`;
     let next: Record<string, unknown>;
 
     if (key === 'incidentStudioDisplayMode') {
-      const resolvedWorkspacePath = this._resolveUiPreferenceWorkspacePath(workspacePath);
+      const resolvedWorkspacePath =
+        typeof workspacePath === 'string' && workspacePath.trim().length > 0
+          ? workspacePath
+          : (WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path ?? undefined);
       const normalizedDisplayMode = normalizeIncidentStudioDisplayMode(value);
       const existingByWorkspace =
         current?.incidentStudioDisplayModeByWorkspace &&
@@ -7851,7 +7841,11 @@ No markdown, no explanation outside the JSON.`;
     };
 
     await this._context.globalState.update(WelcomePanel.UI_PREFS_KEY, next);
-    this._sendUiPreferences(this._resolveUiPreferenceWorkspacePath(workspacePath));
+    this._sendUiPreferences(
+      typeof workspacePath === 'string' && workspacePath.trim().length > 0
+        ? workspacePath
+        : (WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path ?? undefined)
+    );
   }
 
   private _sendVersion() {
