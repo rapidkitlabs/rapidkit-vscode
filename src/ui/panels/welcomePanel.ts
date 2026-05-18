@@ -3649,10 +3649,6 @@ No markdown, no explanation outside the JSON.`;
     };
   }
 
-  private _derivePredictionConfidenceBand(confidence: number): 'low' | 'medium' | 'high' {
-    return derivePredictionConfidenceBand(confidence);
-  }
-
   private _resolveIncidentRollbackRuntimePolicy(input: {
     workspacePath?: string;
     actionPolicy: ReturnType<typeof classifyIncidentActionPolicy>;
@@ -3824,7 +3820,7 @@ No markdown, no explanation outside the JSON.`;
     }
 
     const confidence = Math.max(0, Math.min(100, confidenceScore));
-    const confidenceBand = this._derivePredictionConfidenceBand(confidence);
+    const confidenceBand = derivePredictionConfidenceBand(confidence);
     const relatedFiles = Array.from(
       new Set([
         ...input.impactAssessment.affectedFiles,
