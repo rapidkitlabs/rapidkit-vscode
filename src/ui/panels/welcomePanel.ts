@@ -2546,20 +2546,16 @@ No markdown, no explanation outside the JSON.`;
     );
   }
 
-  private _getIncidentPrimaryCtaExperimentVariant(workspacePath?: string): 'single' | 'multi' {
-    const seed = workspacePath || this._resolveTelemetryWorkspacePath() || 'global';
-    return getIncidentPrimaryCtaExperimentVariant(seed);
-  }
-
   private _trackStudioEvent(
     command: string,
     workspacePath?: string,
     properties?: Record<string, unknown>
   ) {
     const resolvedWorkspacePath = workspacePath || this._resolveTelemetryWorkspacePath();
+    const experimentSeed = resolvedWorkspacePath || 'global';
     void WorkspaceUsageTracker.getInstance().trackCommandEvent(command, resolvedWorkspacePath, {
       source: 'incident_studio',
-      ctaVariant: this._getIncidentPrimaryCtaExperimentVariant(resolvedWorkspacePath),
+      ctaVariant: getIncidentPrimaryCtaExperimentVariant(experimentSeed),
       ...(properties || {}),
     });
   }
@@ -7798,7 +7794,9 @@ No markdown, no explanation outside the JSON.`;
       incidentUserMode,
       incidentStudioDisplayMode: getIncidentStudioDisplayMode(prefs, workspacePath),
       incidentAutoLearningPrompt: prefs?.incidentAutoLearningPrompt !== false,
-      incidentPrimaryCtaExperimentVariant: this._getIncidentPrimaryCtaExperimentVariant(),
+      incidentPrimaryCtaExperimentVariant: getIncidentPrimaryCtaExperimentVariant(
+        this._resolveTelemetryWorkspacePath() || 'global'
+      ),
       incidentRollbackApprovalMode: normalizeIncidentRollbackApprovalMode(
         prefs?.incidentRollbackApprovalMode
       ),
