@@ -117,7 +117,7 @@ import {
   resolveScopedProjectForWorkspace,
   type WorkspaceProjectDiscoveryDeps,
 } from './welcomePanelProjectDiscovery.js';
-
+import { resolveTelemetryWorkspacePath } from './welcomePanelTelemetryWorkspace.js';
 import {
   asRecord,
   isConversationMessageEntry,
@@ -2539,16 +2539,11 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private _resolveTelemetryWorkspacePath(): string | undefined {
-    if (WelcomePanel._selectedProject) {
-      return path.dirname(WelcomePanel._selectedProject.path);
-    }
-    if (WelcomePanel._workspaceExplorer) {
-      return WelcomePanel._workspaceExplorer.getSelectedWorkspace()?.path;
-    }
-    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-      return vscode.workspace.workspaceFolders[0].uri.fsPath;
-    }
-    return undefined;
+    return resolveTelemetryWorkspacePath(
+      WelcomePanel._selectedProject,
+      WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path,
+      vscode.workspace.workspaceFolders
+    );
   }
 
   private _getIncidentPrimaryCtaExperimentVariant(workspacePath?: string): 'single' | 'multi' {
