@@ -301,6 +301,59 @@ async function showAIFeatureOnboarding(
   }
 }
 
+async function runOptionalActivationLane(
+  logger: Logger,
+  laneName: string,
+  lane: () => Promise<void> | void
+): Promise<void> {
+  try {
+    await lane();
+  } catch (error) {
+    logger.warn(`[Activation Lane: ${laneName}] failed (non-critical)`, error);
+  }
+}
+
+function registerProjectRefreshWatchers(
+  context: vscode.ExtensionContext,
+  config: vscode.WorkspaceConfiguration,
+  onRefresh: () => void
+): void {
+  const fileWatchers = PROJECT_REFRESH_WATCH_PATTERNS.map((pattern) =>
+    vscode.workspace.createFileSystemWatcher(pattern, false, false, false)
+  );
+
+  let projectRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleProjectRefresh = () => {
+    if (!config.get('autoRefresh', true)) {
+      return;
+    }
+    if (projectRefreshTimer) {
+      clearTimeout(projectRefreshTimer);
+    }
+    projectRefreshTimer = setTimeout(() => {
+      projectRefreshTimer = null;
+      onRefresh();
+    }, PROJECT_WATCHER_REFRESH_DEBOUNCE_MS);
+  };
+
+  for (const watcher of fileWatchers) {
+    watcher.onDidCreate(scheduleProjectRefresh);
+    watcher.onDidChange(scheduleProjectRefresh);
+    watcher.onDidDelete(scheduleProjectRefresh);
+  }
+
+  context.subscriptions.push({
+    dispose: () => {
+      if (projectRefreshTimer) {
+        clearTimeout(projectRefreshTimer);
+        projectRefreshTimer = null;
+      }
+    },
+  });
+
+  context.subscriptions.push(...fileWatchers);
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   const logger = Logger.getInstance();
   logger.info('🚀 Workspai extension is activating...');
@@ -551,19 +604,24 @@ export async function activate(context: vscode.ExtensionContext) {
     const configManager = ConfigurationManager.getInstance();
     await configManager.initialize(context);
 
-    // Initialize workspace detector — deferred to background so sidebar renders immediately
-    WorkspaceDetector.getInstance()
-      .detectRapidKitProjects()
-      .catch((err) => logger.warn('Workspace detection failed (non-critical):', err));
+    await runOptionalActivationLane(logger, 'workspace-detection', async () => {
+      // Deferred to background so sidebar renders immediately.
+      WorkspaceDetector.getInstance()
+        .detectRapidKitProjects()
+        .catch((err) => logger.warn('Workspace detection failed (non-critical):', err));
+    });
 
-    // Initialize modules catalog service
-    ModulesCatalogService.initialize(context);
+    await runOptionalActivationLane(logger, 'modules-catalog-init', async () => {
+      ModulesCatalogService.initialize(context);
+    });
 
-    // Initialize examples service
-    ExamplesService.initialize(context);
+    await runOptionalActivationLane(logger, 'examples-service-init', async () => {
+      ExamplesService.initialize(context);
+    });
 
-    // Initialize kits service
-    KitsService.initialize(context);
+    await runOptionalActivationLane(logger, 'kits-service-init', async () => {
+      KitsService.initialize(context);
+    });
 
     // Ensure default workspace is registered
     logger.info('Step 3.5: Checking default workspace...');
@@ -793,8 +851,10 @@ export async function activate(context: vscode.ExtensionContext) {
     statusBar.updateStatus('ready');
 
     // Check for rapidkit npm updates (non-blocking, runs in background)
-    checkAndNotifyUpdates(context).catch((err) => {
-      logger.error('Update check failed', err);
+    await runOptionalActivationLane(logger, 'update-check', async () => {
+      checkAndNotifyUpdates(context).catch((err) => {
+        logger.error('Update check failed', err);
+      });
     });
 
     // Initialize workspace selection ASYNCHRONOUSLY (non-blocking)
@@ -829,41 +889,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
         logger.info('✅ Workspai extension initialized successfully!');
 
-        // Watch for workspace changes across polyglot backend stacks
-        const fileWatchers = PROJECT_REFRESH_WATCH_PATTERNS.map((pattern) =>
-          vscode.workspace.createFileSystemWatcher(pattern, false, false, false)
-        );
-
-        let projectRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-        const scheduleProjectRefresh = () => {
-          if (!config.get('autoRefresh', true)) {
-            return;
-          }
-          if (projectRefreshTimer) {
-            clearTimeout(projectRefreshTimer);
-          }
-          projectRefreshTimer = setTimeout(() => {
-            projectRefreshTimer = null;
-            projectExplorer.refresh();
-          }, PROJECT_WATCHER_REFRESH_DEBOUNCE_MS);
-        };
-
-        for (const watcher of fileWatchers) {
-          watcher.onDidCreate(scheduleProjectRefresh);
-          watcher.onDidChange(scheduleProjectRefresh);
-          watcher.onDidDelete(scheduleProjectRefresh);
-        }
-
-        context.subscriptions.push({
-          dispose: () => {
-            if (projectRefreshTimer) {
-              clearTimeout(projectRefreshTimer);
-              projectRefreshTimer = null;
-            }
-          },
+        registerProjectRefreshWatchers(context, config, () => {
+          projectExplorer.refresh();
         });
-
-        context.subscriptions.push(...fileWatchers);
       } catch (error) {
         logger.error('Error during async initialization:', error);
       }

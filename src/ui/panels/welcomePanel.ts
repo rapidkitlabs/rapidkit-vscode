@@ -971,107 +971,9 @@ export class WelcomePanel {
             await vscode.commands.executeCommand('workspai.workspaceBrain');
             break;
           case 'aiSuggestModules': {
-            // AI module recommendation based on framework + project name
-            const { framework: fw, projectName: pn } = message.data || {};
-            if (!fw) {
-              break;
-            }
-            const panel = this._panel;
-            try {
-              const { selectModelWithPreference } = await import('../../core/aiService.js');
-              const { model, modelId } = await selectModelWithPreference();
-              panel.webview.postMessage({
-                command: 'aiModuleSuggestions',
-                data: { loading: true, modelId },
-              });
-
-              if (!this._modulesCatalog.length) {
-                await this._refreshModulesCatalog();
-              }
-              const moduleList = this._modulesCatalog.length
-                ? this._modulesCatalog
-                    .map((m) => {
-                      const tags =
-                        m.tags && m.tags.length ? ` | tags: ${m.tags.slice(0, 4).join(', ')}` : '';
-                      return `- ${m.slug}: ${m.description || m.name} | category: ${m.category} | status: ${m.status}${tags}`;
-                    })
-                    .join('\n')
-                : '(module list not available)';
-
-              const prompt = `You are a Workspai assistant. Recommend the top 5 most useful Workspai modules for a ${fw} project named "${pn || 'my-project'}".
-Available modules:
-${moduleList}
-
-Reply ONLY with a JSON array of objects like: [{"slug": "free/auth/core", "reason": "short reason"}]
-Use ONLY slugs from the list above. Prefer modules that fit the framework and avoid deprecated or invented slugs.
-No markdown, no explanation outside the JSON.`;
-
-              const requestTokenSource = new vscode.CancellationTokenSource();
-              const requestTimeoutMs = getAIModuleSuggestTimeoutMs();
-              const timeoutHandle = setTimeout(() => {
-                requestTokenSource.cancel();
-              }, requestTimeoutMs);
-
-              let parsed: unknown = [];
-              try {
-                const response = await model.sendRequest(
-                  [vscode.LanguageModelChatMessage.User(prompt)],
-                  {},
-                  requestTokenSource.token
-                );
-
-                let raw = '';
-                for await (const chunk of response.text) {
-                  if (requestTokenSource.token.isCancellationRequested) {
-                    break;
-                  }
-                  raw += chunk;
-                }
-
-                if (requestTokenSource.token.isCancellationRequested) {
-                  throw new Error(`AI module suggestion timed out after ${requestTimeoutMs}ms.`);
-                }
-
-                const rawJsonArray = extractFirstJsonArray(raw);
-                if (rawJsonArray) {
-                  try {
-                    parsed = JSON.parse(rawJsonArray);
-                  } catch {
-                    parsed = [];
-                  }
-                }
-              } finally {
-                clearTimeout(timeoutHandle);
-                requestTokenSource.dispose();
-              }
-
-              const allowedSlugs = new Set(this._modulesCatalog.map((m) => m.slug));
-              const suggestions = Array.isArray(parsed)
-                ? parsed
-                    .filter(
-                      (item): item is { slug: string; reason?: string } =>
-                        item && typeof item === 'object' && typeof item.slug === 'string'
-                    )
-                    .map((item) => ({
-                      slug: item.slug.trim(),
-                      reason:
-                        typeof item.reason === 'string' && item.reason.trim()
-                          ? item.reason.trim().slice(0, 180)
-                          : 'Recommended for this project',
-                    }))
-                    .filter((item) => allowedSlugs.has(item.slug))
-                    .slice(0, 5)
-                : [];
-              panel.webview.postMessage({
-                command: 'aiModuleSuggestions',
-                data: { loading: false, modelId, suggestions },
-              });
-            } catch (err: unknown) {
-              panel.webview.postMessage({
-                command: 'aiModuleSuggestions',
-                data: { loading: false, error: safeErrorMessage(err) || 'AI unavailable' },
-              });
-            }
+            await this._runOptionalMessageLane('aiSuggestModules', async () => {
+              await this._handleAISuggestModulesMessage(message.data);
+            });
             break;
           }
           case 'aiGetModels': {
@@ -1087,263 +989,15 @@ No markdown, no explanation outside the JSON.`;
             break;
           }
           case 'aiCancelQuery': {
-            const cancelRequestId =
-              typeof message?.data?.requestId === 'number' ? message.data.requestId : undefined;
-            if (
-              typeof cancelRequestId === 'number' &&
-              typeof this._activeAIQueryRequestId === 'number' &&
-              cancelRequestId !== this._activeAIQueryRequestId
-            ) {
-              break;
-            }
-            this._aiQueryTokenSource?.cancel();
-            this._aiQueryTokenSource?.dispose();
-            this._aiQueryTokenSource = undefined;
-            const doneRequestId =
-              typeof cancelRequestId === 'number' ? cancelRequestId : this._activeAIQueryRequestId;
-            this._postAIStreamDoneOnce(doneRequestId);
-            this._activeAIQueryRequestId = undefined;
+            await this._runOptionalMessageLane('aiCancelQuery', () => {
+              this._handleAICancelQueryMessage(message.data);
+            });
             break;
           }
           case 'aiQuery': {
-            // Stream AI response for the AI modal queries
-            const {
-              mode,
-              question,
-              context: aiCtx,
-              requestId,
-              history,
-              modelId: requestedModelIdRaw,
-            } = message.data || {};
-            const requestedModelId = normalizeRequestedModelId(requestedModelIdRaw);
-            const panel = this._panel;
-            const queryRequestId = typeof requestId === 'number' ? requestId : Date.now();
-            this._trackAIQueryRequestStart(queryRequestId);
-            const normalizedMode = mode === 'debug' ? 'debug' : 'ask';
-            const normalizedQuestion = typeof question === 'string' ? question : '';
-            const aiContext =
-              aiCtx && typeof aiCtx === 'object'
-                ? (aiCtx as import('../../core/aiService').AIModalContext)
-                : undefined;
-            const conversationHistory = Array.isArray(history)
-              ? history.filter(isConversationMessageEntry).slice(-8)
-              : [];
-
-            const canTrackTelemetry =
-              typeof (vscode.window as { createOutputChannel?: unknown }).createOutputChannel ===
-              'function';
-
-            const trackAIModalOutcome = async (
-              result:
-                | 'success'
-                | 'empty'
-                | 'prepare-error'
-                | 'clarification-needed'
-                | 'cancelled'
-                | 'error',
-              extraProps?: Record<string, unknown>
-            ) => {
-              if (!canTrackTelemetry) {
-                return;
-              }
-
-              try {
-                await WorkspaceUsageTracker.getInstance().trackCommandEvent(
-                  `workspai.aimodal.${normalizedMode}`,
-                  typeof aiContext?.path === 'string' ? aiContext.path : undefined,
-                  {
-                    source: 'ai-modal',
-                    result,
-                    hasPrompt: Boolean(normalizedQuestion.trim()),
-                    historyTurns: conversationHistory.length,
-                    ...extraProps,
-                  }
-                );
-              } catch {
-                // Telemetry should never interrupt AI modal UX.
-              }
-            };
-
-            if (!normalizedQuestion.trim() || !aiContext) {
-              await trackAIModalOutcome('empty', {
-                hasContext: Boolean(aiContext),
-              });
-              this._postAIStreamDoneOnce(queryRequestId);
-              break;
-            }
-
-            this._aiQueryTokenSource?.cancel();
-            this._aiQueryTokenSource?.dispose();
-            const tokenSource = new vscode.CancellationTokenSource();
-            this._aiQueryTokenSource = tokenSource;
-            this._activeAIQueryRequestId = queryRequestId;
-            let currentStage: 'prepare' | 'stream' = 'prepare';
-            let chunkBuffer = '';
-            let flushTimer: ReturnType<typeof setInterval> | null = null;
-            let streamDoneSent = false;
-
-            const flushBufferedChunks = () => {
-              if (chunkBuffer && !tokenSource.token.isCancellationRequested) {
-                panel.webview.postMessage({
-                  command: 'aiChunkUpdate',
-                  data: { text: chunkBuffer, requestId: queryRequestId },
-                });
-              }
-              chunkBuffer = '';
-            };
-
-            const stopFlushTimer = () => {
-              if (flushTimer !== null) {
-                clearInterval(flushTimer);
-                flushTimer = null;
-              }
-            };
-
-            const sendDoneOnce = (error?: string) => {
-              if (streamDoneSent) {
-                return;
-              }
-              streamDoneSent = true;
-              this._postAIStreamDoneOnce(queryRequestId, error);
-            };
-
-            try {
-              const { streamAIResponse, prepareAIConversation, extractContractTelemetry } =
-                await import('../../core/aiService.js');
-
-              // Build doctor snapshot for the contract — best-effort, non-blocking
-              const aiQueryDoctorSnapshot =
-                aiContext?.path || aiContext?.workspaceRootPath
-                  ? await this._readDoctorEvidenceSnapshot(
-                      aiContext.workspaceRootPath ?? aiContext.path
-                    ).catch(() => undefined)
-                  : undefined;
-
-              const prepared = await prepareAIConversation(
-                normalizedMode,
-                normalizedQuestion,
-                aiContext,
-                conversationHistory,
-                aiQueryDoctorSnapshot ?? undefined
-              );
-
-              if (prepared.validation.clarificationNeeded) {
-                const clarificationText =
-                  prepared.validation.clarificationReason ??
-                  'Context evidence is missing. Please select a workspace and run npx --yes --package rapidkit rapidkit doctor workspace, then ask again.';
-
-                if (canTrackTelemetry) {
-                  try {
-                    await WorkspaceUsageTracker.getInstance().trackCommandEvent(
-                      'workspai.aimodal.clarification_gate',
-                      typeof aiContext?.path === 'string' ? aiContext.path : undefined,
-                      {
-                        source: 'ai-modal',
-                        mode: normalizedMode,
-                        missingFields: prepared.validation.missing,
-                      }
-                    );
-                  } catch {
-                    // Telemetry should never interrupt AI modal UX.
-                  }
-                }
-
-                panel.webview.postMessage({
-                  command: 'aiChunkUpdate',
-                  data: {
-                    text: `${clarificationText}\n\nPlease share the selected workspace/project path so I can continue with evidence-based guidance.`,
-                    requestId: queryRequestId,
-                  },
-                });
-                this._postAIStreamDoneOnce(queryRequestId);
-                await trackAIModalOutcome('clarification-needed', {
-                  stage: 'prepare',
-                  missingFields: prepared.validation.missing,
-                });
-                break;
-              }
-
-              currentStage = 'stream';
-
-              // Send contract telemetry to webview before streaming starts
-              if (aiContext) {
-                panel.webview.postMessage({
-                  command: 'aiContextContract',
-                  data: {
-                    requestId: queryRequestId,
-                    ...extractContractTelemetry(prepared.contract),
-                    persona_level: prepared.contract.persona,
-                    evidence_confidence: prepared.contract.evidence_confidence,
-                  },
-                });
-              }
-
-              // Buffer chunks and flush to webview every 50 ms.
-              // Without this, the extension host calls postMessage hundreds of
-              // times per second inside the same event-loop tick, causing VS Code's
-              // IPC layer to batch ALL messages into one delivery — the webview
-              // receives nothing until streaming finishes, then sees the full text
-              // appear all at once. Explicit time-slicing breaks that batching.
-              flushTimer = setInterval(() => {
-                flushBufferedChunks();
-              }, 50);
-
-              const { modelId } = await streamAIResponse(
-                prepared.messages,
-                (chunk: { text: string; done: boolean }) => {
-                  if (chunk.text) {
-                    chunkBuffer += chunk.text;
-                  }
-                  if (chunk.done) {
-                    stopFlushTimer();
-                    flushBufferedChunks();
-                    sendDoneOnce();
-                  }
-                },
-                tokenSource.token,
-                requestedModelId
-              );
-
-              if (tokenSource.token.isCancellationRequested) {
-                await trackAIModalOutcome('cancelled', { stage: 'after-stream' });
-              } else {
-                await trackAIModalOutcome('success', {
-                  modelId,
-                });
-              }
-
-              // Notify the webview which model was used
-              panel.webview.postMessage({
-                command: 'aiModelUsed',
-                data: { modelId, requestId: queryRequestId },
-              });
-            } catch (err) {
-              if (tokenSource.token.isCancellationRequested) {
-                await trackAIModalOutcome('cancelled', { stage: currentStage });
-                if (this._activeAIQueryRequestId === queryRequestId) {
-                  sendDoneOnce();
-                }
-                break;
-              }
-
-              const errMsg = err instanceof Error ? err.message : String(err);
-              await trackAIModalOutcome(currentStage === 'prepare' ? 'prepare-error' : 'error', {
-                error: errMsg.slice(0, 180),
-                stage: currentStage,
-              });
-
-              sendDoneOnce(errMsg);
-            } finally {
-              stopFlushTimer();
-              chunkBuffer = '';
-              if (this._aiQueryTokenSource === tokenSource) {
-                this._aiQueryTokenSource = undefined;
-              }
-              if (this._activeAIQueryRequestId === queryRequestId) {
-                this._activeAIQueryRequestId = undefined;
-              }
-              tokenSource.dispose();
-            }
+            await this._runOptionalMessageLane('aiQuery', async () => {
+              await this._handleAIQueryMessage(message.data);
+            });
             break;
           }
           case 'aiParseCreation': {
@@ -1783,122 +1437,14 @@ No markdown, no explanation outside the JSON.`;
             });
             break;
           case 'runDoctorChecks':
-            {
-              const explicitProjectPath =
-                typeof message.data?.projectPath === 'string' && message.data.projectPath.trim()
-                  ? message.data.projectPath.trim()
-                  : undefined;
-              const explicitProjectName =
-                typeof message.data?.projectName === 'string' && message.data.projectName.trim()
-                  ? message.data.projectName.trim()
-                  : undefined;
-              const explicitWorkspacePath =
-                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
-                  ? message.data.workspacePath.trim()
-                  : undefined;
-              const selectedWorkspace = this._getSelectedWorkspaceInfo();
-              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
-              const workspaceName =
-                (typeof message.data?.workspaceName === 'string' &&
-                  message.data.workspaceName.trim()) ||
-                selectedWorkspace?.name ||
-                (workspacePath ? path.basename(workspacePath) : undefined);
-
-              if (!workspacePath) {
-                vscode.window.showWarningMessage('Select a workspace first.');
-                break;
-              }
-
-              if (explicitProjectPath) {
-                const projectName = explicitProjectName || path.basename(explicitProjectPath);
-                await vscode.commands.executeCommand('workspai.projectDoctor', {
-                  project: {
-                    path: explicitProjectPath,
-                    name: projectName,
-                  },
-                  preferredAction: 'check',
-                });
-
-                this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
-                  actionType: 'doctor-project-check',
-                  workspaceName: workspaceName || path.basename(workspacePath),
-                  projectName,
-                });
-                break;
-              }
-
-              await vscode.commands.executeCommand('workspai.checkWorkspaceHealth', {
-                workspace: {
-                  path: workspacePath,
-                  name: workspaceName,
-                },
-                preferredAction: 'check',
-              });
-
-              this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
-                actionType: 'doctor-workspace-check',
-                workspaceName: workspaceName || path.basename(workspacePath),
-              });
-            }
+            await this._runOptionalMessageLane('runDoctorChecks', async () => {
+              await this._handleRunDoctorMessage(message.data, 'check');
+            });
             break;
           case 'runDoctorFix':
-            {
-              const explicitProjectPath =
-                typeof message.data?.projectPath === 'string' && message.data.projectPath.trim()
-                  ? message.data.projectPath.trim()
-                  : undefined;
-              const explicitProjectName =
-                typeof message.data?.projectName === 'string' && message.data.projectName.trim()
-                  ? message.data.projectName.trim()
-                  : undefined;
-              const explicitWorkspacePath =
-                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
-                  ? message.data.workspacePath.trim()
-                  : undefined;
-              const selectedWorkspace = this._getSelectedWorkspaceInfo();
-              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
-              const workspaceName =
-                (typeof message.data?.workspaceName === 'string' &&
-                  message.data.workspaceName.trim()) ||
-                selectedWorkspace?.name ||
-                (workspacePath ? path.basename(workspacePath) : undefined);
-
-              if (!workspacePath) {
-                vscode.window.showWarningMessage('Select a workspace first.');
-                break;
-              }
-
-              if (explicitProjectPath) {
-                const projectName = explicitProjectName || path.basename(explicitProjectPath);
-                await vscode.commands.executeCommand('workspai.projectDoctor', {
-                  project: {
-                    path: explicitProjectPath,
-                    name: projectName,
-                  },
-                  preferredAction: 'fix',
-                });
-
-                this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
-                  actionType: 'doctor-project-fix',
-                  workspaceName: workspaceName || path.basename(workspacePath),
-                  projectName,
-                });
-                break;
-              }
-
-              await vscode.commands.executeCommand('workspai.checkWorkspaceHealth', {
-                workspace: {
-                  path: workspacePath,
-                  name: workspaceName,
-                },
-                preferredAction: 'fix',
-              });
-
-              this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
-                actionType: 'doctor-workspace-fix',
-                workspaceName: workspaceName || path.basename(workspacePath),
-              });
-            }
+            await this._runOptionalMessageLane('runDoctorFix', async () => {
+              await this._handleRunDoctorMessage(message.data, 'fix');
+            });
             break;
           case 'viewComplianceReport':
             {
@@ -2053,99 +1599,9 @@ No markdown, no explanation outside the JSON.`;
             }
             break;
           case 'openIncidentNavigatorTarget':
-            {
-              const targetPath =
-                typeof message.data?.path === 'string' ? message.data.path.trim() : '';
-              const targetKind =
-                typeof message.data?.kind === 'string' ? message.data.kind.trim() : 'file';
-              const targetLabel =
-                typeof message.data?.label === 'string' && message.data.label.trim()
-                  ? message.data.label.trim()
-                  : targetPath;
-              const targetSymbol =
-                typeof message.data?.symbolName === 'string' && message.data.symbolName.trim()
-                  ? message.data.symbolName.trim()
-                  : undefined;
-              const rawTargetLine = Number(message.data?.startLine);
-              const targetLine =
-                Number.isFinite(rawTargetLine) && rawTargetLine > 0
-                  ? Math.floor(rawTargetLine)
-                  : undefined;
-              const explicitWorkspacePath =
-                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
-                  ? message.data.workspacePath.trim()
-                  : undefined;
-              const explicitProjectPath =
-                typeof message.data?.projectPath === 'string' && message.data.projectPath.trim()
-                  ? message.data.projectPath.trim()
-                  : undefined;
-              const selectedWorkspace = this._getSelectedWorkspaceInfo();
-              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
-              const projectPath =
-                explicitProjectPath ||
-                (WelcomePanel._selectedProject?.path &&
-                isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
-                  ? WelcomePanel._selectedProject.path
-                  : undefined);
-
-              if (!targetPath) {
-                vscode.window.showWarningMessage('No impact target was provided.');
-                break;
-              }
-
-              const resolvedTargetPath = resolveIncidentNavigatorTargetPath({
-                targetPath,
-                workspacePath,
-                projectPath,
-              });
-
-              if (!resolvedTargetPath) {
-                vscode.window.showWarningMessage(`Could not resolve impact target: ${targetLabel}`);
-                break;
-              }
-
-              if (!(await fs.pathExists(resolvedTargetPath))) {
-                vscode.window.showWarningMessage(
-                  `Impact target is not available in this workspace: ${targetLabel}`
-                );
-                break;
-              }
-
-              const targetStat = await fs.stat(resolvedTargetPath);
-              if (!targetStat.isFile()) {
-                vscode.window.showWarningMessage(
-                  `Impact target is not an openable file: ${targetLabel}`
-                );
-                break;
-              }
-
-              const document = await vscode.workspace.openTextDocument(
-                vscode.Uri.file(resolvedTargetPath)
-              );
-              const editor = await vscode.window.showTextDocument(document, { preview: false });
-              const selection = findIncidentNavigatorSelection(document.getText(), {
-                symbolName: targetSymbol,
-                startLine: targetLine,
-              });
-              if (selection) {
-                const range = new vscode.Range(
-                  selection.line,
-                  selection.startCharacter,
-                  selection.line,
-                  selection.endCharacter
-                );
-                editor.selection = new vscode.Selection(range.start, range.end);
-                editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
-              }
-
-              if (workspacePath) {
-                this._trackStudioEvent('workspai.studio.scope_navigator_opened', workspacePath, {
-                  targetKind: targetKind.slice(0, 40),
-                  targetLabel: targetLabel.slice(0, 180),
-                  ...(targetSymbol ? { targetSymbol: targetSymbol.slice(0, 180) } : {}),
-                });
-              }
-            }
+            await this._runOptionalMessageLane('openIncidentNavigatorTarget', async () => {
+              await this._handleOpenIncidentNavigatorTargetMessage(message.data);
+            });
             break;
           case 'runIncidentInlineCommand':
             {
@@ -2417,6 +1873,526 @@ No markdown, no explanation outside the JSON.`;
     }
 
     this._panel.webview.postMessage({ command: 'aiStreamDone' });
+  }
+
+  private async _runOptionalMessageLane(
+    laneName: string,
+    lane: () => Promise<void> | void
+  ): Promise<void> {
+    try {
+      await lane();
+    } catch (error) {
+      console.warn(`[WelcomePanel] Message lane failed (${laneName})`, error);
+    }
+  }
+
+  private async _handleAISuggestModulesMessage(messageData: unknown): Promise<void> {
+    const payload = asRecord(messageData);
+    const fw = typeof payload?.framework === 'string' ? payload.framework : undefined;
+    const pn = typeof payload?.projectName === 'string' ? payload.projectName : undefined;
+    if (!fw) {
+      return;
+    }
+
+    const panel = this._panel;
+    try {
+      const { selectModelWithPreference } = await import('../../core/aiService.js');
+      const { model, modelId } = await selectModelWithPreference();
+      panel.webview.postMessage({
+        command: 'aiModuleSuggestions',
+        data: { loading: true, modelId },
+      });
+
+      if (!this._modulesCatalog.length) {
+        await this._refreshModulesCatalog();
+      }
+      const moduleList = this._modulesCatalog.length
+        ? this._modulesCatalog
+            .map((m) => {
+              const tags =
+                m.tags && m.tags.length ? ` | tags: ${m.tags.slice(0, 4).join(', ')}` : '';
+              return `- ${m.slug}: ${m.description || m.name} | category: ${m.category} | status: ${m.status}${tags}`;
+            })
+            .join('\n')
+        : '(module list not available)';
+
+      const prompt = `You are a Workspai assistant. Recommend the top 5 most useful Workspai modules for a ${fw} project named "${pn || 'my-project'}".
+Available modules:
+${moduleList}
+
+Reply ONLY with a JSON array of objects like: [{"slug": "free/auth/core", "reason": "short reason"}]
+Use ONLY slugs from the list above. Prefer modules that fit the framework and avoid deprecated or invented slugs.
+No markdown, no explanation outside the JSON.`;
+
+      const requestTokenSource = new vscode.CancellationTokenSource();
+      const requestTimeoutMs = getAIModuleSuggestTimeoutMs();
+      const timeoutHandle = setTimeout(() => {
+        requestTokenSource.cancel();
+      }, requestTimeoutMs);
+
+      let parsed: unknown = [];
+      try {
+        const response = await model.sendRequest(
+          [vscode.LanguageModelChatMessage.User(prompt)],
+          {},
+          requestTokenSource.token
+        );
+
+        let raw = '';
+        for await (const chunk of response.text) {
+          if (requestTokenSource.token.isCancellationRequested) {
+            break;
+          }
+          raw += chunk;
+        }
+
+        if (requestTokenSource.token.isCancellationRequested) {
+          throw new Error(`AI module suggestion timed out after ${requestTimeoutMs}ms.`);
+        }
+
+        const rawJsonArray = extractFirstJsonArray(raw);
+        if (rawJsonArray) {
+          try {
+            parsed = JSON.parse(rawJsonArray);
+          } catch {
+            parsed = [];
+          }
+        }
+      } finally {
+        clearTimeout(timeoutHandle);
+        requestTokenSource.dispose();
+      }
+
+      const allowedSlugs = new Set(this._modulesCatalog.map((m) => m.slug));
+      const suggestions = Array.isArray(parsed)
+        ? parsed
+            .filter(
+              (item): item is { slug: string; reason?: string } =>
+                item && typeof item === 'object' && typeof item.slug === 'string'
+            )
+            .map((item) => ({
+              slug: item.slug.trim(),
+              reason:
+                typeof item.reason === 'string' && item.reason.trim()
+                  ? item.reason.trim().slice(0, 180)
+                  : 'Recommended for this project',
+            }))
+            .filter((item) => allowedSlugs.has(item.slug))
+            .slice(0, 5)
+        : [];
+      panel.webview.postMessage({
+        command: 'aiModuleSuggestions',
+        data: { loading: false, modelId, suggestions },
+      });
+    } catch (err: unknown) {
+      panel.webview.postMessage({
+        command: 'aiModuleSuggestions',
+        data: { loading: false, error: safeErrorMessage(err) || 'AI unavailable' },
+      });
+    }
+  }
+
+  private _handleAICancelQueryMessage(messageData: unknown): void {
+    const payload = asRecord(messageData);
+    const cancelRequestId = typeof payload?.requestId === 'number' ? payload.requestId : undefined;
+    if (
+      typeof cancelRequestId === 'number' &&
+      typeof this._activeAIQueryRequestId === 'number' &&
+      cancelRequestId !== this._activeAIQueryRequestId
+    ) {
+      return;
+    }
+    this._aiQueryTokenSource?.cancel();
+    this._aiQueryTokenSource?.dispose();
+    this._aiQueryTokenSource = undefined;
+    const doneRequestId =
+      typeof cancelRequestId === 'number' ? cancelRequestId : this._activeAIQueryRequestId;
+    this._postAIStreamDoneOnce(doneRequestId);
+    this._activeAIQueryRequestId = undefined;
+  }
+
+  private async _handleAIQueryMessage(messageData: unknown): Promise<void> {
+    const payload = asRecord(messageData);
+    const mode = payload?.mode;
+    const question = payload?.question;
+    const aiCtx = payload?.context;
+    const requestId = payload?.requestId;
+    const history = payload?.history;
+    const requestedModelIdRaw = payload?.modelId;
+
+    const requestedModelId = normalizeRequestedModelId(requestedModelIdRaw);
+    const panel = this._panel;
+    const queryRequestId = typeof requestId === 'number' ? requestId : Date.now();
+    this._trackAIQueryRequestStart(queryRequestId);
+    const normalizedMode = mode === 'debug' ? 'debug' : 'ask';
+    const normalizedQuestion = typeof question === 'string' ? question : '';
+    const aiContext =
+      aiCtx && typeof aiCtx === 'object'
+        ? (aiCtx as import('../../core/aiService').AIModalContext)
+        : undefined;
+    const conversationHistory = Array.isArray(history)
+      ? history.filter(isConversationMessageEntry).slice(-8)
+      : [];
+
+    const canTrackTelemetry =
+      typeof (vscode.window as { createOutputChannel?: unknown }).createOutputChannel ===
+      'function';
+
+    const trackAIModalOutcome = async (
+      result:
+        | 'success'
+        | 'empty'
+        | 'prepare-error'
+        | 'clarification-needed'
+        | 'cancelled'
+        | 'error',
+      extraProps?: Record<string, unknown>
+    ) => {
+      if (!canTrackTelemetry) {
+        return;
+      }
+
+      try {
+        await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+          `workspai.aimodal.${normalizedMode}`,
+          typeof aiContext?.path === 'string' ? aiContext.path : undefined,
+          {
+            source: 'ai-modal',
+            result,
+            hasPrompt: Boolean(normalizedQuestion.trim()),
+            historyTurns: conversationHistory.length,
+            ...extraProps,
+          }
+        );
+      } catch {
+        // Telemetry should never interrupt AI modal UX.
+      }
+    };
+
+    if (!normalizedQuestion.trim() || !aiContext) {
+      await trackAIModalOutcome('empty', {
+        hasContext: Boolean(aiContext),
+      });
+      this._postAIStreamDoneOnce(queryRequestId);
+      return;
+    }
+
+    this._aiQueryTokenSource?.cancel();
+    this._aiQueryTokenSource?.dispose();
+    const tokenSource = new vscode.CancellationTokenSource();
+    this._aiQueryTokenSource = tokenSource;
+    this._activeAIQueryRequestId = queryRequestId;
+    let currentStage: 'prepare' | 'stream' = 'prepare';
+    let chunkBuffer = '';
+    let flushTimer: ReturnType<typeof setInterval> | null = null;
+    let streamDoneSent = false;
+
+    const flushBufferedChunks = () => {
+      if (chunkBuffer && !tokenSource.token.isCancellationRequested) {
+        panel.webview.postMessage({
+          command: 'aiChunkUpdate',
+          data: { text: chunkBuffer, requestId: queryRequestId },
+        });
+      }
+      chunkBuffer = '';
+    };
+
+    const stopFlushTimer = () => {
+      if (flushTimer !== null) {
+        clearInterval(flushTimer);
+        flushTimer = null;
+      }
+    };
+
+    const sendDoneOnce = (error?: string) => {
+      if (streamDoneSent) {
+        return;
+      }
+      streamDoneSent = true;
+      this._postAIStreamDoneOnce(queryRequestId, error);
+    };
+
+    try {
+      const { streamAIResponse, prepareAIConversation, extractContractTelemetry } =
+        await import('../../core/aiService.js');
+
+      // Build doctor snapshot for the contract - best-effort, non-blocking
+      const aiQueryDoctorSnapshot =
+        aiContext?.path || aiContext?.workspaceRootPath
+          ? await this._readDoctorEvidenceSnapshot(
+              aiContext.workspaceRootPath ?? aiContext.path
+            ).catch(() => undefined)
+          : undefined;
+
+      const prepared = await prepareAIConversation(
+        normalizedMode,
+        normalizedQuestion,
+        aiContext,
+        conversationHistory,
+        aiQueryDoctorSnapshot ?? undefined
+      );
+
+      if (prepared.validation.clarificationNeeded) {
+        const clarificationText =
+          prepared.validation.clarificationReason ??
+          'Context evidence is missing. Please select a workspace and run npx --yes --package rapidkit rapidkit doctor workspace, then ask again.';
+
+        if (canTrackTelemetry) {
+          try {
+            await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+              'workspai.aimodal.clarification_gate',
+              typeof aiContext?.path === 'string' ? aiContext.path : undefined,
+              {
+                source: 'ai-modal',
+                mode: normalizedMode,
+                missingFields: prepared.validation.missing,
+              }
+            );
+          } catch {
+            // Telemetry should never interrupt AI modal UX.
+          }
+        }
+
+        panel.webview.postMessage({
+          command: 'aiChunkUpdate',
+          data: {
+            text: `${clarificationText}\n\nPlease share the selected workspace/project path so I can continue with evidence-based guidance.`,
+            requestId: queryRequestId,
+          },
+        });
+        this._postAIStreamDoneOnce(queryRequestId);
+        await trackAIModalOutcome('clarification-needed', {
+          stage: 'prepare',
+          missingFields: prepared.validation.missing,
+        });
+        return;
+      }
+
+      currentStage = 'stream';
+
+      // Send contract telemetry to webview before streaming starts
+      if (aiContext) {
+        panel.webview.postMessage({
+          command: 'aiContextContract',
+          data: {
+            requestId: queryRequestId,
+            ...extractContractTelemetry(prepared.contract),
+            persona_level: prepared.contract.persona,
+            evidence_confidence: prepared.contract.evidence_confidence,
+          },
+        });
+      }
+
+      // Buffer chunks and flush to webview every 50 ms to avoid host-side batch delivery.
+      flushTimer = setInterval(() => {
+        flushBufferedChunks();
+      }, 50);
+
+      const { modelId } = await streamAIResponse(
+        prepared.messages,
+        (chunk: { text: string; done: boolean }) => {
+          if (chunk.text) {
+            chunkBuffer += chunk.text;
+          }
+          if (chunk.done) {
+            stopFlushTimer();
+            flushBufferedChunks();
+            sendDoneOnce();
+          }
+        },
+        tokenSource.token,
+        requestedModelId
+      );
+
+      if (tokenSource.token.isCancellationRequested) {
+        await trackAIModalOutcome('cancelled', { stage: 'after-stream' });
+      } else {
+        await trackAIModalOutcome('success', {
+          modelId,
+        });
+      }
+
+      // Notify the webview which model was used
+      panel.webview.postMessage({
+        command: 'aiModelUsed',
+        data: { modelId, requestId: queryRequestId },
+      });
+    } catch (err) {
+      if (tokenSource.token.isCancellationRequested) {
+        await trackAIModalOutcome('cancelled', { stage: currentStage });
+        if (this._activeAIQueryRequestId === queryRequestId) {
+          sendDoneOnce();
+        }
+        return;
+      }
+
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await trackAIModalOutcome(currentStage === 'prepare' ? 'prepare-error' : 'error', {
+        error: errMsg.slice(0, 180),
+        stage: currentStage,
+      });
+
+      sendDoneOnce(errMsg);
+    } finally {
+      stopFlushTimer();
+      chunkBuffer = '';
+      if (this._aiQueryTokenSource === tokenSource) {
+        this._aiQueryTokenSource = undefined;
+      }
+      if (this._activeAIQueryRequestId === queryRequestId) {
+        this._activeAIQueryRequestId = undefined;
+      }
+      tokenSource.dispose();
+    }
+  }
+
+  private async _handleRunDoctorMessage(
+    messageData: unknown,
+    action: 'check' | 'fix'
+  ): Promise<void> {
+    const payload = asRecord(messageData);
+    const rawProjectPath = payload?.projectPath;
+    const explicitProjectPath =
+      typeof rawProjectPath === 'string' && rawProjectPath.trim()
+        ? rawProjectPath.trim()
+        : undefined;
+    const rawProjectName = payload?.projectName;
+    const explicitProjectName =
+      typeof rawProjectName === 'string' && rawProjectName.trim()
+        ? rawProjectName.trim()
+        : undefined;
+    const rawWorkspacePath = payload?.workspacePath;
+    const explicitWorkspacePath =
+      typeof rawWorkspacePath === 'string' && rawWorkspacePath.trim()
+        ? rawWorkspacePath.trim()
+        : undefined;
+    const selectedWorkspace = this._getSelectedWorkspaceInfo();
+    const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
+    const rawWorkspaceName = payload?.workspaceName;
+    const workspaceName =
+      (typeof rawWorkspaceName === 'string' && rawWorkspaceName.trim()) ||
+      selectedWorkspace?.name ||
+      (workspacePath ? path.basename(workspacePath) : undefined);
+
+    if (!workspacePath) {
+      vscode.window.showWarningMessage('Select a workspace first.');
+      return;
+    }
+
+    if (explicitProjectPath) {
+      const projectName = explicitProjectName || path.basename(explicitProjectPath);
+      await vscode.commands.executeCommand('workspai.projectDoctor', {
+        project: {
+          path: explicitProjectPath,
+          name: projectName,
+        },
+        preferredAction: action,
+      });
+      this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+        actionType: `doctor-project-${action}`,
+        workspaceName: workspaceName || path.basename(workspacePath),
+        projectName,
+      });
+      return;
+    }
+
+    await vscode.commands.executeCommand('workspai.checkWorkspaceHealth', {
+      workspace: {
+        path: workspacePath,
+        name: workspaceName,
+      },
+      preferredAction: action,
+    });
+    this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+      actionType: `doctor-workspace-${action}`,
+      workspaceName: workspaceName || path.basename(workspacePath),
+    });
+  }
+
+  private async _handleOpenIncidentNavigatorTargetMessage(messageData: unknown): Promise<void> {
+    const payload = asRecord(messageData);
+    const rawPath = payload?.path;
+    const targetPath = typeof rawPath === 'string' ? rawPath.trim() : '';
+    const rawKind = payload?.kind;
+    const targetKind = typeof rawKind === 'string' ? rawKind.trim() : 'file';
+    const rawLabel = payload?.label;
+    const targetLabel =
+      typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : targetPath;
+    const rawSymbol = payload?.symbolName;
+    const targetSymbol =
+      typeof rawSymbol === 'string' && rawSymbol.trim() ? rawSymbol.trim() : undefined;
+    const rawStartLine = payload?.startLine;
+    const rawTargetLine = Number(rawStartLine);
+    const targetLine =
+      Number.isFinite(rawTargetLine) && rawTargetLine > 0 ? Math.floor(rawTargetLine) : undefined;
+    const rawWsPath = payload?.workspacePath;
+    const explicitWorkspacePath =
+      typeof rawWsPath === 'string' && rawWsPath.trim() ? rawWsPath.trim() : undefined;
+    const rawProjPath = payload?.projectPath;
+    const explicitProjectPath =
+      typeof rawProjPath === 'string' && rawProjPath.trim() ? rawProjPath.trim() : undefined;
+    const selectedWorkspace = this._getSelectedWorkspaceInfo();
+    const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
+    const projectPath =
+      explicitProjectPath ||
+      (WelcomePanel._selectedProject?.path &&
+      isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
+        ? WelcomePanel._selectedProject.path
+        : undefined);
+
+    if (!targetPath) {
+      vscode.window.showWarningMessage('No impact target was provided.');
+      return;
+    }
+
+    const resolvedTargetPath = resolveIncidentNavigatorTargetPath({
+      targetPath,
+      workspacePath,
+      projectPath,
+    });
+
+    if (!resolvedTargetPath) {
+      vscode.window.showWarningMessage(`Could not resolve impact target: ${targetLabel}`);
+      return;
+    }
+
+    if (!(await fs.pathExists(resolvedTargetPath))) {
+      vscode.window.showWarningMessage(
+        `Impact target is not available in this workspace: ${targetLabel}`
+      );
+      return;
+    }
+
+    const targetStat = await fs.stat(resolvedTargetPath);
+    if (!targetStat.isFile()) {
+      vscode.window.showWarningMessage(`Impact target is not an openable file: ${targetLabel}`);
+      return;
+    }
+
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolvedTargetPath));
+    const editor = await vscode.window.showTextDocument(document, { preview: false });
+    const selection = findIncidentNavigatorSelection(document.getText(), {
+      symbolName: targetSymbol,
+      startLine: targetLine,
+    });
+    if (selection) {
+      const range = new vscode.Range(
+        selection.line,
+        selection.startCharacter,
+        selection.line,
+        selection.endCharacter
+      );
+      editor.selection = new vscode.Selection(range.start, range.end);
+      editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+    }
+
+    if (workspacePath) {
+      this._trackStudioEvent('workspai.studio.scope_navigator_opened', workspacePath, {
+        targetKind: targetKind.slice(0, 40),
+        targetLabel: targetLabel.slice(0, 180),
+        ...(targetSymbol ? { targetSymbol: targetSymbol.slice(0, 180) } : {}),
+      });
+    }
   }
 
   private _registerDoctorEvidenceWatcher() {
