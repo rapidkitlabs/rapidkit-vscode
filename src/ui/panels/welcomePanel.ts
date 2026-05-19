@@ -1001,47 +1001,9 @@ export class WelcomePanel {
             break;
           }
           case 'aiParseCreation': {
-            // Parse workspace/project creation intent via AI
-            const {
-              prompt: creationPrompt,
-              mode: creationMode,
-              framework: creationFw,
-            } = message.data || {};
-            if (!creationPrompt || creationPrompt === '__reset__') {
-              this._panel.webview.postMessage({ command: 'aiCreationReset' });
-              break;
-            }
-            const panel = this._panel;
-            panel.webview.postMessage({ command: 'aiCreationThinking', data: { thinking: true } });
-            try {
-              const { parseCreationIntent } = await import('../../core/aiService.js');
-              let workspacePath: string | undefined;
-              if (WelcomePanel._selectedProject) {
-                workspacePath = path.dirname(WelcomePanel._selectedProject.path);
-              } else if (WelcomePanel._workspaceExplorer) {
-                workspacePath = WelcomePanel._workspaceExplorer.getSelectedWorkspace()?.path;
-              } else if (
-                vscode.workspace.workspaceFolders &&
-                vscode.workspace.workspaceFolders.length > 0
-              ) {
-                workspacePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-              }
-              const { plan, modelId } = await parseCreationIntent(
-                creationPrompt,
-                creationMode ?? 'workspace',
-                creationFw,
-                workspacePath
-              );
-              panel.webview.postMessage({ command: 'aiCreationPlan', data: { plan, modelId } });
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              panel.webview.postMessage({ command: 'aiCreationError', data: { error: errMsg } });
-            } finally {
-              panel.webview.postMessage({
-                command: 'aiCreationThinking',
-                data: { thinking: false },
-              });
-            }
+            await this._runOptionalMessageLane('aiParseCreation', async () => {
+              await this._handleAIParseCreationMessage(message.data);
+            });
             break;
           }
           case 'aiCreateConfirm': {
@@ -1480,123 +1442,9 @@ export class WelcomePanel {
             }
             break;
           case 'viewProjectDoctorReport':
-            {
-              const explicitProjectPath =
-                typeof message.data?.projectPath === 'string' && message.data.projectPath.trim()
-                  ? message.data.projectPath.trim()
-                  : undefined;
-              const explicitProjectName =
-                typeof message.data?.projectName === 'string' && message.data.projectName.trim()
-                  ? message.data.projectName.trim()
-                  : undefined;
-              const explicitWorkspacePath =
-                typeof message.data?.workspacePath === 'string' && message.data.workspacePath.trim()
-                  ? message.data.workspacePath.trim()
-                  : undefined;
-
-              const selectedWorkspace = this._getSelectedWorkspaceInfo();
-              const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
-              const selectedProject =
-                WelcomePanel._selectedProject &&
-                workspacePath &&
-                isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
-                  ? WelcomePanel._selectedProject
-                  : null;
-
-              const projectPath = explicitProjectPath || selectedProject?.path;
-              const projectName =
-                explicitProjectName ||
-                selectedProject?.name ||
-                (projectPath ? path.basename(projectPath) : undefined);
-
-              if (!projectPath) {
-                vscode.window.showWarningMessage('Select a project first.');
-                break;
-              }
-
-              const reportsDir = path.join(projectPath, '.rapidkit', 'reports');
-              const reportPath = path.join(reportsDir, 'doctor-project-last-run.json');
-              const reportExists = await fs.pathExists(reportPath);
-
-              if (!reportExists) {
-                const scopeLabel = projectName || path.basename(projectPath);
-                vscode.window.showInformationMessage(
-                  `No project doctor report found for "${scopeLabel}". Run project checks first.`
-                );
-                break;
-              }
-
-              const reportData = await fs.readJSON(reportPath).catch(() => null);
-              const output = vscode.window.createOutputChannel(
-                `Workspai: Project Doctor — ${projectName || path.basename(projectPath)}`
-              );
-              output.clear();
-              output.appendLine(
-                `=== Project Doctor Report: ${projectName || path.basename(projectPath)} ===`
-              );
-              output.appendLine(`File: ${toLinkSafePath(reportPath)}`);
-              output.appendLine('');
-
-              if (reportData) {
-                const score = reportData.healthScore;
-                const total = Number(score?.total ?? 0);
-                const passed = Number(score?.passed ?? 0);
-                const warnings = Number(score?.warnings ?? 0);
-                const errors = Number(score?.errors ?? 0);
-                const percent = total > 0 ? Math.round((passed / total) * 100) : 0;
-
-                const scopeLabel =
-                  reportData.summary?.scopeProvenance?.dominantScope || 'project-scoped';
-                output.appendLine(`Generated: ${reportData.generatedAt || 'unknown'}`);
-                output.appendLine(`Scope: ${scopeLabel}`);
-                output.appendLine(
-                  `Health: ${percent}% (✅ ${passed} | ⚠️ ${warnings} | ❌ ${errors})`
-                );
-
-                const project = reportData.project;
-                if (project && typeof project === 'object') {
-                  output.appendLine('');
-                  output.appendLine('--- Project ---');
-                  output.appendLine(`Name: ${project.name || projectName || 'unknown'}`);
-                  output.appendLine(`Path: ${toLinkSafePath(project.path || projectPath)}`);
-                  output.appendLine(`Framework: ${project.framework || 'unknown'}`);
-
-                  const issues = Array.isArray(project.issues)
-                    ? project.issues.filter((item: unknown) => typeof item === 'string')
-                    : [];
-                  output.appendLine(`Issues: ${issues.length}`);
-                  for (const issue of issues.slice(0, 20)) {
-                    output.appendLine(`  - ${issue}`);
-                  }
-
-                  const fixCommands = Array.isArray(project.fixCommands)
-                    ? project.fixCommands.filter((item: unknown) => typeof item === 'string')
-                    : [];
-                  if (fixCommands.length > 0) {
-                    output.appendLine('');
-                    output.appendLine('--- Suggested Fix Commands ---');
-                    for (const cmd of fixCommands.slice(0, 20)) {
-                      output.appendLine(`  - ${cmd}`);
-                    }
-                  }
-                }
-              } else {
-                output.appendLine('(Could not parse project doctor report JSON)');
-              }
-
-              output.appendLine('');
-              output.appendLine(
-                `Reports directory: ${path.basename(projectPath)}/.rapidkit/reports`
-              );
-              output.show();
-
-              if (workspacePath) {
-                this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
-                  actionType: 'view-project-doctor-report',
-                  projectName: projectName || path.basename(projectPath),
-                });
-              }
-            }
+            await this._runOptionalMessageLane('viewProjectDoctorReport', async () => {
+              await this._handleViewProjectDoctorReportMessage(message.data);
+            });
             break;
           case 'openIncidentNavigatorTarget':
             await this._runOptionalMessageLane('openIncidentNavigatorTarget', async () => {
@@ -2011,6 +1859,50 @@ No markdown, no explanation outside the JSON.`;
     this._activeAIQueryRequestId = undefined;
   }
 
+  private async _handleAIParseCreationMessage(messageData: unknown): Promise<void> {
+    const payload = asRecord(messageData);
+    const creationPrompt = typeof payload?.prompt === 'string' ? payload.prompt : undefined;
+    const creationMode = payload?.mode === 'project' ? 'project' : 'workspace';
+    const creationFw = typeof payload?.framework === 'string' ? payload.framework : undefined;
+
+    if (!creationPrompt || creationPrompt === '__reset__') {
+      this._panel.webview.postMessage({ command: 'aiCreationReset' });
+      return;
+    }
+
+    const panel = this._panel;
+    panel.webview.postMessage({ command: 'aiCreationThinking', data: { thinking: true } });
+    try {
+      const { parseCreationIntent } = await import('../../core/aiService.js');
+      let workspacePath: string | undefined;
+      if (WelcomePanel._selectedProject) {
+        workspacePath = path.dirname(WelcomePanel._selectedProject.path);
+      } else if (WelcomePanel._workspaceExplorer) {
+        workspacePath = WelcomePanel._workspaceExplorer.getSelectedWorkspace()?.path;
+      } else if (
+        vscode.workspace.workspaceFolders &&
+        vscode.workspace.workspaceFolders.length > 0
+      ) {
+        workspacePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      }
+      const { plan, modelId } = await parseCreationIntent(
+        creationPrompt,
+        creationMode,
+        creationFw,
+        workspacePath
+      );
+      panel.webview.postMessage({ command: 'aiCreationPlan', data: { plan, modelId } });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      panel.webview.postMessage({ command: 'aiCreationError', data: { error: errMsg } });
+    } finally {
+      panel.webview.postMessage({
+        command: 'aiCreationThinking',
+        data: { thinking: false },
+      });
+    }
+  }
+
   private async _handleAIQueryMessage(messageData: unknown): Promise<void> {
     const payload = asRecord(messageData);
     const mode = payload?.mode;
@@ -2391,6 +2283,123 @@ No markdown, no explanation outside the JSON.`;
         targetKind: targetKind.slice(0, 40),
         targetLabel: targetLabel.slice(0, 180),
         ...(targetSymbol ? { targetSymbol: targetSymbol.slice(0, 180) } : {}),
+      });
+    }
+  }
+
+  private async _handleViewProjectDoctorReportMessage(messageData: unknown): Promise<void> {
+    const payload = asRecord(messageData);
+    const rawProjectPath = payload?.projectPath;
+    const explicitProjectPath =
+      typeof rawProjectPath === 'string' && rawProjectPath.trim()
+        ? rawProjectPath.trim()
+        : undefined;
+    const rawProjectName = payload?.projectName;
+    const explicitProjectName =
+      typeof rawProjectName === 'string' && rawProjectName.trim()
+        ? rawProjectName.trim()
+        : undefined;
+    const rawWorkspacePath = payload?.workspacePath;
+    const explicitWorkspacePath =
+      typeof rawWorkspacePath === 'string' && rawWorkspacePath.trim()
+        ? rawWorkspacePath.trim()
+        : undefined;
+
+    const selectedWorkspace = this._getSelectedWorkspaceInfo();
+    const workspacePath = explicitWorkspacePath || selectedWorkspace?.path;
+    const selectedProject =
+      WelcomePanel._selectedProject &&
+      workspacePath &&
+      isWorkspacePathAncestor(workspacePath, WelcomePanel._selectedProject.path)
+        ? WelcomePanel._selectedProject
+        : null;
+
+    const projectPath = explicitProjectPath || selectedProject?.path;
+    const projectName =
+      explicitProjectName ||
+      selectedProject?.name ||
+      (projectPath ? path.basename(projectPath) : undefined);
+
+    if (!projectPath) {
+      vscode.window.showWarningMessage('Select a project first.');
+      return;
+    }
+
+    const reportsDir = path.join(projectPath, '.rapidkit', 'reports');
+    const reportPath = path.join(reportsDir, 'doctor-project-last-run.json');
+    const reportExists = await fs.pathExists(reportPath);
+
+    if (!reportExists) {
+      const scopeLabel = projectName || path.basename(projectPath);
+      vscode.window.showInformationMessage(
+        `No project doctor report found for "${scopeLabel}". Run project checks first.`
+      );
+      return;
+    }
+
+    const reportData = await fs.readJSON(reportPath).catch(() => null);
+    const output = vscode.window.createOutputChannel(
+      `Workspai: Project Doctor — ${projectName || path.basename(projectPath)}`
+    );
+    output.clear();
+    output.appendLine(
+      `=== Project Doctor Report: ${projectName || path.basename(projectPath)} ===`
+    );
+    output.appendLine(`File: ${toLinkSafePath(reportPath)}`);
+    output.appendLine('');
+
+    if (reportData) {
+      const score = reportData.healthScore;
+      const total = Number(score?.total ?? 0);
+      const passed = Number(score?.passed ?? 0);
+      const warnings = Number(score?.warnings ?? 0);
+      const errors = Number(score?.errors ?? 0);
+      const percent = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+      const scopeLabel = reportData.summary?.scopeProvenance?.dominantScope || 'project-scoped';
+      output.appendLine(`Generated: ${reportData.generatedAt || 'unknown'}`);
+      output.appendLine(`Scope: ${scopeLabel}`);
+      output.appendLine(`Health: ${percent}% (✅ ${passed} | ⚠️ ${warnings} | ❌ ${errors})`);
+
+      const project = reportData.project;
+      if (project && typeof project === 'object') {
+        output.appendLine('');
+        output.appendLine('--- Project ---');
+        output.appendLine(`Name: ${project.name || projectName || 'unknown'}`);
+        output.appendLine(`Path: ${toLinkSafePath(project.path || projectPath)}`);
+        output.appendLine(`Framework: ${project.framework || 'unknown'}`);
+
+        const issues = Array.isArray(project.issues)
+          ? project.issues.filter((item: unknown) => typeof item === 'string')
+          : [];
+        output.appendLine(`Issues: ${issues.length}`);
+        for (const issue of issues.slice(0, 20)) {
+          output.appendLine(`  - ${issue}`);
+        }
+
+        const fixCommands = Array.isArray(project.fixCommands)
+          ? project.fixCommands.filter((item: unknown) => typeof item === 'string')
+          : [];
+        if (fixCommands.length > 0) {
+          output.appendLine('');
+          output.appendLine('--- Suggested Fix Commands ---');
+          for (const cmd of fixCommands.slice(0, 20)) {
+            output.appendLine(`  - ${cmd}`);
+          }
+        }
+      }
+    } else {
+      output.appendLine('(Could not parse project doctor report JSON)');
+    }
+
+    output.appendLine('');
+    output.appendLine(`Reports directory: ${path.basename(projectPath)}/.rapidkit/reports`);
+    output.show();
+
+    if (workspacePath) {
+      this._trackStudioEvent('workspai.studio.action_executed', workspacePath, {
+        actionType: 'view-project-doctor-report',
+        projectName: projectName || path.basename(projectPath),
       });
     }
   }
