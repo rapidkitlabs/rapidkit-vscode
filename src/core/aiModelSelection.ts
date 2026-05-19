@@ -86,6 +86,12 @@ async function selectModelByPreference(pref: string): Promise<{
 
   const allModels = await vscode.lm.selectChatModels();
 
+  const getModelSortKey = (model: vscode.LanguageModelChat): string => {
+    const normalizedId = normalizeModelKey(model.id);
+    const normalizedName = normalizeModelKey(model.name ?? '');
+    return `${normalizedId}|${normalizedName}`;
+  };
+
   const findModelByAlias = (alias: string): vscode.LanguageModelChat | undefined => {
     const target = normalizeModelKey(alias);
     const exact = allModels.find(
@@ -150,7 +156,15 @@ async function selectModelByPreference(pref: string): Promise<{
   }
 
   if (allModels.length > 0) {
-    return rememberSelection(allModels[0], allModels[0].name ?? allModels[0].id);
+    const deterministicFallback = [...allModels].sort((a, b) => {
+      const aKey = getModelSortKey(a);
+      const bKey = getModelSortKey(b);
+      return aKey.localeCompare(bKey);
+    })[0];
+    return rememberSelection(
+      deterministicFallback,
+      deterministicFallback.name ?? deterministicFallback.id
+    );
   }
 
   throw new Error(

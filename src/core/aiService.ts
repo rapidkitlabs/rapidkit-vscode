@@ -500,10 +500,31 @@ export async function scanProjectContext(
     return cached.value;
   }
 
-  const resolved = await resolveProjectScanRoot(
-    resolvedInputPath,
-    getCommandTimeoutMs(DEFAULT_PROJECT_DETECTION_TIMEOUT_MS)
-  );
+  let resolved: {
+    scanRoot: string;
+    runtime: string | null;
+    engine: string | null;
+    detectionConfidence: 'strong' | 'weak' | 'none';
+    kitName: string | null;
+  };
+  try {
+    resolved = await resolveProjectScanRoot(
+      resolvedInputPath,
+      getCommandTimeoutMs(DEFAULT_PROJECT_DETECTION_TIMEOUT_MS)
+    );
+  } catch (error) {
+    Logger.getInstance().warn(
+      '[AI] resolveProjectScanRoot failed; falling back to input project path.',
+      error
+    );
+    resolved = {
+      scanRoot: resolvedInputPath,
+      runtime: null,
+      engine: null,
+      detectionConfidence: 'none',
+      kitName: null,
+    };
+  }
   const scanRoot = resolved.scanRoot;
   const ctx: ScannedProjectContext = {
     ...empty,

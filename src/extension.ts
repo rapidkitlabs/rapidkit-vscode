@@ -65,6 +65,21 @@ let architectureInlineDecorations: WorkspaiArchitectureInlineDecorationControlle
 // templateExplorer removed
 
 const PROJECT_WATCHER_REFRESH_DEBOUNCE_MS = 250;
+const PROJECT_REFRESH_WATCH_PATTERNS = [
+  '**/pyproject.toml',
+  '**/requirements.txt',
+  '**/package.json',
+  '**/go.mod',
+  '**/pom.xml',
+  '**/build.gradle',
+  '**/build.gradle.kts',
+  '**/settings.gradle',
+  '**/settings.gradle.kts',
+  '**/composer.json',
+  '**/Cargo.toml',
+  '**/mix.exs',
+  '**/Gemfile',
+];
 const AI_ONBOARDING_VERSION_KEY = 'workspai.aiOnboarding.versionShown';
 const AI_ONBOARDING_VERSION = '0.20.0-ai-ux-tour-1';
 const AI_ONBOARDING_TOAST_VARIANT_KEY = 'workspai.aiOnboarding.toastVariant';
@@ -814,12 +829,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
         logger.info('✅ Workspai extension initialized successfully!');
 
-        // Watch for workspace changes
-        const fileWatcher = vscode.workspace.createFileSystemWatcher(
-          '**/pyproject.toml',
-          false,
-          false,
-          false
+        // Watch for workspace changes across polyglot backend stacks
+        const fileWatchers = PROJECT_REFRESH_WATCH_PATTERNS.map((pattern) =>
+          vscode.workspace.createFileSystemWatcher(pattern, false, false, false)
         );
 
         let projectRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -836,9 +848,11 @@ export async function activate(context: vscode.ExtensionContext) {
           }, PROJECT_WATCHER_REFRESH_DEBOUNCE_MS);
         };
 
-        fileWatcher.onDidCreate(scheduleProjectRefresh);
-        fileWatcher.onDidChange(scheduleProjectRefresh);
-        fileWatcher.onDidDelete(scheduleProjectRefresh);
+        for (const watcher of fileWatchers) {
+          watcher.onDidCreate(scheduleProjectRefresh);
+          watcher.onDidChange(scheduleProjectRefresh);
+          watcher.onDidDelete(scheduleProjectRefresh);
+        }
 
         context.subscriptions.push({
           dispose: () => {
@@ -849,7 +863,7 @@ export async function activate(context: vscode.ExtensionContext) {
           },
         });
 
-        context.subscriptions.push(fileWatcher);
+        context.subscriptions.push(...fileWatchers);
       } catch (error) {
         logger.error('Error during async initialization:', error);
       }

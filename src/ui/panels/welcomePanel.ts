@@ -120,6 +120,7 @@ import {
 } from './welcomePanelChatBrainTracking.js';
 import {
   asRecord,
+  extractFirstJsonArray,
   isConversationMessageEntry,
   normalizeRequestedModelId,
   safeErrorMessage,
@@ -136,6 +137,24 @@ type ExampleWorkspaceDescriptor = {
   cloneUrl?: string;
 };
 type ModuleInfoPayload = ModuleData & Record<string, unknown>;
+const DEFAULT_AI_MODULE_SUGGEST_TIMEOUT_MS = 20_000;
+const MIN_AI_MODULE_SUGGEST_TIMEOUT_MS = 1_000;
+const MAX_AI_MODULE_SUGGEST_TIMEOUT_MS = 60_000;
+
+function getAIModuleSuggestTimeoutMs(): number {
+  const configured = vscode.workspace
+    .getConfiguration('workspai')
+    .get<number>('commandTimeoutMs', DEFAULT_AI_MODULE_SUGGEST_TIMEOUT_MS);
+
+  if (typeof configured !== 'number' || !Number.isFinite(configured)) {
+    return DEFAULT_AI_MODULE_SUGGEST_TIMEOUT_MS;
+  }
+
+  return Math.max(
+    MIN_AI_MODULE_SUGGEST_TIMEOUT_MS,
+    Math.min(MAX_AI_MODULE_SUGGEST_TIMEOUT_MS, Math.round(configured))
+  );
+}
 
 export class WelcomePanel {
   private static readonly UI_PREFS_KEY = 'rapidkit.welcome.uiPreferences';
@@ -745,6 +764,8 @@ export class WelcomePanel {
       console.warn('[WelcomePanel] Doctor telemetry refresh failed:', error);
     },
   });
+  private _inFlightAIQueryRequestIds = new Set<number>();
+  private _completedAIQueryRequestIds: number[] = [];
 
   private constructor(
     panel: vscode.WebviewPanel,
@@ -985,28 +1006,45 @@ Reply ONLY with a JSON array of objects like: [{"slug": "free/auth/core", "reaso
 Use ONLY slugs from the list above. Prefer modules that fit the framework and avoid deprecated or invented slugs.
 No markdown, no explanation outside the JSON.`;
 
-              const token = new vscode.CancellationTokenSource().token;
-              const response = await model.sendRequest(
-                [vscode.LanguageModelChatMessage.User(prompt)],
-                {},
-                token
-              );
+              const requestTokenSource = new vscode.CancellationTokenSource();
+              const requestTimeoutMs = getAIModuleSuggestTimeoutMs();
+              const timeoutHandle = setTimeout(() => {
+                requestTokenSource.cancel();
+              }, requestTimeoutMs);
 
-              let raw = '';
-              for await (const chunk of response.text) {
-                raw += chunk;
-              }
-
-              // Extract and sanitize JSON from response
-              const jsonMatch = raw.match(/\[[\s\S]*\]/);
               let parsed: unknown = [];
-              if (jsonMatch) {
-                try {
-                  parsed = JSON.parse(jsonMatch[0]);
-                } catch {
-                  parsed = [];
+              try {
+                const response = await model.sendRequest(
+                  [vscode.LanguageModelChatMessage.User(prompt)],
+                  {},
+                  requestTokenSource.token
+                );
+
+                let raw = '';
+                for await (const chunk of response.text) {
+                  if (requestTokenSource.token.isCancellationRequested) {
+                    break;
+                  }
+                  raw += chunk;
                 }
+
+                if (requestTokenSource.token.isCancellationRequested) {
+                  throw new Error(`AI module suggestion timed out after ${requestTimeoutMs}ms.`);
+                }
+
+                const rawJsonArray = extractFirstJsonArray(raw);
+                if (rawJsonArray) {
+                  try {
+                    parsed = JSON.parse(rawJsonArray);
+                  } catch {
+                    parsed = [];
+                  }
+                }
+              } finally {
+                clearTimeout(timeoutHandle);
+                requestTokenSource.dispose();
               }
+
               const allowedSlugs = new Set(this._modulesCatalog.map((m) => m.slug));
               const suggestions = Array.isArray(parsed)
                 ? parsed
@@ -1063,14 +1101,7 @@ No markdown, no explanation outside the JSON.`;
             this._aiQueryTokenSource = undefined;
             const doneRequestId =
               typeof cancelRequestId === 'number' ? cancelRequestId : this._activeAIQueryRequestId;
-            if (typeof doneRequestId === 'number') {
-              this._panel.webview.postMessage({
-                command: 'aiStreamDone',
-                data: { requestId: doneRequestId },
-              });
-            } else {
-              this._panel.webview.postMessage({ command: 'aiStreamDone' });
-            }
+            this._postAIStreamDoneOnce(doneRequestId);
             this._activeAIQueryRequestId = undefined;
             break;
           }
@@ -1087,6 +1118,7 @@ No markdown, no explanation outside the JSON.`;
             const requestedModelId = normalizeRequestedModelId(requestedModelIdRaw);
             const panel = this._panel;
             const queryRequestId = typeof requestId === 'number' ? requestId : Date.now();
+            this._trackAIQueryRequestStart(queryRequestId);
             const normalizedMode = mode === 'debug' ? 'debug' : 'ask';
             const normalizedQuestion = typeof question === 'string' ? question : '';
             const aiContext =
@@ -1136,10 +1168,7 @@ No markdown, no explanation outside the JSON.`;
               await trackAIModalOutcome('empty', {
                 hasContext: Boolean(aiContext),
               });
-              panel.webview.postMessage({
-                command: 'aiStreamDone',
-                data: { requestId: queryRequestId },
-              });
+              this._postAIStreamDoneOnce(queryRequestId);
               break;
             }
 
@@ -1175,10 +1204,7 @@ No markdown, no explanation outside the JSON.`;
                 return;
               }
               streamDoneSent = true;
-              panel.webview.postMessage({
-                command: 'aiStreamDone',
-                data: error ? { error, requestId: queryRequestId } : { requestId: queryRequestId },
-              });
+              this._postAIStreamDoneOnce(queryRequestId, error);
             };
 
             try {
@@ -1229,10 +1255,7 @@ No markdown, no explanation outside the JSON.`;
                     requestId: queryRequestId,
                   },
                 });
-                panel.webview.postMessage({
-                  command: 'aiStreamDone',
-                  data: { requestId: queryRequestId },
-                });
+                this._postAIStreamDoneOnce(queryRequestId);
                 await trackAIModalOutcome('clarification-needed', {
                   stage: 'prepare',
                   missingFields: prepared.validation.missing,
@@ -2364,6 +2387,36 @@ No markdown, no explanation outside the JSON.`;
 
     // Clean up when panel is closed
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+  }
+
+  private _trackAIQueryRequestStart(requestId: number): void {
+    this._inFlightAIQueryRequestIds.add(requestId);
+  }
+
+  private _trackAIQueryRequestComplete(requestId: number): void {
+    this._inFlightAIQueryRequestIds.delete(requestId);
+    if (!this._completedAIQueryRequestIds.includes(requestId)) {
+      this._completedAIQueryRequestIds.push(requestId);
+      if (this._completedAIQueryRequestIds.length > 240) {
+        this._completedAIQueryRequestIds.splice(0, this._completedAIQueryRequestIds.length - 240);
+      }
+    }
+  }
+
+  private _postAIStreamDoneOnce(requestId?: number, error?: string): void {
+    if (typeof requestId === 'number') {
+      if (this._completedAIQueryRequestIds.includes(requestId)) {
+        return;
+      }
+      this._trackAIQueryRequestComplete(requestId);
+      this._panel.webview.postMessage({
+        command: 'aiStreamDone',
+        data: error ? { error, requestId } : { requestId },
+      });
+      return;
+    }
+
+    this._panel.webview.postMessage({ command: 'aiStreamDone' });
   }
 
   private _registerDoctorEvidenceWatcher() {
