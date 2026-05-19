@@ -117,8 +117,9 @@ export class KitsService {
       console.log('[KitsService] Kits fetched and cached:', kits.length);
 
       return kits;
-    } catch (error: any) {
-      console.error('[KitsService] Failed to fetch kits:', error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[KitsService] Failed to fetch kits:', message);
 
       // Try to use stale cache
       const cached = await this._loadCache();

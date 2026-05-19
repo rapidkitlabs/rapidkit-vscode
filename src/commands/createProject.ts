@@ -4,11 +4,20 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as os from 'os';
+import * as fs from 'fs-extra';
 import { ProjectWizard } from '../ui/wizards/projectWizard';
 import { Logger } from '../utils/logger';
 import { WorkspaceManager } from '../core/workspaceManager';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { runCommandsInTerminal } from '../utils/terminalExecutor';
+
+type CliExecutionResult = {
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+};
 
 export async function createProjectCommand(
   selectedWorkspacePath?: string,
@@ -20,10 +29,6 @@ export async function createProjectCommand(
   logger.info('Create Project command initiated', { preselectedFramework, projectName, kitName });
 
   try {
-    const path = require('path');
-    const os = require('os');
-    const fs = require('fs-extra');
-
     // Determine workspace: use selected, or ask user
     let workspaceRoot: string | undefined;
     let isStandaloneMode = false; // Track if user chose standalone project
@@ -134,7 +139,6 @@ export async function createProjectCommand(
           logger.info('Using custom location:', workspaceRoot);
 
           // Check if custom location is a RapidKit workspace, if not treat as standalone location
-          const fs = require('fs-extra');
           const rapidkitDir = path.join(workspaceRoot, '.rapidkit');
           const markerPath = path.join(workspaceRoot, '.rapidkit-workspace');
           const hasRapidkitMarker =
@@ -250,7 +254,6 @@ export async function createProjectCommand(
         progress.report({ increment: 0, message: 'Initializing...' });
 
         try {
-          const path = require('path');
           const { WorkspaiCLI } = await import('../core/rapidkitCLI.js');
           const cli = new WorkspaiCLI();
 
@@ -260,7 +263,7 @@ export async function createProjectCommand(
             ? workspaceRoot
             : path.resolve(workspaceRoot);
 
-          let result: any;
+          let result: CliExecutionResult;
           let projectPath: string;
 
           if (isStandaloneMode) {
@@ -304,7 +307,6 @@ export async function createProjectCommand(
           progress.report({ increment: 70, message: 'Verifying project...' });
 
           // Wait for file system (Poetry/lock can be slow)
-          const fs = require('fs-extra');
           for (let i = 0; i < 15; i++) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
             if (await fs.pathExists(projectPath)) {
@@ -381,14 +383,15 @@ export async function createProjectCommand(
           }
 
           // Refresh welcome page if it's open
-          const context = (global as any).extensionContext;
+          const context = (globalThis as { extensionContext?: unknown }).extensionContext;
           if (context) {
             WelcomePanel.refreshRecentWorkspaces();
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const errorObj = error instanceof Error ? error : new Error(String(error));
           logger.error('Failed to create project:', {
-            message: error.message,
-            stack: error.stack,
+            message: errorObj.message,
+            stack: errorObj.stack,
           });
 
           const errorMessage = error instanceof Error ? error.message : String(error);

@@ -5,32 +5,80 @@ import { CommandTelemetryTimeWindow, WorkspaceUsageTracker } from '../utils/work
 import { openProjectFolder, copyProjectPath, deleteProject } from './projectContextMenu';
 import { adoptProjectCommand } from './adoptProject';
 
+type ProjectNode = {
+  path?: string;
+  name?: string;
+  type?: string;
+  workspacePath?: string;
+};
+
+type ProjectCommandItem = {
+  project?: {
+    path?: unknown;
+    name?: unknown;
+    type?: unknown;
+    workspacePath?: unknown;
+  };
+  projectPath?: unknown;
+};
+
+function asProjectCommandItem(item: unknown): ProjectCommandItem | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+  return item as ProjectCommandItem;
+}
+
+function toNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function resolveProjectPath(item: unknown): string | undefined {
+  const parsed = asProjectCommandItem(item);
+  return toNonEmptyString(parsed?.project?.path) ?? toNonEmptyString(parsed?.projectPath);
+}
+
+function resolveProjectNode(item: unknown): ProjectNode | undefined {
+  const parsed = asProjectCommandItem(item);
+  const project = parsed?.project;
+  if (!project || typeof project !== 'object') {
+    return undefined;
+  }
+
+  return {
+    path: toNonEmptyString(project.path),
+    name: toNonEmptyString(project.name),
+    type: toNonEmptyString(project.type),
+    workspacePath: toNonEmptyString(project.workspacePath),
+  };
+}
+
 export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
   return [
-    vscode.commands.registerCommand('workspai.openProjectFolder', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
+    vscode.commands.registerCommand('workspai.openProjectFolder', async (item: unknown) => {
+      const projectPath = resolveProjectPath(item);
       if (projectPath) {
         await openProjectFolder(projectPath);
       }
     }),
 
-    vscode.commands.registerCommand('workspai.copyProjectPath', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
+    vscode.commands.registerCommand('workspai.copyProjectPath', async (item: unknown) => {
+      const projectPath = resolveProjectPath(item);
       if (projectPath) {
         await copyProjectPath(projectPath);
       }
     }),
 
-    vscode.commands.registerCommand('workspai.deleteProject', async (item: any) => {
-      const projectPath = item?.project?.path || item?.projectPath;
+    vscode.commands.registerCommand('workspai.deleteProject', async (item: unknown) => {
+      const projectPath = resolveProjectPath(item);
       if (projectPath) {
         await deleteProject(projectPath);
       }
     }),
 
-    vscode.commands.registerCommand('workspai.convertProjectToManaged', async (item: any) => {
-      const project = item?.project;
-      const projectPath = project?.path || item?.projectPath;
+    vscode.commands.registerCommand('workspai.convertProjectToManaged', async (item: unknown) => {
+      const project = resolveProjectNode(item);
+      const projectPath = project?.path ?? resolveProjectPath(item);
       if (!projectPath) {
         vscode.window.showWarningMessage('Select a project first.');
         return;
@@ -44,56 +92,59 @@ export function registerProjectContextAndLogCommands(): vscode.Disposable[] {
       });
     }),
 
-    vscode.commands.registerCommand('workspai.openProjectDashboard', async (projectItem: any) => {
-      const projectFromItem = projectItem?.project;
-      const selectedProject = (await vscode.commands.executeCommand(
-        'workspai.getSelectedProject'
-      )) as { path?: string; name?: string; type?: string; workspacePath?: string } | null;
-      const selectedWorkspace = (await vscode.commands.executeCommand(
-        'workspai.getSelectedWorkspace'
-      )) as { path?: string; name?: string } | null;
+    vscode.commands.registerCommand(
+      'workspai.openProjectDashboard',
+      async (projectItem: unknown) => {
+        const projectFromItem = resolveProjectNode(projectItem);
+        const selectedProject = (await vscode.commands.executeCommand(
+          'workspai.getSelectedProject'
+        )) as { path?: string; name?: string; type?: string; workspacePath?: string } | null;
+        const selectedWorkspace = (await vscode.commands.executeCommand(
+          'workspai.getSelectedWorkspace'
+        )) as { path?: string; name?: string } | null;
 
-      const projectPath =
-        (typeof projectFromItem?.path === 'string' && projectFromItem.path) ||
-        (typeof selectedProject?.path === 'string' && selectedProject.path);
-      const projectName =
-        (typeof projectFromItem?.name === 'string' && projectFromItem.name) ||
-        (typeof selectedProject?.name === 'string' && selectedProject.name) ||
-        (projectPath ? path.basename(projectPath) : undefined);
-      const projectType =
-        (typeof projectFromItem?.type === 'string' && projectFromItem.type) ||
-        (typeof selectedProject?.type === 'string' && selectedProject.type);
+        const projectPath =
+          (typeof projectFromItem?.path === 'string' && projectFromItem.path) ||
+          (typeof selectedProject?.path === 'string' && selectedProject.path);
+        const projectName =
+          (typeof projectFromItem?.name === 'string' && projectFromItem.name) ||
+          (typeof selectedProject?.name === 'string' && selectedProject.name) ||
+          (projectPath ? path.basename(projectPath) : undefined);
+        const projectType =
+          (typeof projectFromItem?.type === 'string' && projectFromItem.type) ||
+          (typeof selectedProject?.type === 'string' && selectedProject.type);
 
-      if (!projectPath || !projectName) {
-        vscode.window.showWarningMessage('Select a project first.');
-        return;
+        if (!projectPath || !projectName) {
+          vscode.window.showWarningMessage('Select a project first.');
+          return;
+        }
+
+        const workspacePath =
+          (typeof projectFromItem?.workspacePath === 'string' && projectFromItem.workspacePath) ||
+          (typeof selectedProject?.workspacePath === 'string' && selectedProject.workspacePath) ||
+          (typeof selectedWorkspace?.path === 'string' && selectedWorkspace.path);
+
+        if (!workspacePath) {
+          vscode.window.showWarningMessage('Select a workspace first.');
+          return;
+        }
+
+        await vscode.commands.executeCommand('workspai.openIncidentStudio', {
+          workspace: {
+            path: workspacePath,
+            name:
+              (typeof selectedWorkspace?.name === 'string' && selectedWorkspace.name) ||
+              path.basename(workspacePath),
+          },
+          project: {
+            path: projectPath,
+            name: projectName,
+            type: projectType,
+            workspacePath,
+          },
+        });
       }
-
-      const workspacePath =
-        (typeof projectFromItem?.workspacePath === 'string' && projectFromItem.workspacePath) ||
-        (typeof selectedProject?.workspacePath === 'string' && selectedProject.workspacePath) ||
-        (typeof selectedWorkspace?.path === 'string' && selectedWorkspace.path);
-
-      if (!workspacePath) {
-        vscode.window.showWarningMessage('Select a workspace first.');
-        return;
-      }
-
-      await vscode.commands.executeCommand('workspai.openIncidentStudio', {
-        workspace: {
-          path: workspacePath,
-          name:
-            (typeof selectedWorkspace?.name === 'string' && selectedWorkspace.name) ||
-            path.basename(workspacePath),
-        },
-        project: {
-          path: projectPath,
-          name: projectName,
-          type: projectType,
-          workspacePath,
-        },
-      });
-    }),
+    ),
 
     vscode.commands.registerCommand('workspai.showLogs', () => {
       Logger.getInstance().show();

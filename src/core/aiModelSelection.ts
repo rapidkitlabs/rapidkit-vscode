@@ -94,11 +94,18 @@ async function selectModelByPreference(pref: string): Promise<{
     if (exact) {
       return exact;
     }
-    return allModels.find((m) => {
+
+    const prefixMatches = allModels.filter((m) => {
       const id = normalizeModelKey(m.id);
       const name = normalizeModelKey(m.name ?? '');
-      return id.includes(target) || name.includes(target);
+      return id.startsWith(target) || name.startsWith(target);
     });
+
+    if (prefixMatches.length === 1) {
+      return prefixMatches[0];
+    }
+
+    return undefined;
   };
 
   const tryModelAliases = (aliases: string[]) => {

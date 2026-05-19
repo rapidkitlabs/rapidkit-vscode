@@ -138,7 +138,7 @@ export async function addModuleCommand(
           });
 
           // Use slug if available (from module data), fallback to id
-          const moduleSlug = (module as any).slug || module!.id;
+          const moduleSlug = resolveModuleSlug(module!);
           const result = (await cli.addModule(projectPath!, moduleSlug)) as {
             exitCode?: number;
             stdout?: string;
@@ -264,11 +264,13 @@ async function resolveProjectPath(givenPath?: string): Promise<string | undefine
   }
 
   // First check if user has selected a project in the tree view
-  const selectedProject = (await vscode.commands.executeCommand(
-    'workspai.getSelectedProject'
-  )) as any;
-  if (selectedProject?.path && (await fs.pathExists(selectedProject.path))) {
-    return selectedProject.path;
+  const selectedProject = (await vscode.commands.executeCommand('workspai.getSelectedProject')) as {
+    path?: unknown;
+  } | null;
+  const selectedProjectPath =
+    selectedProject && typeof selectedProject.path === 'string' ? selectedProject.path : undefined;
+  if (selectedProjectPath && (await fs.pathExists(selectedProjectPath))) {
+    return selectedProjectPath;
   }
 
   // Then check the panel selection (legacy)
@@ -324,6 +326,14 @@ async function isWorkspaiProject(dirPath: string): Promise<boolean> {
     }
   }
   return false;
+}
+
+function resolveModuleSlug(module: WorkspaiModule): string {
+  const candidate = (module as WorkspaiModule & { slug?: unknown }).slug;
+  if (typeof candidate === 'string' && candidate.trim().length > 0) {
+    return candidate;
+  }
+  return module.id;
 }
 
 async function showModulePicker(workspacePath?: string): Promise<WorkspaiModule | undefined> {

@@ -5,6 +5,34 @@ type ProjectExplorerLike = {
   refresh: () => void;
 };
 
+type FileCommandItem = {
+  filePath?: unknown;
+  project?: {
+    path?: unknown;
+  };
+};
+
+function asFileCommandItem(item: unknown): FileCommandItem | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+  return item as FileCommandItem;
+}
+
+function toNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function resolveTargetPath(item: unknown): string | undefined {
+  const parsed = asFileCommandItem(item);
+  return toNonEmptyString(parsed?.filePath) ?? toNonEmptyString(parsed?.project?.path);
+}
+
+function resolveFilePath(item: unknown): string | undefined {
+  const parsed = asFileCommandItem(item);
+  return toNonEmptyString(parsed?.filePath);
+}
+
 export function registerFileManagementCommands(options: {
   logger: Logger;
   getProjectExplorer: () => ProjectExplorerLike | undefined;
@@ -22,8 +50,8 @@ export function registerFileManagementCommands(options: {
   };
 
   return [
-    vscode.commands.registerCommand('workspai.newFile', async (item: any) => {
-      const targetPath = item?.filePath || item?.project?.path;
+    vscode.commands.registerCommand('workspai.newFile', async (item: unknown) => {
+      const targetPath = resolveTargetPath(item);
       if (!targetPath) {
         vscode.window.showErrorMessage('No target path selected');
         return;
@@ -52,8 +80,8 @@ export function registerFileManagementCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.newFolder', async (item: any) => {
-      const targetPath = item?.filePath || item?.project?.path;
+    vscode.commands.registerCommand('workspai.newFolder', async (item: unknown) => {
+      const targetPath = resolveTargetPath(item);
       if (!targetPath) {
         vscode.window.showErrorMessage('No target path selected');
         return;
@@ -81,8 +109,8 @@ export function registerFileManagementCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.deleteFile', async (item: any) => {
-      const targetPath = item?.filePath;
+    vscode.commands.registerCommand('workspai.deleteFile', async (item: unknown) => {
+      const targetPath = resolveFilePath(item);
       if (!targetPath) {
         vscode.window.showErrorMessage('No file/folder selected');
         return;
@@ -114,8 +142,8 @@ export function registerFileManagementCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.renameFile', async (item: any) => {
-      const targetPath = item?.filePath;
+    vscode.commands.registerCommand('workspai.renameFile', async (item: unknown) => {
+      const targetPath = resolveFilePath(item);
       if (!targetPath) {
         vscode.window.showErrorMessage('No file/folder selected');
         return;
@@ -144,8 +172,8 @@ export function registerFileManagementCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.revealInExplorer', async (item: any) => {
-      const targetPath = item?.filePath || item?.project?.path;
+    vscode.commands.registerCommand('workspai.revealInExplorer', async (item: unknown) => {
+      const targetPath = resolveTargetPath(item);
       if (targetPath) {
         vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targetPath));
       }

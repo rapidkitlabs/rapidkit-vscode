@@ -60,6 +60,7 @@ import {
   buildIncidentStudioTelemetryFromCache,
   buildIncidentStudioTelemetryPayload,
   shouldUseIncidentStudioTelemetryCache,
+  type CachedIncidentStudioTelemetry,
 } from './incidentStudioTelemetry';
 import { buildIncidentLifecycleMetrics } from './incidentConversationMetrics';
 import { ProjectSelectionSequence } from './projectSelectionSequence';
@@ -98,10 +99,6 @@ import {
   deriveChatBrainFailureCode,
   isRetryableChatBrainError,
 } from './welcomePanelChatBrainFallback';
-import {
-  trackChatBrainRequestComplete,
-  trackChatBrainRequestStart,
-} from './welcomePanelChatBrainRequestTracker';
 import { getIncidentPrimaryCtaExperimentVariant } from './welcomePanelTelemetryExperiment';
 import {
   getIncidentStudioDisplayMode,
@@ -118,6 +115,10 @@ import {
 } from './welcomePanelProjectDiscovery.js';
 import { resolveTelemetryWorkspacePath } from './welcomePanelTelemetryWorkspace.js';
 import {
+  trackChatBrainRequestStart,
+  trackChatBrainRequestComplete,
+} from './welcomePanelChatBrainTracking.js';
+import {
   asRecord,
   isConversationMessageEntry,
   normalizeRequestedModelId,
@@ -127,6 +128,14 @@ import {
 } from './welcomePanel.shared.js';
 
 type DoctorEvidenceSnapshot = Awaited<ReturnType<WelcomePanel['_readDoctorEvidenceSnapshot']>>;
+type MessagePayload = Record<string, unknown>;
+type ExampleWorkspaceDescriptor = {
+  id?: string;
+  name: string;
+  title: string;
+  cloneUrl?: string;
+};
+type ModuleInfoPayload = ModuleData & Record<string, unknown>;
 
 export class WelcomePanel {
   private static readonly UI_PREFS_KEY = 'rapidkit.welcome.uiPreferences';
@@ -678,7 +687,7 @@ export class WelcomePanel {
   private _activeChatBrainRequestId?: string;
   private _activeChatBrainConversationId?: string;
   private _chatBrainInFlightRequestIds = new Set<string>();
-  private _chatBrainCompletedRequestIds: string[] = [];
+  private _chatBrainCompletedRequestIds = new Set<string>();
   private _chatBrainConversations = new Map<
     string,
     {
@@ -990,7 +999,14 @@ No markdown, no explanation outside the JSON.`;
 
               // Extract and sanitize JSON from response
               const jsonMatch = raw.match(/\[[\s\S]*\]/);
-              const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+              let parsed: unknown = [];
+              if (jsonMatch) {
+                try {
+                  parsed = JSON.parse(jsonMatch[0]);
+                } catch {
+                  parsed = [];
+                }
+              }
               const allowedSlugs = new Set(this._modulesCatalog.map((m) => m.slug));
               const suggestions = Array.isArray(parsed)
                 ? parsed
@@ -1133,6 +1149,38 @@ No markdown, no explanation outside the JSON.`;
             this._aiQueryTokenSource = tokenSource;
             this._activeAIQueryRequestId = queryRequestId;
             let currentStage: 'prepare' | 'stream' = 'prepare';
+            let chunkBuffer = '';
+            let flushTimer: ReturnType<typeof setInterval> | null = null;
+            let streamDoneSent = false;
+
+            const flushBufferedChunks = () => {
+              if (chunkBuffer && !tokenSource.token.isCancellationRequested) {
+                panel.webview.postMessage({
+                  command: 'aiChunkUpdate',
+                  data: { text: chunkBuffer, requestId: queryRequestId },
+                });
+              }
+              chunkBuffer = '';
+            };
+
+            const stopFlushTimer = () => {
+              if (flushTimer !== null) {
+                clearInterval(flushTimer);
+                flushTimer = null;
+              }
+            };
+
+            const sendDoneOnce = (error?: string) => {
+              if (streamDoneSent) {
+                return;
+              }
+              streamDoneSent = true;
+              panel.webview.postMessage({
+                command: 'aiStreamDone',
+                data: error ? { error, requestId: queryRequestId } : { requestId: queryRequestId },
+              });
+            };
+
             try {
               const { streamAIResponse, prepareAIConversation, extractContractTelemetry } =
                 await import('../../core/aiService.js');
@@ -1207,50 +1255,28 @@ No markdown, no explanation outside the JSON.`;
                 });
               }
 
+              // Buffer chunks and flush to webview every 50 ms.
+              // Without this, the extension host calls postMessage hundreds of
+              // times per second inside the same event-loop tick, causing VS Code's
+              // IPC layer to batch ALL messages into one delivery — the webview
+              // receives nothing until streaming finishes, then sees the full text
+              // appear all at once. Explicit time-slicing breaks that batching.
+              flushTimer = setInterval(() => {
+                flushBufferedChunks();
+              }, 50);
+
               const { modelId } = await streamAIResponse(
                 prepared.messages,
-                (() => {
-                  // Buffer chunks and flush to webview every 50 ms.
-                  // Without this, the extension host calls postMessage hundreds of
-                  // times per second inside the same event-loop tick, causing VS Code's
-                  // IPC layer to batch ALL messages into one delivery — the webview
-                  // receives nothing until streaming finishes, then sees the full text
-                  // appear all at once.  Explicit time-slicing breaks that batching.
-                  let chunkBuffer = '';
-                  let flushTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-                    if (chunkBuffer && !tokenSource.token.isCancellationRequested) {
-                      panel.webview.postMessage({
-                        command: 'aiChunkUpdate',
-                        data: { text: chunkBuffer, requestId: queryRequestId },
-                      });
-                      chunkBuffer = '';
-                    }
-                  }, 50);
-
-                  return (chunk: { text: string; done: boolean }) => {
-                    if (chunk.text) {
-                      chunkBuffer += chunk.text;
-                    }
-                    if (chunk.done) {
-                      // Clear the timer and flush any remaining buffered text
-                      if (flushTimer !== null) {
-                        clearInterval(flushTimer);
-                        flushTimer = null;
-                      }
-                      if (chunkBuffer && !tokenSource.token.isCancellationRequested) {
-                        panel.webview.postMessage({
-                          command: 'aiChunkUpdate',
-                          data: { text: chunkBuffer, requestId: queryRequestId },
-                        });
-                        chunkBuffer = '';
-                      }
-                      panel.webview.postMessage({
-                        command: 'aiStreamDone',
-                        data: { requestId: queryRequestId },
-                      });
-                    }
-                  };
-                })(),
+                (chunk: { text: string; done: boolean }) => {
+                  if (chunk.text) {
+                    chunkBuffer += chunk.text;
+                  }
+                  if (chunk.done) {
+                    stopFlushTimer();
+                    flushBufferedChunks();
+                    sendDoneOnce();
+                  }
+                },
                 tokenSource.token,
                 requestedModelId
               );
@@ -1271,10 +1297,9 @@ No markdown, no explanation outside the JSON.`;
             } catch (err) {
               if (tokenSource.token.isCancellationRequested) {
                 await trackAIModalOutcome('cancelled', { stage: currentStage });
-                panel.webview.postMessage({
-                  command: 'aiStreamDone',
-                  data: { requestId: queryRequestId },
-                });
+                if (this._activeAIQueryRequestId === queryRequestId) {
+                  sendDoneOnce();
+                }
                 break;
               }
 
@@ -1284,11 +1309,10 @@ No markdown, no explanation outside the JSON.`;
                 stage: currentStage,
               });
 
-              panel.webview.postMessage({
-                command: 'aiStreamDone',
-                data: { error: errMsg, requestId: queryRequestId },
-              });
+              sendDoneOnce(errMsg);
             } finally {
+              stopFlushTimer();
+              chunkBuffer = '';
               if (this._aiQueryTokenSource === tokenSource) {
                 this._aiQueryTokenSource = undefined;
               }
@@ -4183,7 +4207,10 @@ No markdown, no explanation outside the JSON.`;
     return null;
   }
 
-  private async _handleExportIncidentReproPack(data: any, requestId?: string): Promise<void> {
+  private async _handleExportIncidentReproPack(
+    data: MessagePayload,
+    requestId?: string
+  ): Promise<void> {
     const reproPack =
       data &&
       typeof data === 'object' &&
@@ -5103,13 +5130,17 @@ No markdown, no explanation outside the JSON.`;
       const projectsRaw = Array.isArray(raw?.projects) ? raw.projects : [];
       const projects: ParsedDoctorProject[] = (
         await Promise.all(
-          projectsRaw.map(async (project: any) => {
+          projectsRaw.map(async (project: Record<string, unknown>) => {
             const issues = Array.isArray(project?.issues) ? project.issues.length : 0;
             const projectPath = typeof project?.path === 'string' ? project.path : undefined;
             const installedModules = projectPath
               ? await WelcomePanel._readInstalledModules(projectPath)
               : [];
-            const modulesCountRaw = Number(project?.stats?.modules);
+            const projectStats =
+              project?.stats && typeof project.stats === 'object'
+                ? (project.stats as Record<string, unknown>)
+                : undefined;
+            const modulesCountRaw = Number(projectStats?.modules);
             const modulesCountFromDoctor = Number.isFinite(modulesCountRaw)
               ? modulesCountRaw
               : undefined;
@@ -5126,7 +5157,7 @@ No markdown, no explanation outside the JSON.`;
             const probes = Array.isArray(project?.probes)
               ? project.probes
                   .filter((probe: unknown) => probe && typeof probe === 'object')
-                  .map((probe: any) => ({
+                  .map((probe: Record<string, unknown>) => ({
                     id: typeof probe?.id === 'string' ? probe.id : undefined,
                     label: typeof probe?.label === 'string' ? probe.label : undefined,
                     status: typeof probe?.status === 'string' ? probe.status : undefined,
@@ -5235,7 +5266,7 @@ No markdown, no explanation outside the JSON.`;
                 systemStatusChanges: Array.isArray(raw.driftDelta.systemStatusChanges)
                   ? raw.driftDelta.systemStatusChanges
                       .filter((entry: unknown) => entry && typeof entry === 'object')
-                      .map((entry: any) => ({
+                      .map((entry: Record<string, unknown>) => ({
                         id: typeof entry?.id === 'string' ? entry.id : undefined,
                         from: typeof entry?.from === 'string' ? entry.from : undefined,
                         to: typeof entry?.to === 'string' ? entry.to : undefined,
@@ -5283,7 +5314,7 @@ No markdown, no explanation outside the JSON.`;
         scoreBreakdown: Array.isArray(raw?.scoreBreakdown)
           ? raw.scoreBreakdown
               .filter((entry: unknown) => entry && typeof entry === 'object')
-              .map((entry: any) => ({
+              .map((entry: Record<string, unknown>) => ({
                 id: typeof entry?.id === 'string' ? entry.id : undefined,
                 label: typeof entry?.label === 'string' ? entry.label : undefined,
                 status: typeof entry?.status === 'string' ? entry.status : undefined,
@@ -5419,24 +5450,9 @@ No markdown, no explanation outside the JSON.`;
     }
   }
 
-  private _trackChatBrainRequestStart(requestId?: string): boolean {
-    return trackChatBrainRequestStart(
-      requestId,
-      this._chatBrainInFlightRequestIds,
-      this._chatBrainCompletedRequestIds
-    );
-  }
-
-  private _trackChatBrainRequestComplete(requestId?: string): void {
-    trackChatBrainRequestComplete(
-      requestId,
-      this._chatBrainInFlightRequestIds,
-      this._chatBrainCompletedRequestIds
-    );
-  }
-
-  private async _handleAiChatQuery(data: any, requestId?: string) {
-    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : '';
+  private async _handleAiChatQuery(data: MessagePayload, requestId?: string) {
+    const conversationId =
+      typeof data?.conversationId === 'string' ? data.conversationId : undefined;
     const message = typeof data?.message === 'string' ? data.message.trim() : '';
     const normalizedRequestId =
       typeof requestId === 'string' && requestId.trim() ? requestId.trim() : undefined;
@@ -5446,7 +5462,7 @@ No markdown, no explanation outside the JSON.`;
       this._panel.webview.postMessage({
         command: 'aiChatError',
         data: {
-          conversationId,
+          conversationId: conversationId ?? '',
           code: 'INVALID_INPUT',
           message: 'conversationId and message are required.',
           retryable: true,
@@ -5456,7 +5472,7 @@ No markdown, no explanation outside the JSON.`;
       return;
     }
 
-    if (!this._trackChatBrainRequestStart(normalizedRequestId)) {
+    if (!trackChatBrainRequestStart(normalizedRequestId, this._chatBrainInFlightRequestIds)) {
       this._panel.webview.postMessage({
         command: 'aiChatPartialFailure',
         data: {
@@ -5928,7 +5944,11 @@ No markdown, no explanation outside the JSON.`;
       if (this._activeChatBrainConversationId === conversationId) {
         this._activeChatBrainConversationId = undefined;
       }
-      this._trackChatBrainRequestComplete(normalizedRequestId);
+      trackChatBrainRequestComplete(
+        normalizedRequestId,
+        this._chatBrainInFlightRequestIds,
+        this._chatBrainCompletedRequestIds
+      );
       tokenSource.dispose();
     }
   }
@@ -6296,14 +6316,12 @@ No markdown, no explanation outside the JSON.`;
     return `Perform the following action for my ${scopeLabel}: ${label}. Analyze the current state and provide specific, actionable guidance.`;
   }
 
-  private async _handleAiChatExecuteAction(data: any, requestId?: string) {
-    const conversationId = data?.conversationId;
+  private async _handleAiChatExecuteAction(data: MessagePayload, requestId?: string) {
+    const conversationId =
+      typeof data?.conversationId === 'string' ? data.conversationId : undefined;
     const actionId = typeof data?.actionId === 'string' ? data.actionId : `action-${Date.now()}`;
     const actionType = typeof data?.actionType === 'string' ? data.actionType : '';
-    const conv =
-      typeof conversationId === 'string'
-        ? this._chatBrainConversations.get(conversationId)
-        : undefined;
+    const conv = conversationId ? this._chatBrainConversations.get(conversationId) : undefined;
 
     if (!actionType) {
       this._panel.webview.postMessage({
@@ -6318,6 +6336,29 @@ No markdown, no explanation outside the JSON.`;
       });
       return;
     }
+
+    if (!conversationId) {
+      this._panel.webview.postMessage({
+        command: 'aiChatError',
+        data: {
+          conversationId: '',
+          code: 'INVALID_INPUT',
+          message: 'conversationId is required.',
+          retryable: false,
+        },
+        meta: { requestId, version: 'v1' },
+      });
+      return;
+    }
+
+    const actionProjectPath =
+      typeof data?.projectPath === 'string' && data.projectPath.trim()
+        ? data.projectPath.trim()
+        : undefined;
+    const actionProjectType =
+      typeof data?.projectType === 'string' && data.projectType.trim()
+        ? data.projectType.trim()
+        : undefined;
 
     if (!isIncidentActionAllowlisted(actionType)) {
       if (conv) {
@@ -6387,10 +6428,7 @@ No markdown, no explanation outside the JSON.`;
       }
     }
 
-    const projectPathInPayload =
-      typeof data?.projectPath === 'string' && data.projectPath.trim()
-        ? data.projectPath.trim()
-        : undefined;
+    const projectPathInPayload = actionProjectPath;
 
     if (conv?.workspacePath && projectPathInPayload) {
       if (!isWorkspacePathAncestor(conv.workspacePath, projectPathInPayload)) {
@@ -6477,12 +6515,12 @@ No markdown, no explanation outside the JSON.`;
     // Route through Chat Brain — answer streams into the Studio thread
     await this._handleAiChatQuery(
       {
-        conversationId,
+        conversationId: conversationId ?? '',
         message: inlineQuery,
         workspacePath,
-        projectPath: data?.projectPath,
+        projectPath: actionProjectPath,
         projectName: data?.projectName,
-        projectType: data?.projectType,
+        projectType: actionProjectType,
         modelId: data?.modelId,
       },
       requestId
@@ -6560,8 +6598,8 @@ No markdown, no explanation outside the JSON.`;
               inlineQuery,
               impactVerifyChecklist: wave2Contracts.impactAssessment.verifyChecklist,
               conversationId,
-              projectType: data?.projectType,
-              projectPath: data?.projectPath,
+              projectType: actionProjectType,
+              projectPath: actionProjectPath,
             }),
             rollbackHint:
               rollbackEvidence?.suggestedNextStep ||
@@ -6573,8 +6611,8 @@ No markdown, no explanation outside the JSON.`;
       actionType,
       actionPolicy,
       workspacePath: activeWorkspacePath,
-      projectPath: data?.projectPath,
-      projectType: data?.projectType,
+      projectPath: actionProjectPath,
+      projectType: actionProjectType,
       impactAssessment: wave2Contracts.impactAssessment,
       releaseGateEvidence: wave2Contracts.releaseGateEvidence,
       doctorEvidence,
@@ -7208,7 +7246,7 @@ No markdown, no explanation outside the JSON.`;
    * Expected payload:
    *   { conversationId, patchId, acceptedPaths: string[], workspacePath, branchSafeApply?: boolean }
    */
-  private async _handleApplyPatch(data: any, requestId?: string) {
+  private async _handleApplyPatch(data: MessagePayload, requestId?: string) {
     const conversationId =
       typeof data?.conversationId === 'string' ? data.conversationId : undefined;
     const patchId = typeof data?.patchId === 'string' ? data.patchId : `patch-${Date.now()}`;
@@ -7287,7 +7325,7 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private async _handleExportSandboxSimulationEvidence(
-    data: any,
+    data: MessagePayload,
     requestId?: string
   ): Promise<void> {
     const sandboxSimulation =
@@ -7487,7 +7525,7 @@ No markdown, no explanation outside the JSON.`;
   }
 
   private async _handleExportReleaseReadinessCommander(
-    data: any,
+    data: MessagePayload,
     requestId?: string
   ): Promise<void> {
     const artifact =
@@ -7681,13 +7719,13 @@ No markdown, no explanation outside the JSON.`;
       ? `incident-studio-telemetry-${workspacePath}::${normalizedProjectPath}`
       : `incident-studio-telemetry-${workspacePath}`;
     const cachedData = this._context.globalState.get<{
-      commandSummary: any;
-      onboardingSummary: any;
-      ctaVariantBreakdown?: any;
-      studioHardGateStatus?: any;
-      studioRollbackKpiStatus?: any;
-      studioStabilizationKpiStatus?: any;
-      doctorSummary?: any;
+      commandSummary: CachedIncidentStudioTelemetry['commandSummary'];
+      onboardingSummary: CachedIncidentStudioTelemetry['onboardingSummary'];
+      ctaVariantBreakdown?: CachedIncidentStudioTelemetry['ctaVariantBreakdown'];
+      studioHardGateStatus?: CachedIncidentStudioTelemetry['studioHardGateStatus'];
+      studioRollbackKpiStatus?: CachedIncidentStudioTelemetry['studioRollbackKpiStatus'];
+      studioStabilizationKpiStatus?: CachedIncidentStudioTelemetry['studioStabilizationKpiStatus'];
+      doctorSummary?: CachedIncidentStudioTelemetry['doctorSummary'];
       timestamp: number;
     }>(cacheKey);
 
@@ -7930,7 +7968,7 @@ No markdown, no explanation outside the JSON.`;
       });
     }
   }
-  private async _cloneExample(example: any) {
+  private async _cloneExample(example: ExampleWorkspaceDescriptor) {
     try {
       // Notify webview we're cloning
       this._panel.webview.postMessage({
@@ -8051,9 +8089,10 @@ No markdown, no explanation outside the JSON.`;
           'OK'
         );
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[WelcomePanel] Error cloning example:', error);
-      vscode.window.showErrorMessage(`Failed to clone example: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`Failed to clone example: ${message}`);
     } finally {
       // Reset cloning state
       this._panel.webview.postMessage({
@@ -8063,7 +8102,7 @@ No markdown, no explanation outside the JSON.`;
     }
   }
 
-  private async _updateExample(example: any) {
+  private async _updateExample(example: ExampleWorkspaceDescriptor) {
     try {
       const examplesService = ExamplesService.getInstance();
       const info = await examplesService.getClonedExampleInfo(example.id || example.name);
@@ -8141,9 +8180,10 @@ No markdown, no explanation outside the JSON.`;
       await this._sendExampleWorkspaces();
 
       vscode.window.showInformationMessage(`✅ ${example.name} updated successfully!`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[WelcomePanel] Error updating example:', error);
-      vscode.window.showErrorMessage(`Failed to update example: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`Failed to update example: ${message}`);
     } finally {
       this._panel.webview.postMessage({
         command: 'setUpdating',
@@ -8907,7 +8947,7 @@ No markdown, no explanation outside the JSON.`;
 </html>`;
   }
 
-  private async _showModuleDetails(moduleData: any): Promise<void> {
+  private async _showModuleDetails(moduleData: ModuleData): Promise<void> {
     try {
       let workspacePath: string | undefined;
       if (WelcomePanel._selectedProject) {
@@ -8940,7 +8980,7 @@ No markdown, no explanation outside the JSON.`;
 
       console.log('[WelcomePanel] Fetching module info for:', candidates);
 
-      let moduleInfo: any = null;
+      let moduleInfo: ModuleInfoPayload | null = null;
       let foundMatch = false;
 
       for (const candidate of candidates) {
@@ -8953,7 +8993,7 @@ No markdown, no explanation outside the JSON.`;
           });
           if (jsonResult.exitCode === 0 && jsonResult.stdout) {
             try {
-              const parsed = JSON.parse(jsonResult.stdout);
+              const parsed = JSON.parse(jsonResult.stdout) as Record<string, unknown>;
               // Merge with moduleData but prefer fresh CLI data
               moduleInfo = { ...moduleData, ...parsed };
               foundMatch = true;

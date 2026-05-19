@@ -188,25 +188,50 @@ export async function streamAIResponse(
       : vscode.LanguageModelChatMessage.Assistant(sanitizePromptText(m.content, 20000))
   );
 
+  const requestTimeoutMs = getCommandTimeoutMs(DEFAULT_AI_STREAM_TIMEOUT_MS);
+
   const streamWithModel = async (
     selected: vscode.LanguageModelChat,
     onEmitChunk?: () => void
   ): Promise<boolean> => {
-    const response = await selected.sendRequest(lmMessages, {}, token);
-    let emittedAnyChunk = false;
+    const requestTokenSource = new vscode.CancellationTokenSource();
+    const cancellationDisposable = token?.onCancellationRequested(() => {
+      requestTokenSource.cancel();
+    });
+    const timeoutHandle = setTimeout(() => {
+      logger.warn(
+        `[AI] Streaming request timed out after ${requestTimeoutMs}ms for model ${selected.id}`
+      );
+      requestTokenSource.cancel();
+    }, requestTimeoutMs);
 
-    for await (const part of response.stream) {
-      if (part instanceof vscode.LanguageModelTextPart) {
-        emittedAnyChunk = true;
-        onEmitChunk?.();
-        onChunk({ text: part.value, done: false });
+    try {
+      const response = await selected.sendRequest(lmMessages, {}, requestTokenSource.token);
+      let emittedAnyChunk = false;
+
+      for await (const part of response.stream) {
+        if (requestTokenSource.token.isCancellationRequested) {
+          break;
+        }
+        if (part instanceof vscode.LanguageModelTextPart) {
+          emittedAnyChunk = true;
+          onEmitChunk?.();
+          onChunk({ text: part.value, done: false });
+        }
       }
-      if (token?.isCancellationRequested) {
-        break;
+
+      if (requestTokenSource.token.isCancellationRequested && !token?.isCancellationRequested) {
+        throw new Error(
+          `AI request timed out after ${requestTimeoutMs}ms while streaming model ${selected.id}.`
+        );
       }
+
+      return emittedAnyChunk;
+    } finally {
+      clearTimeout(timeoutHandle);
+      cancellationDisposable?.dispose();
+      requestTokenSource.dispose();
     }
-
-    return emittedAnyChunk;
   };
 
   let selectedModel = model;
@@ -240,7 +265,9 @@ export async function streamAIResponse(
     await streamWithModel(selectedModel);
   }
 
-  onChunk({ text: '', done: true });
+  if (!token?.isCancellationRequested) {
+    onChunk({ text: '', done: true });
+  }
   return { modelId: selectedModelId };
 }
 
@@ -347,6 +374,7 @@ const MAX_PROJECT_CACHE_SIZE = 20;
 const DEFAULT_PROJECT_DETECTION_TIMEOUT_MS = 2000;
 const DEFAULT_GIT_DIFF_TIMEOUT_MS = 3000;
 const DEFAULT_LIVE_MODULES_TIMEOUT_MS = 8000;
+const DEFAULT_AI_STREAM_TIMEOUT_MS = 45000;
 const MIN_COMMAND_TIMEOUT_MS = 1000;
 const MAX_COMMAND_TIMEOUT_MS = 60000;
 
@@ -956,9 +984,17 @@ export async function prepareAIConversation(
   history: AIConversationHistoryEntry[] = [],
   doctorSnapshot?: DoctorEvidenceSnapshot
 ): Promise<PreparedAIConversation> {
-  const scanned = ctx.path
-    ? await scanProjectContext(ctx.path, ctx.framework).catch(() => undefined)
-    : undefined;
+  let scanned: ScannedProjectContext | undefined;
+  if (ctx.path) {
+    try {
+      scanned = await scanProjectContext(ctx.path, ctx.framework);
+    } catch (err) {
+      Logger.getInstance().warn(
+        `[AI] scanProjectContext failed for ${ctx.path}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      scanned = undefined;
+    }
+  }
 
   const contract = buildContextContractFromEvidence(ctx, scanned, doctorSnapshot);
   const validation = validateContextContract(contract);

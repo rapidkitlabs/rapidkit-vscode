@@ -1,5 +1,57 @@
 # Release Notes
 
+## v0.29.0 (May 19, 2026)
+
+### ✦ AI Stability And Enterprise Typing Hardening Release
+
+Summary:
+- This release packages the full git range from `v0.28.0` to current `HEAD` for publication as `0.29.0`.
+- Focus is strict runtime reliability and enterprise typing consistency across AI and command execution paths.
+- No expansion-oriented feature risk accepted in this release window.
+
+Highlights:
+- **Range included in this release** (`v0.28.0..HEAD`):
+  - `e68f54e` refactor(stabilization): inline ui preference workspace path resolver
+  - `8c3bd0b` refactor(stabilization): inline workspace project discovery deps wrapper
+  - `1c65c59` refactor(stabilization): inline incident primary cta experiment variant wrapper
+  - `f275da1` refactor(stabilization): extract telemetry workspace path resolver helper
+  - `25f6410` refactor(stabilization): inline nonce generation helper
+  - `4283cbd` refactor(stabilization): inline prediction confidence band helper
+  - `ea32346` refactor(stabilization): inline incident rollback protected path helper
+  - `e8c9162` refactor(stabilization): inline incident rollback approval/protection helpers
+  - `6ec502a` refactor(stabilization): inline chatbrain fallback helper calls
+  - `2e7526c` refactor(stabilization): inline sandbox verify helper calls
+  - `396efbe` refactor(stabilization): inline ui preference helper calls
+  - `1a65fca` refactor(stabilization): extract chatbrain request tracking helpers
+  - `4a92cbd` refactor(stabilization): extract sandbox verify parsing helpers
+  - `c1013c7` refactor(stabilization): extract chatbrain fallback helpers
+  - `db82945` refactor(stabilization): extract ui preference helpers from welcome panel
+  - `a03b363` refactor(stabilization): extract telemetry experiment helpers from welcome panel
+  - `7d725cb` refactor(stabilization): split incident policy helpers from welcome panel
+  - `7df368e` refactor(stabilization): reduce any debt in extension lifecycle and setup panel
+  - `423f4a1` refactor(stabilization): enforce lint budget and harden workspace operations
+  - `0ea490d` refactor(stabilization): tighten command item typing in workspace selection
+  - `d8ec173` refactor(stabilization): harden createWorkspace typing contracts
+  - `ef7602d` fix(stabilization): harden gates typing and observability
+  - `5d83228` chore: harden release gate, memory policy, and repro-pack safety
+- **AI runtime hardening**:
+  - stream lifecycle cleanup and timeout/cancellation safeguards in host AI execution
+  - deterministic model matching and safer fallback behavior under model errors
+  - duplicate stream-done emission prevention and robust message parsing in welcome panel flows
+- **Command reliability and type safety**:
+  - command-layer typing cleanup in module/project/workspace flows (`addModule`, `createProject`, `workspaceSelection`, and related command wiring)
+  - doctor command and incident export provenance paths tightened for strict TypeScript contracts
+  - legacy unsafe casts reduced via guarded unknown-narrowing patterns
+- **Stabilization support module**:
+  - added `src/ui/panels/welcomePanelChatBrainTracking.ts` for panel-level tracking support
+
+Quality and validation:
+- `npm run compile` passed.
+- `npm run test` passed with all test files green.
+- Lint remains warning-only for known backlog debt outside this release scope.
+
+Release posture: `stabilization-only`
+
 ## v0.28.0 (May 13, 2026)
 
 ### ✦ Enterprise E1/E2 Stabilization and Policy Boundaries Release

@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-05-19
+
+### Added
+
+- **Welcome panel chat brain tracking support** via new panel helper module:
+  - `src/ui/panels/welcomePanelChatBrainTracking.ts`
+
+### Changed
+
+- **AI stream/runtime stabilization finalized** across host and panel paths:
+  - deterministic model alias matching and safer model fallback behavior
+  - request timeout and cancellation lifecycle hardening in stream execution
+  - stream done signaling tightened to avoid duplicate terminal events
+  - module suggestion parsing and AI response handling made more defensive
+- **Command path typing hardening (enterprise consistency)**:
+  - legacy command handlers migrated from unsafe `any` usage to guarded typed/unknown flows
+  - workspace/project selection command contracts aligned with provider models
+  - project creation command imports normalized to static imports and strict error narrowing
+- **Doctor and provenance command reliability** improved through strict typing and safer contract parsing.
+
+### Fixed
+
+- **Type contract regressions blocking compile** in workspace/project selection integration (`workspaceSelection` <-> `extension` wiring).
+- **Add module command type-safety bug** in slug resolution and selected-project payload narrowing.
+- **AI service test parity** updated to match cancellation semantics and prevent stale done-event assumptions.
+
+### Verification
+
+- Full validation run for this release window passed:
+  - `npm run compile`
+  - `npm run test` (all test files passing)
+- Lint remains warning-only for known non-blocking debt outside this release scope.
+- Commit scope included in this release is the full range from tag `v0.28.0` to current `HEAD`:
+  - `e68f54e` refactor(stabilization): inline ui preference workspace path resolver
+  - `8c3bd0b` refactor(stabilization): inline workspace project discovery deps wrapper
+  - `1c65c59` refactor(stabilization): inline incident primary cta experiment variant wrapper
+  - `f275da1` refactor(stabilization): extract telemetry workspace path resolver helper
+  - `25f6410` refactor(stabilization): inline nonce generation helper
+  - `4283cbd` refactor(stabilization): inline prediction confidence band helper
+  - `ea32346` refactor(stabilization): inline incident rollback protected path helper
+  - `e8c9162` refactor(stabilization): inline incident rollback approval/protection helpers
+  - `6ec502a` refactor(stabilization): inline chatbrain fallback helper calls
+  - `2e7526c` refactor(stabilization): inline sandbox verify helper calls
+  - `396efbe` refactor(stabilization): inline ui preference helper calls
+  - `1a65fca` refactor(stabilization): extract chatbrain request tracking helpers
+  - `4a92cbd` refactor(stabilization): extract sandbox verify parsing helpers
+  - `c1013c7` refactor(stabilization): extract chatbrain fallback helpers
+  - `db82945` refactor(stabilization): extract ui preference helpers from welcome panel
+  - `a03b363` refactor(stabilization): extract telemetry experiment helpers from welcome panel
+  - `7d725cb` refactor(stabilization): split incident policy helpers from welcome panel
+  - `7df368e` refactor(stabilization): reduce any debt in extension lifecycle and setup panel
+  - `423f4a1` refactor(stabilization): enforce lint budget and harden workspace operations
+  - `0ea490d` refactor(stabilization): tighten command item typing in workspace selection
+  - `d8ec173` refactor(stabilization): harden createWorkspace typing contracts
+  - `ef7602d` fix(stabilization): harden gates typing and observability
+  - `5d83228` chore: harden release gate, memory policy, and repro-pack safety
+
 ## [0.28.0] - 2026-05-13
 
 ### Added

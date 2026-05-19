@@ -45,6 +45,45 @@ vi.mock('vscode', () => ({
       this.value = value;
     }
   },
+  CancellationTokenSource: class {
+    private _isCancellationRequested = false;
+    private readonly _listeners = new Set<() => void>();
+    readonly token: {
+      readonly isCancellationRequested: boolean;
+      onCancellationRequested: (listener: () => void) => { dispose: () => void };
+    };
+
+    constructor() {
+      const thisSource = this;
+      this.token = {
+        get isCancellationRequested() {
+          return thisSource._isCancellationRequested;
+        },
+        onCancellationRequested: (listener: () => void) => {
+          thisSource._listeners.add(listener);
+          return {
+            dispose: () => {
+              thisSource._listeners.delete(listener);
+            },
+          };
+        },
+      };
+    }
+
+    cancel(): void {
+      if (this._isCancellationRequested) {
+        return;
+      }
+      this._isCancellationRequested = true;
+      for (const listener of this._listeners) {
+        listener();
+      }
+    }
+
+    dispose(): void {
+      this._listeners.clear();
+    }
+  },
 }));
 
 vi.mock('../core/bridge/pythonRapidkit', () => ({
@@ -352,7 +391,7 @@ describe('aiService', () => {
     expect(mockSelectChatModels).toHaveBeenCalledTimes(2);
   });
 
-  it('stops streaming when cancellation is requested mid-response', async () => {
+  it('stops streaming when cancellation is requested mid-response without emitting done', async () => {
     const model = {
       id: 'gpt-4o',
       name: 'GPT-4o',
@@ -366,7 +405,18 @@ describe('aiService', () => {
 
     mockSelectChatModels.mockResolvedValue([model]);
 
-    const mutableToken = { isCancellationRequested: false };
+    const cancellationListeners = new Set<() => void>();
+    const mutableToken = {
+      isCancellationRequested: false,
+      onCancellationRequested: (listener: () => void) => {
+        cancellationListeners.add(listener);
+        return {
+          dispose: () => {
+            cancellationListeners.delete(listener);
+          },
+        };
+      },
+    };
     const chunks: string[] = [];
     let done = 0;
 
@@ -376,6 +426,9 @@ describe('aiService', () => {
         if (chunk.text) {
           chunks.push(chunk.text);
           mutableToken.isCancellationRequested = true;
+          for (const listener of cancellationListeners) {
+            listener();
+          }
         }
         if (chunk.done) {
           done += 1;
@@ -385,7 +438,7 @@ describe('aiService', () => {
     );
 
     expect(chunks).toEqual(['first chunk']);
-    expect(done).toBe(1);
+    expect(done).toBe(0);
   });
 
   it('falls back to another model when initial request fails with retryable rate-limit error', async () => {

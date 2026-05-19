@@ -1,35 +1,47 @@
 import * as vscode from 'vscode';
+import type { WorkspaiProject, WorkspaiWorkspace } from '../types';
 import { Logger } from '../utils/logger';
 import { ModulesCatalogService } from '../core/modulesCatalogService';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { openWorkspace, openWorkspaceFolder, copyWorkspacePath } from './workspaceContextMenu';
 
-type WorkspaceLike = { path: string; name?: string };
-type ProjectLike = { path: string; name: string; type: string; workspacePath?: string };
+type WorkspaceLike = WorkspaiWorkspace;
+type ProjectLike = WorkspaiProject;
 type WorkspaceTreeItemLike = { path?: unknown; workspace?: { path?: unknown } };
+type ProjectInputCandidate = {
+  path?: unknown;
+  name?: unknown;
+  type?: unknown;
+  kit?: unknown;
+  managed?: unknown;
+  modules?: unknown;
+  isValid?: unknown;
+  workspacePath?: unknown;
+  project?: unknown;
+};
 
 type WorkspaceExplorerLike = {
-  refresh: () => void;
-  getWorkspaceByPath: (workspacePath: string) => WorkspaceLike | null | undefined;
-  selectWorkspace: (...args: any[]) => Promise<void>;
-  getSelectedWorkspace?: () => WorkspaceLike | null | undefined;
-  addWorkspace: () => Promise<void>;
-  importWorkspace: () => Promise<void>;
-  removeWorkspace: (...args: any[]) => Promise<void>;
-  exportWorkspace: (...args: any[]) => Promise<void>;
-  autoDiscover: () => Promise<void>;
+  refresh(): void;
+  getWorkspaceByPath(workspacePath: string): WorkspaceLike | null | undefined;
+  selectWorkspace(workspace: WorkspaceLike): Promise<void>;
+  getSelectedWorkspace?(): WorkspaceLike | null | undefined;
+  addWorkspace(): Promise<void>;
+  importWorkspace(): Promise<void>;
+  removeWorkspace(workspace: WorkspaceLike): Promise<void>;
+  exportWorkspace(workspace: WorkspaceLike): Promise<void>;
+  autoDiscover(): Promise<void>;
 };
 
 type ProjectExplorerLike = {
-  refresh: () => void;
-  setWorkspace: (...args: any[]) => void;
-  setSelectedProject: (...args: any[]) => void;
-  getSelectedProject?: () => ProjectLike | null | undefined;
+  refresh(): void;
+  setWorkspace(workspace: WorkspaceLike | null): void;
+  setSelectedProject(project: ProjectLike): void;
+  getSelectedProject?(): ProjectLike | null | undefined;
 };
 
 type ModuleExplorerLike = {
-  refresh: () => void;
-  setProjectPath: (projectPath: string, projectType: string) => void;
+  refresh(): void;
+  setProjectPath(projectPath: string, projectType: string): void;
 };
 
 type WorkspaceCommandItem = {
@@ -37,9 +49,26 @@ type WorkspaceCommandItem = {
   path?: string;
 };
 
-type ProjectCommandItem = {
-  project?: ProjectLike;
-} & Partial<ProjectLike>;
+const PROJECT_TYPES: ReadonlySet<ProjectLike['type']> = new Set([
+  'fastapi',
+  'django',
+  'flask',
+  'nestjs',
+  'express',
+  'koa',
+  'go',
+  'springboot',
+  'rails',
+  'dotnet',
+  'unknown',
+]);
+
+function normalizeProjectType(value: unknown): ProjectLike['type'] {
+  if (typeof value === 'string' && PROJECT_TYPES.has(value as ProjectLike['type'])) {
+    return value as ProjectLike['type'];
+  }
+  return 'unknown';
+}
 
 function resolveWorkspacePathFromItem(item: unknown): string | undefined {
   if (typeof item === 'string') {
@@ -81,15 +110,33 @@ function resolveProjectFromItem(item: unknown): ProjectLike | undefined {
     return undefined;
   }
 
-  const typedItem = item as ProjectCommandItem;
-  const projectCandidate = typedItem.project ?? typedItem;
+  const typedItem = item as ProjectInputCandidate;
+  const projectCandidateRaw = typedItem.project ?? typedItem;
+  if (!projectCandidateRaw || typeof projectCandidateRaw !== 'object') {
+    return undefined;
+  }
+  const projectCandidate = projectCandidateRaw as ProjectInputCandidate;
 
   if (
     typeof projectCandidate.path === 'string' &&
     typeof projectCandidate.name === 'string' &&
     typeof projectCandidate.type === 'string'
   ) {
-    return projectCandidate as ProjectLike;
+    return {
+      path: projectCandidate.path,
+      name: projectCandidate.name,
+      type: normalizeProjectType(projectCandidate.type),
+      kit: typeof projectCandidate.kit === 'string' ? projectCandidate.kit : '',
+      managed: typeof projectCandidate.managed === 'boolean' ? projectCandidate.managed : undefined,
+      modules: Array.isArray(projectCandidate.modules)
+        ? projectCandidate.modules.filter((module): module is string => typeof module === 'string')
+        : [],
+      isValid: typeof projectCandidate.isValid === 'boolean' ? projectCandidate.isValid : true,
+      workspacePath:
+        typeof projectCandidate.workspacePath === 'string'
+          ? projectCandidate.workspacePath
+          : undefined,
+    };
   }
 
   return undefined;

@@ -4,6 +4,9 @@
  */
 
 import * as vscode from 'vscode';
+import type { IncomingMessage } from 'http';
+import * as https from 'https';
+import * as path from 'path';
 import { Logger } from '../utils/logger';
 import { SystemCheckResult } from '../types';
 import { getPoetryVersion } from '../utils/poetryHelper';
@@ -15,10 +18,10 @@ const FETCH_JSON_TIMEOUT_MS = 8000;
 const MAX_FETCH_REDIRECTS = 3;
 
 // Helper function to fetch JSON from HTTPS URL (version checking)
-const fetchJson = (
+const fetchJson = <T = unknown>(
   url: string,
   options?: { redirectCount?: number; initialHost?: string }
-): Promise<any> => {
+): Promise<T> => {
   return new Promise((resolve, reject) => {
     const redirectCount = options?.redirectCount ?? 0;
     if (redirectCount > MAX_FETCH_REDIRECTS) {
@@ -33,8 +36,7 @@ const fetchJson = (
       return;
     }
 
-    const https = require('https');
-    const req = https.get(requestUrl.toString(), (res: any) => {
+    const req = https.get(requestUrl.toString(), (res: IncomingMessage) => {
       if (res.statusCode === 301 || res.statusCode === 302) {
         const location = res.headers.location;
         if (typeof location !== 'string' || !location.trim()) {
@@ -43,7 +45,7 @@ const fetchJson = (
         }
 
         const redirectUrl = new URL(location, requestUrl).toString();
-        fetchJson(redirectUrl, {
+        fetchJson<T>(redirectUrl, {
           redirectCount: redirectCount + 1,
           initialHost,
         })
@@ -61,7 +63,7 @@ const fetchJson = (
       });
       res.on('end', () => {
         try {
-          resolve(JSON.parse(data));
+          resolve(JSON.parse(data) as T);
         } catch (e) {
           reject(e);
         }
@@ -200,7 +202,9 @@ async function runSystemChecks(
 
           // Check for newer version
           try {
-            const data = await fetchJson('https://pypi.org/pypi/rapidkit-core/json');
+            const data = await fetchJson<{ info?: { version?: string } }>(
+              'https://pypi.org/pypi/rapidkit-core/json'
+            );
             if (data.info && data.info.version) {
               const latestVersion = data.info.version;
               if (isNewerVersion(coreVersion, latestVersion)) {
@@ -323,9 +327,11 @@ async function runSystemChecks(
 
     // Check for newer version
     try {
-      const data = await fetchJson('https://registry.npmjs.org/rapidkit/latest');
+      const data = await fetchJson<{ version?: string }>(
+        'https://registry.npmjs.org/rapidkit/latest'
+      );
       const latestVersion = data.version;
-      if (isNewerVersion(version, latestVersion)) {
+      if (typeof latestVersion === 'string' && isNewerVersion(version, latestVersion)) {
         npmMessage += ` → v${latestVersion} available`;
       }
     } catch {
@@ -369,7 +375,7 @@ async function runSystemChecks(
 
   // Check Java — try JAVA_HOME first, then common candidates
   const javaHome = process.env['JAVA_HOME'];
-  const javaExecutable = javaHome ? require('path').join(javaHome, 'bin', 'java') : 'java';
+  const javaExecutable = javaHome ? path.join(javaHome, 'bin', 'java') : 'java';
   try {
     const javaResult = await run(javaExecutable, ['-version'], { stdio: 'pipe', timeout: 6000 });
     // java -version writes to stderr

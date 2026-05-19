@@ -12,7 +12,7 @@ import type { ActionProvenance } from './incidentStudioEvidenceProvenance';
 /**
  * Artifact export with full evidence coverage
  */
-export interface ArtifactWithProvenance<T = Record<string, unknown>> {
+export interface ArtifactWithProvenance<T = object> {
   artifact: T;
   provenanceMetadata: {
     exportedAt: number;
@@ -91,7 +91,7 @@ export interface ReproPackExport {
 /**
  * Wrap artifact export with complete provenance metadata
  */
-export function wrapArtifactWithProvenance<T extends Record<string, unknown>>(
+export function wrapArtifactWithProvenance<T extends object>(
   artifact: T,
   artifactId: string,
   artifactType: 'verify-pack' | 'release-readiness' | 'repro-pack',
@@ -151,14 +151,7 @@ export function exportVerifyPackWithProvenance(
     generatedAt: Date.now(),
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wrapped = wrapArtifactWithProvenance(
-    verifyPack as any,
-    packId,
-    'verify-pack',
-    actionProvenances
-  );
-  return wrapped as ArtifactWithProvenance<VerifyPackExport>;
+  return wrapArtifactWithProvenance(verifyPack, packId, 'verify-pack', actionProvenances);
 }
 
 /**
@@ -183,14 +176,12 @@ export function exportReleaseReadinessWithProvenance(
     workspacePath,
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wrapped = wrapArtifactWithProvenance(
-    releaseReadiness as any,
+  return wrapArtifactWithProvenance(
+    releaseReadiness,
     artifactId,
     'release-readiness',
     actionProvenances
   );
-  return wrapped as ArtifactWithProvenance<ReleaseReadinessExport>;
 }
 
 /**
@@ -217,20 +208,13 @@ export function exportReproPackWithProvenance(
     generatedAt: Date.now(),
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wrapped = wrapArtifactWithProvenance(
-    reproPack as any,
-    packId,
-    'repro-pack',
-    actionProvenances
-  );
-  return wrapped as ArtifactWithProvenance<ReproPackExport>;
+  return wrapArtifactWithProvenance(reproPack, packId, 'repro-pack', actionProvenances);
 }
 
 /**
  * Format artifact export as human-readable audit note
  */
-export function formatArtifactAuditNote<T extends Record<string, unknown>>(
+export function formatArtifactAuditNote<T extends object>(
   wrapped: ArtifactWithProvenance<T>
 ): string {
   const meta = wrapped.provenanceMetadata;
@@ -311,7 +295,7 @@ export function formatArtifactAsJson<T extends Record<string, unknown>>(
 /**
  * Calculate export integrity score (0-100)
  */
-export function calculateExportIntegrityScore<T extends Record<string, unknown>>(
+export function calculateExportIntegrityScore<T extends object>(
   wrapped: ArtifactWithProvenance<T>
 ): {
   score: number;

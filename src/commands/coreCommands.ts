@@ -10,6 +10,7 @@ import { checkSystemCommand } from './checkSystem';
 import { showWelcomeCommand } from './showWelcome';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { SetupPanel } from '../ui/panels/setupExperiencePanel';
+import type { ModuleData } from '../data/modules';
 
 type WorkspaceLike = { path: string; name?: string };
 type ProjectLike = { path: string; name: string; type: string; workspacePath?: string };
@@ -23,6 +24,51 @@ type ProjectExplorerLike = {
   refresh: () => void;
   getSelectedProject?: () => ProjectLike | null | undefined;
 };
+
+type ArchitectureCommandItem = {
+  project?: {
+    path?: unknown;
+    name?: unknown;
+    type?: unknown;
+    workspacePath?: unknown;
+  };
+  workspace?: {
+    path?: unknown;
+    name?: unknown;
+  };
+};
+
+function toNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function normalizeWorkspaceInput(value: unknown): string | Record<string, unknown> | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function asArchitectureCommandItem(item: unknown): ArchitectureCommandItem | undefined {
+  if (!item || typeof item !== 'object') {
+    return undefined;
+  }
+  return item as ArchitectureCommandItem;
+}
+
+function isModuleDataLike(value: unknown): value is ModuleData {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === 'string' &&
+    (typeof record.name === 'string' || typeof record.display_name === 'string')
+  );
+}
 
 export function registerCoreCommands(options: {
   context: vscode.ExtensionContext;
@@ -45,7 +91,7 @@ export function registerCoreCommands(options: {
             'Executing createWorkspace command',
             workspaceInput ? `with input: ${JSON.stringify(workspaceInput)}` : ''
           );
-          await createWorkspaceCommand(workspaceInput as any);
+          await createWorkspaceCommand(normalizeWorkspaceInput(workspaceInput));
           getWorkspaceExplorer()?.refresh();
         } catch (error) {
           logger.error('Failed to create workspace', error);
@@ -108,30 +154,24 @@ export function registerCoreCommands(options: {
       }
     }),
 
-    vscode.commands.registerCommand('workspai.openArchitectureMap', async (item?: any) => {
+    vscode.commands.registerCommand('workspai.openArchitectureMap', async (item?: unknown) => {
       const selectedProject = getProjectExplorer()?.getSelectedProject?.();
       const selectedWorkspace = getWorkspaceExplorer()?.getSelectedWorkspace();
 
-      const projectFromItem = item?.project;
-      const workspaceFromItem = item?.workspace;
+      const itemPayload = asArchitectureCommandItem(item);
 
-      const projectName =
-        (typeof projectFromItem?.name === 'string' && projectFromItem.name) ||
-        selectedProject?.name;
-      const projectPath =
-        (typeof projectFromItem?.path === 'string' && projectFromItem.path) ||
-        selectedProject?.path;
-      const projectType =
-        (typeof projectFromItem?.type === 'string' && projectFromItem.type) ||
-        selectedProject?.type;
+      const projectFromItem = itemPayload?.project;
+      const workspaceFromItem = itemPayload?.workspace;
+
+      const projectName = toNonEmptyString(projectFromItem?.name) || selectedProject?.name;
+      const projectPath = toNonEmptyString(projectFromItem?.path) || selectedProject?.path;
+      const projectType = toNonEmptyString(projectFromItem?.type) || selectedProject?.type;
 
       const workspacePath =
-        (typeof workspaceFromItem?.path === 'string' && workspaceFromItem.path) ||
-        (typeof projectFromItem?.workspacePath === 'string' && projectFromItem.workspacePath) ||
+        toNonEmptyString(workspaceFromItem?.path) ||
+        toNonEmptyString(projectFromItem?.workspacePath) ||
         selectedWorkspace?.path;
-      const workspaceName =
-        (typeof workspaceFromItem?.name === 'string' && workspaceFromItem.name) ||
-        selectedWorkspace?.name;
+      const workspaceName = toNonEmptyString(workspaceFromItem?.name) || selectedWorkspace?.name;
 
       if (!workspacePath) {
         vscode.window.showWarningMessage('Select a workspace first.');
@@ -238,7 +278,11 @@ export function registerCoreCommands(options: {
     }),
 
     vscode.commands.registerCommand('workspai.addModule', addModuleCommand),
-    vscode.commands.registerCommand('workspai.showModuleInstallModal', (moduleData: any) => {
+    vscode.commands.registerCommand('workspai.showModuleInstallModal', (moduleData: unknown) => {
+      if (!isModuleDataLike(moduleData)) {
+        vscode.window.showWarningMessage('Invalid module payload for install modal.');
+        return;
+      }
       WelcomePanel.showModuleInstallModal(moduleData);
     }),
     vscode.commands.registerCommand('workspai.previewTemplate', previewTemplateCommand),
