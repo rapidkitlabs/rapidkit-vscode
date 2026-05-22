@@ -261,6 +261,12 @@
         "icon": "$(debug-start)"
       },
       {
+        "command": "workspai.workspaceAutopilotRelease",
+        "title": "Autopilot Release",
+        "category": "Workspai",
+        "icon": "$(shield)"
+      },
+      {
         "command": "workspai.workspacePolicyShow",
         "title": "Workspace Policy: Show",
         "category": "Workspai",
@@ -812,6 +818,9 @@
           "command": "workspai.workspaceRunStart"
         },
         {
+          "command": "workspai.workspaceAutopilotRelease"
+        },
+        {
           "command": "workspai.workspacePolicySet"
         },
         {
@@ -1132,9 +1141,14 @@
           "group": "workspace_run@4"
         },
         {
-          "command": "workspai.exportVerifyPackContract",
+          "command": "workspai.workspaceAutopilotRelease",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "workspace_run@5"
+        },
+        {
+          "command": "workspai.exportVerifyPackContract",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_run@6"
         },
         {
           "command": "workspai.workspacePolicyShow",

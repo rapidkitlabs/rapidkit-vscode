@@ -382,6 +382,11 @@ describe('contract drift guard', () => {
     expect(operationsSource).toContain(
       "['workspace', 'policy', 'set', policyKey.label, policyValue]"
     );
+    expect(operationsSource).toContain("'autopilot',");
+    expect(operationsSource).toContain("'release',");
+    expect(operationsSource).toContain("'--mode',");
+    expect(operationsSource).toContain("'--json',");
+    expect(operationsSource).toContain("'--output',");
 
     expect(operationsSource).toContain("commands: [['cache', 'status']]");
     expect(operationsSource).toContain("commands: [['cache', 'clear']]");
@@ -398,6 +403,7 @@ describe('contract drift guard', () => {
 
     expect(operationsSource).not.toContain('npx rapidkit cache status');
     expect(operationsSource).not.toContain('npx rapidkit mirror status');
+    expect(operationsSource).not.toContain('npx rapidkit autopilot release');
     expect(operationsSource).not.toContain('npx workspai.doctor workspace');
     expect(operationsSource).not.toContain("commands: [['init']]");
     expect(operationsSource).not.toContain('RAPIDKIT_ENABLE_RUNTIME_ADAPTERS=1 npx rapidkit setup');

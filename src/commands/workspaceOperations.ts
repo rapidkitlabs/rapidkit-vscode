@@ -20,6 +20,7 @@ type WorkspaceCommandItem = {
   since?: unknown;
   maxWorkers?: unknown;
   stage?: unknown;
+  mode?: unknown;
   preferredAction?: unknown;
 };
 
@@ -42,6 +43,7 @@ function summarizeC06Health(input: {
 
 type WorkspaceHealthAction = 'check' | 'fix' | 'compliance' | 'version' | 'upgrade';
 type WorkspaceRunStage = 'init' | 'test' | 'build' | 'start';
+type WorkspaceAutopilotMode = 'audit' | 'safe-fix' | 'enforce';
 type WorkspaceBootstrapProfile =
   | 'minimal'
   | 'python-only'
@@ -149,6 +151,19 @@ function parseWorkspaceRunStage(value: unknown): WorkspaceRunStage | undefined {
     normalized === 'build' ||
     normalized === 'start'
   ) {
+    return normalized;
+  }
+
+  return undefined;
+}
+
+function parseWorkspaceAutopilotMode(value: unknown): WorkspaceAutopilotMode | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'audit' || normalized === 'safe-fix' || normalized === 'enforce') {
     return normalized;
   }
 
@@ -295,6 +310,98 @@ async function pickWorkspaceRunFlags(
   return flags;
 }
 
+async function pickAutopilotReleaseFlags(input: {
+  workspaceName: string;
+  preferredSince?: string;
+  preferredMaxWorkers?: number;
+}): Promise<string[] | undefined> {
+  const selected = await vscode.window.showQuickPick(
+    [
+      {
+        label: 'Parallel execution',
+        description: 'Run project-level stages concurrently where possible',
+        value: 'parallel',
+      },
+      {
+        label: 'Include --since',
+        description: 'Use a specific git ref for affected scope',
+        value: 'since',
+      },
+    ],
+    {
+      title: `Autopilot Release — ${input.workspaceName}`,
+      placeHolder: 'Select optional release execution flags (optional)',
+      canPickMany: true,
+      ignoreFocusOut: true,
+    }
+  );
+
+  if (!selected) {
+    return undefined;
+  }
+
+  const values = new Set(selected.map((item) => item.value));
+  const flags: string[] = [];
+
+  if (values.has('since')) {
+    const preferredSince = input.preferredSince?.trim();
+    let sinceRef = preferredSince && preferredSince.length > 0 ? preferredSince : undefined;
+    if (!sinceRef) {
+      const sinceInput = await vscode.window.showInputBox({
+        title: `Autopilot Release — ${input.workspaceName}`,
+        prompt:
+          'Optional: git ref for affected/project discovery scope (--since). Leave empty to use CLI default.',
+        placeHolder: 'HEAD~1',
+        ignoreFocusOut: true,
+      });
+
+      if (sinceInput === undefined) {
+        return undefined;
+      }
+
+      const trimmed = sinceInput.trim();
+      sinceRef = trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    if (sinceRef) {
+      flags.push('--since', sinceRef);
+    }
+  }
+
+  if (values.has('parallel')) {
+    flags.push('--parallel');
+
+    const preferredMaxWorkers = parsePositiveInteger(input.preferredMaxWorkers);
+    let maxWorkers = preferredMaxWorkers;
+    if (!maxWorkers) {
+      const workerInput = await vscode.window.showInputBox({
+        title: `Autopilot Release — ${input.workspaceName}`,
+        prompt:
+          'Optional: max worker count for parallel execution (--max-workers). Leave empty for CLI default.',
+        placeHolder: '4',
+        ignoreFocusOut: true,
+      });
+
+      if (workerInput === undefined) {
+        return undefined;
+      }
+
+      const parsed = parsePositiveInteger(workerInput);
+      if (workerInput.trim().length > 0 && !parsed) {
+        vscode.window.showErrorMessage('Invalid max workers value. Enter a positive integer.');
+        return undefined;
+      }
+      maxWorkers = parsed;
+    }
+
+    if (maxWorkers) {
+      flags.push('--max-workers', String(maxWorkers));
+    }
+  }
+
+  return flags;
+}
+
 function resolveWorkspaceTarget(
   item: unknown,
   workspaceExplorer?: WorkspaceExplorerLike
@@ -353,6 +460,84 @@ export function registerWorkspaceOperationsCommands(options: {
       name: `Workspai: Workspace Run (${stage}) — ${wsName}`,
       cwd: workspacePath,
       commands: [['workspace', 'run', stage, ...flags]],
+    });
+  };
+
+  const runWorkspaceAutopilotReleaseCommand = async (item: unknown) => {
+    const workspaceExplorer = getWorkspaceExplorer();
+    const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
+    if (!workspacePath) {
+      vscode.window.showErrorMessage(
+        'No workspace selected. Select a workspace in the sidebar first.'
+      );
+      return;
+    }
+
+    const wsName = workspaceName || path.basename(workspacePath);
+    const typedItem = asWorkspaceCommandItem(item);
+    const preferredMode = parseWorkspaceAutopilotMode(typedItem?.mode);
+    const selectedMode = preferredMode
+      ? { value: preferredMode }
+      : await vscode.window.showQuickPick(
+          [
+            {
+              label: 'enforce',
+              description: 'Fail-closed release gate (recommended for CI)',
+              value: 'enforce' as WorkspaceAutopilotMode,
+            },
+            {
+              label: 'safe-fix',
+              description: 'Apply safe remediation before verdict',
+              value: 'safe-fix' as WorkspaceAutopilotMode,
+            },
+            {
+              label: 'audit',
+              description: 'Assessment only (no mutations)',
+              value: 'audit' as WorkspaceAutopilotMode,
+            },
+          ],
+          {
+            title: `Autopilot Release — ${wsName}`,
+            placeHolder: 'Select execution mode',
+            ignoreFocusOut: true,
+          }
+        );
+
+    if (!selectedMode) {
+      return;
+    }
+
+    const preferredSince =
+      typeof typedItem?.since === 'string' && typedItem.since.trim().length > 0
+        ? typedItem.since.trim()
+        : undefined;
+    const preferredMaxWorkers = parsePositiveInteger(typedItem?.maxWorkers);
+    const flags = await pickAutopilotReleaseFlags({
+      workspaceName: wsName,
+      preferredSince,
+      preferredMaxWorkers,
+    });
+    if (!flags) {
+      return;
+    }
+
+    const reportPath = path.join(workspacePath, '.rapidkit', 'reports', 'autopilot-release.json');
+
+    runRapidkitCommandsInTerminal({
+      name: `Workspai: Autopilot Release (${selectedMode.value}) — ${wsName}`,
+      cwd: workspacePath,
+      commands: [
+        [
+          'autopilot',
+          'release',
+          '--mode',
+          selectedMode.value,
+          '--json',
+          '--output',
+          reportPath,
+          ...flags,
+        ],
+      ],
     });
   };
 
@@ -524,6 +709,13 @@ export function registerWorkspaceOperationsCommands(options: {
     vscode.commands.registerCommand('workspai.workspaceRunStart', async (item?: unknown) => {
       await runWorkspaceStageCommand(item, 'start');
     }),
+
+    vscode.commands.registerCommand(
+      'workspai.workspaceAutopilotRelease',
+      async (item?: unknown) => {
+        await runWorkspaceAutopilotReleaseCommand(item);
+      }
+    ),
 
     vscode.commands.registerCommand('workspai.workspaceRunStage', async (item?: unknown) => {
       const typedItem = asWorkspaceCommandItem(item);

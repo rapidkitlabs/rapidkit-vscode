@@ -1499,7 +1499,7 @@ export class WelcomePanel {
                   let finalCommand = inlineCommand;
                   const normalizedCommand = inlineCommand.replace(/\s+/g, ' ').trim();
                   const isWorkspaceScopedRapidkitCommand =
-                    /^(?:(?:npx\s+(?:(?:--yes\s+--package\s+rapidkit\s+)?rapidkit))|rapidkit|poetry\s+run\s+rapidkit|\.\/\.venv\/bin\/rapidkit|\.\/rapidkit)\s+(?:create(?:\s+workspace|\s+project)?|bootstrap\b|setup\b|workspace\b|cache\b|mirror\b|readiness\b|doctor\s+workspace\b)/.test(
+                    /^(?:(?:npx\s+(?:(?:--yes\s+--package\s+rapidkit\s+)?rapidkit))|rapidkit|poetry\s+run\s+rapidkit|\.\/\.venv\/bin\/rapidkit|\.\/rapidkit)\s+(?:create(?:\s+workspace|\s+project)?|bootstrap\b|setup\b|workspace\b|cache\b|mirror\b|readiness\b|doctor\s+workspace\b|autopilot\s+release\b)/.test(
                       normalizedCommand
                     );
                   const effectiveCwd =
