@@ -157,16 +157,6 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
     // and calls setWorkspace() on this instance via projectExplorer reference.
     // Do NOT register it here to avoid "command already exists" on re-activation.
 
-    // Register command to get selected workspace
-    vscode.commands.registerCommand('workspai.getSelectedWorkspace', () => {
-      return this.selectedWorkspace;
-    });
-
-    // Register command to get selected project
-    vscode.commands.registerCommand('workspai.getSelectedProject', () => {
-      return this.selectedProject;
-    });
-
     // Initialize context
     vscode.commands.executeCommand('setContext', 'workspai:noProjects', false);
     vscode.commands.executeCommand('setContext', 'workspai:hasProjects', false);

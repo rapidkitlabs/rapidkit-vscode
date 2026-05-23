@@ -18,7 +18,7 @@ Scaffold projects from intent. Debug with full context. Ship faster — all insi
 
 ## What it does
 
-Workspai is a VS Code extension that brings AI-powered workspace management to backend teams. It knows your project structure, runs your CLI, and uses GitHub Copilot to scaffold, debug, and analyze — all from a single sidebar.
+Workspai is a VS Code extension that wraps the RapidKit CLI (`rapidkit` on npm) and brings AI-powered workspace management to backend teams. It knows your project structure, runs your CLI, and uses GitHub Copilot to scaffold, debug, and analyze — all from a single sidebar.
 
 **Supported frameworks:** FastAPI · NestJS · Spring Boot · Go/Fiber · Go/Gin
 

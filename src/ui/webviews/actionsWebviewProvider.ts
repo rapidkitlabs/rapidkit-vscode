@@ -61,6 +61,9 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         case 'openWelcome':
           vscode.commands.executeCommand('workspai.showWelcome');
           break;
+        case 'incidentStudioNext':
+          vscode.commands.executeCommand('workspai.incidentStudioNext');
+          break;
         case 'releaseReadinessCommander':
           vscode.commands.executeCommand('workspai.aiReleaseReadinessCommander', {
             source: 'sidebar-quick-actions',
@@ -116,8 +119,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             cursor: pointer;
         }
         button:focus-visible {
-            outline: 1px solid var(--vscode-focusBorder);
-            outline-offset: 1px;
+          outline: 2px solid var(--vscode-focusBorder);
+          outline-offset: 2px;
         }
 
         body {
@@ -131,13 +134,19 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             gap: 8px;
         }
 
+        :root {
+          --cta-press-scale: 0.985;
+          --cta-hover-lift: -1px;
+          --cta-transition-fast: 160ms cubic-bezier(0.2, 0, 0, 1);
+        }
+
         .doctor  { --c: var(--vscode-editorWarning-foreground, #FF9800); }
         .welcome { --c: var(--vscode-textLink-foreground,  #00cfc1); }
         .docs    { --c: var(--vscode-terminal-ansiBlue,    #2196F3); }
-        .ai      { --c: #00cfc1; }
-        .telemetry { --c: #7aa2f7; }
-        .tip     { --c: #f2cc60; }
-        .experiment { --c: #8bcf7f; }
+        .ai      { --c: var(--vscode-textLink-foreground, #00cfc1); }
+        .telemetry { --c: var(--vscode-terminal-ansiBlue, #7aa2f7); }
+        .tip     { --c: var(--vscode-editorWarning-foreground, #f2cc60); }
+        .experiment { --c: var(--vscode-charts-green, #8bcf7f); }
         .danger  { --c: var(--vscode-errorForeground, #f14c4c); }
         .manual  { --c: var(--vscode-descriptionForeground, #888); }
 
@@ -150,35 +159,44 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             gap: 8px;
             padding: 11px 12px;
             background: linear-gradient(135deg,
-                color-mix(in srgb, #00cfc1 18%, var(--vscode-editor-background) 82%),
-                color-mix(in srgb, #7c3aed 12%, var(--vscode-editor-background) 88%)
+              color-mix(in srgb, var(--vscode-button-background) 18%, var(--vscode-editor-background) 82%),
+              color-mix(in srgb, var(--vscode-textLink-foreground) 12%, var(--vscode-editor-background) 88%)
             );
-            border: 1px solid color-mix(in srgb, #00cfc1 45%, transparent 55%);
+            border: 1px solid color-mix(in srgb, var(--vscode-button-background) 45%, transparent 55%);
             border-radius: 9px;
-            transition: all 0.2s ease;
+            transition:
+              background var(--cta-transition-fast),
+              border-color var(--cta-transition-fast),
+              color var(--cta-transition-fast),
+              box-shadow var(--cta-transition-fast),
+              transform var(--cta-transition-fast);
             position: relative;
             overflow: hidden;
+            color: var(--vscode-button-foreground);
         }
         .cta-ai::before {
             content: '';
             position: absolute;
             inset: 0;
             background: linear-gradient(135deg,
-                color-mix(in srgb, #00cfc1 30%, transparent 70%),
-                color-mix(in srgb, #7c3aed 20%, transparent 80%)
+              color-mix(in srgb, var(--vscode-button-background) 30%, transparent 70%),
+              color-mix(in srgb, var(--vscode-textLink-foreground) 20%, transparent 80%)
             );
             opacity: 0;
             transition: opacity 0.2s ease;
         }
         .cta-ai:hover::before { opacity: 1; }
-        .cta-ai:hover { transform: translateY(-1px); box-shadow: 0 3px 12px color-mix(in srgb, #00cfc1 25%, transparent 75%); }
-        .cta-ai:active { transform: scale(0.98); }
+        .cta-ai:hover {
+          transform: translateY(var(--cta-hover-lift));
+          box-shadow: 0 3px 12px color-mix(in srgb, var(--vscode-button-background) 25%, transparent 75%);
+        }
+        .cta-ai:active { transform: translateY(0) scale(var(--cta-press-scale)); }
         .cta-ai-icon {
             font-size: 14px;
-            color: #00cfc1;
+          color: var(--vscode-button-foreground);
             position: relative;
             z-index: 1;
-            filter: drop-shadow(0 0 4px color-mix(in srgb, #00cfc1 60%, transparent 40%));
+          filter: drop-shadow(0 0 4px color-mix(in srgb, var(--vscode-button-background) 60%, transparent 40%));
         }
         .cta-ai-label {
             position: relative;
@@ -191,16 +209,13 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         .cta-ai-title {
             font-size: 12px;
             font-weight: 700;
-            background: linear-gradient(90deg, #00cfc1, #a78bfa);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+          color: var(--vscode-button-foreground);
             letter-spacing: 0.02em;
         }
         .cta-ai-sub {
             font-size: 9.5px;
             color: var(--vscode-descriptionForeground);
-            opacity: 0.75;
+          opacity: 0.9;
             -webkit-text-fill-color: var(--vscode-descriptionForeground);
         }
 
@@ -215,15 +230,21 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             background: var(--vscode-editor-inactiveSelectionBackground);
             border: 1px solid var(--vscode-panel-border, transparent);
             border-radius: 7px;
-            transition: all 0.15s ease;
+            transition:
+              background var(--cta-transition-fast),
+              border-color var(--cta-transition-fast),
+              color var(--cta-transition-fast),
+              transform var(--cta-transition-fast),
+              box-shadow var(--cta-transition-fast);
             color: var(--vscode-descriptionForeground);
         }
         .cta-manual:hover {
             background: var(--vscode-list-hoverBackground);
             border-color: color-mix(in srgb, var(--vscode-descriptionForeground) 40%, transparent 60%);
             color: var(--vscode-foreground);
+            transform: translateY(var(--cta-hover-lift));
         }
-        .cta-manual:active { transform: scale(0.98); }
+          .cta-manual:active { transform: translateY(0) scale(var(--cta-press-scale)); }
         .cta-manual-icon { font-size: 13px; opacity: 0.7; }
         .cta-manual-text { font-size: 11px; font-weight: 600; }
 
@@ -234,7 +255,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             text-transform: uppercase;
             letter-spacing: 0.08em;
             color: var(--vscode-descriptionForeground);
-            opacity: 0.55;
+          opacity: 0.72;
             padding: 0 1px;
             margin-bottom: -2px;
         }
@@ -242,24 +263,37 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         /* ── Tool grid (3 cols) ──────────────────────────── */
         .tool-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 5px;
+        }
+
+        @media (max-width: 320px) {
+          .tool-grid {
+            grid-template-columns: 1fr;
+          }
         }
         .tool-btn {
             display: flex;
             align-items: center;
             gap: 7px;
             padding: 8px 9px;
+          min-height: 36px;
             background: var(--vscode-editor-inactiveSelectionBackground);
             border: 1px solid transparent;
             border-radius: 7px;
-            transition: all 0.15s ease;
+            transition:
+              background var(--cta-transition-fast),
+              border-color var(--cta-transition-fast),
+              color var(--cta-transition-fast),
+              transform var(--cta-transition-fast),
+              box-shadow var(--cta-transition-fast);
         }
         .tool-btn:hover {
             background: color-mix(in srgb, var(--c, #00cfc1) 10%, var(--vscode-list-hoverBackground) 90%);
             border-color: color-mix(in srgb, var(--c, #00cfc1) 55%, transparent 45%);
+            transform: translateY(var(--cta-hover-lift));
         }
-        .tool-btn:active { transform: scale(0.97); }
+        .tool-btn:active { transform: translateY(0) scale(var(--cta-press-scale)); }
         .tool-btn .t-icon {
             display: flex;
             align-items: center;
@@ -276,7 +310,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         }
         .tool-btn:hover .t-icon svg { fill: var(--c); }
         .tool-btn .t-text {
-            font-size: 10.5px;
+          font-size: 11px;
             font-weight: 600;
             color: var(--vscode-foreground);
             white-space: nowrap;
@@ -289,6 +323,87 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             height: 1px;
             background: var(--vscode-panel-border);
             opacity: 0.2;
+        }
+
+        @media (prefers-contrast: more) {
+          .cta-ai {
+            border-color: var(--vscode-focusBorder);
+          }
+
+          .cta-ai-title {
+            background: none;
+            -webkit-text-fill-color: currentColor;
+          }
+
+          .cta-ai-sub,
+          .section-label {
+            opacity: 1;
+          }
+
+          .tool-btn,
+          .cta-manual {
+            border-color: var(--vscode-panel-border);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .cta-ai,
+          .cta-ai::before,
+          .cta-manual,
+          .tool-btn,
+          .tool-btn .t-icon svg {
+            transition-duration: 1ms !important;
+          }
+
+          .cta-ai:hover,
+          .cta-ai:active,
+          .cta-manual:hover,
+          .cta-manual:active,
+          .tool-btn:hover,
+          .tool-btn:active {
+            transform: none !important;
+          }
+        }
+
+        @media (forced-colors: active) {
+          .cta-ai,
+          .cta-manual,
+          .tool-btn {
+            background: Canvas;
+            color: CanvasText;
+            border: 1px solid ButtonBorder;
+            box-shadow: none;
+          }
+
+          .cta-ai::before {
+            content: none;
+          }
+
+          .cta-ai-title {
+            background: none;
+            color: ButtonText;
+            -webkit-text-fill-color: ButtonText;
+          }
+
+          .cta-ai-sub,
+          .section-label,
+          .tool-btn .t-icon svg,
+          .tool-btn .t-text {
+            color: CanvasText;
+            fill: CanvasText;
+            opacity: 1;
+          }
+
+          .tool-btn:hover,
+          .cta-manual:hover,
+          .cta-ai:hover {
+            background: Highlight;
+            color: HighlightText;
+          }
+
+          button:focus-visible {
+            outline: 2px solid Highlight;
+          }
         }
     </style>
 </head>
@@ -318,10 +433,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             <span class="t-icon">${icons.home}</span>
             <span class="t-text">Dashboard</span>
         </button>
-        <button class="tool-btn manual" onclick="send('showLogs')" title="Open extension output logs">
-            <span class="t-icon">${icons.logs}</span>
-            <span class="t-text">Logs</span>
-        </button>
+
         <button class="tool-btn docs" onclick="send('openDocs')" title="Open documentation">
             <span class="t-icon">${icons.docs}</span>
             <span class="t-text">Docs</span>

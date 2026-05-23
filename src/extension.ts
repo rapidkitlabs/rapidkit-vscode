@@ -26,6 +26,7 @@ import { registerFileManagementCommands } from './commands/fileManagement';
 import { registerProjectContextAndLogCommands } from './commands/projectContextAndLogs';
 import { registerProjectLifecycleCommands } from './commands/projectLifecycle';
 import { showWelcomeCommand } from './commands/showWelcome';
+import { showIncidentStudioNextCommand } from './commands/incidentStudioNext';
 import { registerWorkspaceSelectionCommands } from './commands/workspaceSelection';
 import { registerWorkspaceOperationsCommands } from './commands/workspaceOperations';
 import { WorkspaiStatusBar } from './ui/statusBar';
@@ -578,6 +579,10 @@ export async function activate(context: vscode.ExtensionContext) {
       // Manual trigger for onboarding tips/tour
       vscode.commands.registerCommand('workspai.showAIFeatureOnboarding', async () => {
         await showAIFeatureOnboarding(context, { force: true });
+      }),
+      // Open Incident Studio (Next) — new fullscreen redesign
+      vscode.commands.registerCommand('workspai.incidentStudioNext', async () => {
+        await showIncidentStudioNextCommand(context.extensionUri);
       })
     );
 
@@ -641,6 +646,15 @@ export async function activate(context: vscode.ExtensionContext) {
     moduleExplorer = new ModuleExplorerProvider();
     doctorEvidenceExplorer = new DoctorEvidenceProvider(
       () => workspaceExplorer?.getSelectedWorkspace()?.path ?? null
+    );
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('workspai.getSelectedWorkspace', () => {
+        return projectExplorer?.getSelectedWorkspace() ?? null;
+      }),
+      vscode.commands.registerCommand('workspai.getSelectedProject', () => {
+        return projectExplorer?.getSelectedProject() ?? null;
+      })
     );
 
     // Set workspace explorer reference for WelcomePanel

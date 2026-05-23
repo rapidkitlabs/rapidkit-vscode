@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { AIModalContext } from '../core/aiService';
 import { resolvePreferredAIModalContext } from '../core/aiContextResolver';
 import { WorkspaceMemoryService, type WorkspaceMemory } from '../core/workspaceMemoryService';
+import { findWorkspaceRoot } from '../utils/findWorkspace';
 import { WorkspaceUsageTracker } from '../utils/workspaceUsageTracker';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 
@@ -594,10 +595,13 @@ async function resolveWorkspaceForMemory(): Promise<{ name: string; path: string
     'workspai.getSelectedProject'
   );
   if (selectedProject?.path) {
-    return {
-      name: selectedProject.name ?? path.basename(selectedProject.path),
-      path: selectedProject.path,
-    };
+    const workspaceRoot = await findWorkspaceRoot(selectedProject.path);
+    if (workspaceRoot) {
+      return {
+        name: path.basename(workspaceRoot),
+        path: workspaceRoot,
+      };
+    }
   }
 
   const fallback = vscode.workspace.workspaceFolders?.[0];
@@ -1263,7 +1267,9 @@ export function registerAIFreeFeatureCommands(
       }
     }),
 
-    vscode.commands.registerCommand('workspai.aiWorkspaceMemoryWizard', async () => {
+    vscode.commands.registerCommand('workspai.aiWorkspaceMemoryWizard', async (seed?: unknown) => {
+      const invocation = parseFeatureInvocation(seed);
+      const seededContextLine = normalizeInputText(invocation.seedText ?? seed);
       const workspaceTarget = await resolveWorkspaceForMemory();
       if (!workspaceTarget) {
         vscode.window.showWarningMessage('Select or open a workspace first.');
@@ -1277,7 +1283,11 @@ export function registerAIFreeFeatureCommands(
           name: workspaceTarget.name,
           path: workspaceTarget.path,
         },
-        { result: 'started' }
+        {
+          result: 'started',
+          seedProvided: Boolean(seededContextLine),
+          ...invocation.telemetryProps,
+        }
       );
 
       const memoryService = WorkspaceMemoryService.getInstance();
@@ -1285,7 +1295,7 @@ export function registerAIFreeFeatureCommands(
 
       const contextLine = await vscode.window.showInputBox({
         prompt: 'Workspace memory wizard: one-line project overview',
-        value: currentMemory.context,
+        value: seededContextLine ?? currentMemory.context,
         placeHolder: 'Example: Multi-tenant billing API for B2B subscriptions',
         ignoreFocusOut: true,
       });
@@ -1298,7 +1308,10 @@ export function registerAIFreeFeatureCommands(
             name: workspaceTarget.name,
             path: workspaceTarget.path,
           },
-          { result: 'cancelled-context' }
+          {
+            result: 'cancelled-context',
+            ...invocation.telemetryProps,
+          }
         );
         return;
       }
@@ -1314,7 +1327,10 @@ export function registerAIFreeFeatureCommands(
             name: workspaceTarget.name,
             path: workspaceTarget.path,
           },
-          { result: 'empty-context' }
+          {
+            result: 'empty-context',
+            ...invocation.telemetryProps,
+          }
         );
         return;
       }
@@ -1332,7 +1348,10 @@ export function registerAIFreeFeatureCommands(
             name: workspaceTarget.name,
             path: workspaceTarget.path,
           },
-          { result: 'cancelled-conventions' }
+          {
+            result: 'cancelled-conventions',
+            ...invocation.telemetryProps,
+          }
         );
         return;
       }
@@ -1350,7 +1369,10 @@ export function registerAIFreeFeatureCommands(
             name: workspaceTarget.name,
             path: workspaceTarget.path,
           },
-          { result: 'cancelled-decisions' }
+          {
+            result: 'cancelled-decisions',
+            ...invocation.telemetryProps,
+          }
         );
         return;
       }
@@ -1359,6 +1381,9 @@ export function registerAIFreeFeatureCommands(
         context: contextLine.trim(),
         conventions,
         decisions,
+        policyProfile: currentMemory.policyProfile,
+        sensitivity: currentMemory.sensitivity,
+        localProcessingMode: currentMemory.localProcessingMode,
         lastUpdated: currentMemory.lastUpdated,
       };
 
@@ -1380,6 +1405,7 @@ export function registerAIFreeFeatureCommands(
           result: 'saved',
           conventionsCount: conventions.length,
           decisionsCount: decisions.length,
+          ...invocation.telemetryProps,
         }
       );
 
@@ -1441,6 +1467,40 @@ export function registerAIFreeFeatureCommands(
         path: workspaceTarget.path,
         name: workspaceTarget.name,
       };
+
+      if (selected.payload.command === 'workspai.projectDoctor') {
+        const selectedProject = await executeOptionalCommand<ProjectSelection>(
+          'workspai.getSelectedProject'
+        );
+
+        if (!selectedProject?.path) {
+          vscode.window.showWarningMessage(
+            'Project Health Check requires a selected project. Please choose a project from the Projects panel first.'
+          );
+          await trackAIFreeCommandEvent('workspai.aiWorkspaceCommandCenter', aiContext, {
+            result: 'no-project-selected',
+            targetCommand: selected.payload.command,
+          });
+          return;
+        }
+
+        await trackAIFreeCommandEvent('workspai.aiWorkspaceCommandCenter', aiContext, {
+          result: 'executed',
+          targetCommand: selected.payload.command,
+        });
+
+        await vscode.commands.executeCommand(selected.payload.command, {
+          project: {
+            path: selectedProject.path,
+            name: selectedProject.name,
+            type: selectedProject.type,
+          },
+          projectPath: selectedProject.path,
+          preferredAction: 'check',
+          workspace: payload.workspace,
+        });
+        return;
+      }
 
       await trackAIFreeCommandEvent('workspai.aiWorkspaceCommandCenter', aiContext, {
         result: 'executed',

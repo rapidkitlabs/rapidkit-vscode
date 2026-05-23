@@ -5683,6 +5683,43 @@ No markdown, no explanation outside the JSON.`;
         chatDoctorSnapshot ?? undefined
       );
 
+      if (prepared.validation.clarificationNeeded) {
+        const clarificationText =
+          prepared.validation.clarificationReason ??
+          'Context evidence is missing. Select a workspace/project and run npx --yes --package rapidkit rapidkit doctor workspace, then retry.';
+
+        const nextConversation = this._chatBrainConversations.get(conversationId);
+        if (nextConversation) {
+          nextConversation.history = [
+            ...nextConversation.history,
+            {
+              role: 'assistant' as const,
+              content: clarificationText,
+            },
+          ].slice(-12);
+          nextConversation.lastActionResponseText = clarificationText;
+          this._chatBrainConversations.set(conversationId, nextConversation);
+        }
+
+        this._panel.webview.postMessage({
+          command: 'aiChatDone',
+          data: {
+            conversationId,
+            messageId,
+            finalText: clarificationText,
+            phase: 'detect',
+            confidence: 100,
+            nextActions: [
+              'Select workspace/project',
+              'Run doctor workspace',
+              'Retry the same query',
+            ],
+          },
+          meta: { requestId, version: 'v1' },
+        });
+        return;
+      }
+
       const maxAttempts = 2;
       let streamSucceeded = false;
       let lastStreamError: unknown;

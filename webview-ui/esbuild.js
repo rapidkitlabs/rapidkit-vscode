@@ -43,14 +43,17 @@ const postcssPlugin = {
 
 async function main() {
   const ctx = await esbuild.context({
-    entryPoints: ['src/index.tsx'],
+    entryPoints: {
+      webview: 'src/index.tsx',
+      'incident-studio-next': 'src/incidentStudioNext.tsx',
+    },
     bundle: true,
     format: 'iife',
     minify: production,
     sourcemap: !production,
     sourcesContent: false,
     platform: 'browser',
-    outfile: '../dist/webview.js',
+    outdir: '../dist',
     logLevel: 'silent',
     plugins: [esbuildProblemMatcherPlugin, postcssPlugin],
     

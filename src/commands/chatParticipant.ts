@@ -119,7 +119,11 @@ async function handleWorkspaiRequest(
     const memoryNote = request.prompt.trim();
     if (memoryNote) {
       stream.progress('Opening AI modal with memory context…');
-      await vscode.commands.executeCommand('workspai.aiWorkspaceMemoryWizard');
+      await vscode.commands.executeCommand('workspai.aiWorkspaceMemoryWizard', {
+        seed: memoryNote,
+        source: 'chat-participant',
+        trigger: 'slash-memory',
+      });
       stream.markdown(`Memory wizard opened. Your note: _"${memoryNote}"_ — add it in the wizard.`);
     } else {
       stream.progress('Opening memory wizard…');
