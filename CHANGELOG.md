@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-05-23
+
+### Added / Changed / Fixed (Consolidation)
+
+- Consolidated a significant set of stabilization and governance improvements since v0.29.0 including AI runtime lifecycle hardening, memory-policy contract exposure and enforcement, provenance/export reliability improvements, and Incident Studio (vNext) delivery as an opt-in webview.
+- Removed an embedded non-English string in `src/commands/aiFreeFeatures.ts` and sanitized generated artifacts.
+- Made a deterministic textual ordering alignment in `src/ui/panels/welcomePanel.ts` to keep contract-based tests stable (no runtime behavior change).
+- Validated full source with `npm run compile`, `npm run typecheck`, and `npx vitest run` (all tests green).
+
+Commit-level audit (v0.29.0..HEAD):
+
+- `2ff3a50` — chore: commit rapidkit-vscode stable extension changes; preserve current stable AI feature base
+  - touched: `README.md`, `src/commands/aiFreeFeatures.ts`, `src/commands/chatParticipant.ts`, `src/commands/incidentStudioNext.ts`, `src/ui/panels/welcomePanel.ts`, `src/ui/panels/incidentStudioPanel.ts`, webview redesign files under `webview-ui/src/components/StudioRedesign/`, `webview-ui/src/lib/studioFeatureFlags.ts`, `webview-ui/esbuild.js`
+  - notes: localization cleanup, deterministic textual-order alignment to satisfy contract tests, and in-tree Studio redesign (opt-in).
+
+- `ead47c2` — feat(workspace): add autopilot release command integration
+  - touched: `package.json`, `src/commands/workspaceOperations.ts`, `src/test/driftGuard.test.ts`, `src/ui/panels/welcomePanel.ts`
+
+- `05c2c3d` — stabilization: extract creation/report lanes in welcome panel
+  - touched: `src/ui/panels/welcomePanel.ts`
+
+- `19af650` — stabilization: isolate activation and incident lanes (wave 2)
+  - touched: `src/extension.ts`, `src/ui/panels/welcomePanel.ts`
+
+- `96a6fab` — fix(stabilization): harden polyglot watchers and AI stream reliability
+  - touched: `src/core/aiModelSelection.ts`, `src/core/aiService.ts`, `src/extension.ts`, `src/ui/panels/welcomePanel.shared.ts`, `src/ui/panels/welcomePanel.ts`
+
+
+
 ## [0.29.0] - 2026-05-19
 
 ### Added
@@ -620,7 +649,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🧪 **Drift protection enhancements**
   - Added/extended drift guard checks for command/profile contract consistency
-  - Added repository guard to prevent unintended Persian/Arabic text drift
 
 ## [0.13.0] - 2026-02-21
 

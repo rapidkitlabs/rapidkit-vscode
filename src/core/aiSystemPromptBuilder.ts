@@ -129,7 +129,7 @@ export async function buildWorkspaiSystemPrompt(
 - Inject points in NestJS AppModule: // <<<inject:module-imports>>>
 - Never suggest raw HTTP exceptions inside domain or application layers — raise domain exceptions and map them in the presentation layer.
 - For migrations: use "alembic revision --autogenerate && alembic upgrade head".
-- Response language: match the user's query language (Persian → Persian, English → English).`;
+- Response language: match the user's query language.`;
 
   const prompt = [
     identity,

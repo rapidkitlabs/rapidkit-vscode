@@ -52,6 +52,53 @@ Quality and validation:
 
 Release posture: `stabilization-only`
 
+## v0.29.1 (May 23, 2026)
+
+### ✦ Consolidated Stabilization & Feature Consolidation Release
+
+Summary:
+- This release consolidates a broad set of important stabilization, safety, and integration changes applied since `v0.29.0`. These are not "minor" editorial tweaks — they are deliberate stabilizations, safeguards, contract hardenings, and host/webview integrations that materially improve AI behavior, reliability, and governance.
+- Notable surface areas include AI runtime lifecycle hardening, memory-policy contract enforcement, doctor/provenance reliability, incident verification gates, and the new opt-in Incident Studio integration (kept opt-in to avoid impacting the stable AI baseline).
+- Also includes a localization cleanup and one deterministic textual ordering alignment to preserve contract tests (no functional change to runtime behavior).
+
+Highlights:
+- AI runtime and streaming hardening: deterministic model selection, safer fallback behaviors, stricter timeout and cancellation handling, duplicate stream-done prevention, and more defensive message parsing across host and webview flows.
+- Memory and governance: local-processing memory policy profile surfaced and write-access contracts enforced end-to-end, memory influence audit timeline linked to decision artifacts.
+- Incident Studio: new fullscreen redesign implemented as an opt-in webview (feature-flagged via `localStorage`). The redesign is shipped in-tree but does not alter existing AI command routing unless explicitly invoked.
+- Doctor, provenance, and verify flows: stronger verify gates, provenance/export improvements, and deterministic verify/claim behavior to reduce false-positive success claims.
+- CI & release governance: release-stop gate integration, parity snapshot checks, and smoke-matrix validation tightened for enterprise release posture.
+
+Audit & validation:
+- Full source-level audit: `npm run compile` and `tsc --noEmit` passed.
+- Full test suite: `npx vitest run` — all tests passed (1013/1013) after a single safe textual ordering fix to satisfy a contract test.
+- ESLint: warnings only (no blocking errors).
+
+Release posture: `stabilization-only` (but consolidates many important stabilization and governance improvements)
+
+Commit-level audit (v0.29.0..HEAD):
+
+- `2ff3a50` — 2026-05-23 — chore: commit rapidkit-vscode stable extension changes; preserve current stable AI feature base
+  - Files: `README.md`, `src/commands/aiFreeFeatures.ts`, `src/commands/chatParticipant.ts`, `src/commands/incidentStudioNext.ts`, `src/ui/panels/welcomePanel.ts`, `src/ui/panels/incidentStudioPanel.ts`, webview redesign files under `webview-ui/src/components/StudioRedesign/`, `webview-ui/src/lib/studioFeatureFlags.ts`, `webview-ui/esbuild.js`
+  - Impact: High — contains the localization cleanup, a deterministic textual-order alignment in `welcomePanel.ts` to satisfy contract tests (no runtime behavioral change), and delivery of the Studio redesign files (opt-in).
+
+- `ead47c2` — 2026-05-22 — feat(workspace): add autopilot release command integration
+  - Files: `package.json`, `src/commands/workspaceOperations.ts`, `src/test/driftGuard.test.ts`, `src/ui/panels/welcomePanel.ts`
+  - Impact: Low — release/autopilot infra; drift guard test and welcome panel adjusted for integration.
+
+- `05c2c3d` — 2026-05-19 — stabilization: extract creation/report lanes in welcome panel
+  - Files: `src/ui/panels/welcomePanel.ts`
+  - Impact: Medium — refactors lanes in welcome panel, improving lifecycle clarity for creation/report flows.
+
+- `19af650` — 2026-05-19 — stabilization: isolate activation and incident lanes (wave 2)
+  - Files: `src/extension.ts`, `src/ui/panels/welcomePanel.ts`
+  - Impact: Medium — isolates activation/incident lanes to reduce cross-effect during startup and incident handling.
+
+- `96a6fab` — 2026-05-19 — fix(stabilization): harden polyglot watchers and AI stream reliability
+  - Files: `src/core/aiModelSelection.ts`, `src/core/aiService.ts`, `src/extension.ts`, `src/ui/panels/welcomePanel.shared.ts`, `src/ui/panels/welcomePanel.ts`
+  - Impact: High — core AI runtime and model-selection reliability fixes; important for streaming stability and fallback behavior.
+
+Please review these commit-level notes; let me know if you want these committed (git commit + tag) and the autopilot release `--mode audit` run next.
+
 ## v0.28.0 (May 13, 2026)
 
 ### ✦ Enterprise E1/E2 Stabilization and Policy Boundaries Release

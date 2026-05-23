@@ -52,7 +52,6 @@ This release focuses on correctness and durability across the Welcome experience
 ## 🧪 Reliability & Guardrails
 
 - Strengthened drift-guard checks around command/profile contracts
-- Added repository text guard to prevent unintended Persian/Arabic text drift
 - Kept sidebar and Welcome state sources aligned to avoid context mismatch
 
 ---
