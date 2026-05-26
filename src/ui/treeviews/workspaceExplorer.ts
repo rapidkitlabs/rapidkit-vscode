@@ -7,9 +7,17 @@ import * as vscode from 'vscode';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
+import archiver from 'archiver';
 import { WorkspaiWorkspace } from '../../types';
 import { WorkspaceManager } from '../../core/workspaceManager';
 import { CoreVersionService, CoreVersionInfo } from '../../core/coreVersionService';
+import {
+  buildWorkspaceArchiveManifest,
+  extractWorkspaceArchiveToTemp,
+  sanitizeWorkspaceArchiveName,
+  shouldExcludeWorkspaceArchivePath,
+  WORKSPACE_ARCHIVE_MANIFEST_PATH,
+} from '../../utils/workspaceArchive';
 
 const WATCHER_REFRESH_DEBOUNCE_MS = 250;
 
@@ -227,7 +235,7 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   }
 
   private getLastOpenedTime(workspace: WorkspaiWorkspace): string | undefined {
-    const lastAccessed = (workspace as any).lastAccessed;
+    const lastAccessed = (workspace as WorkspaiWorkspace & { lastAccessed?: number }).lastAccessed;
     if (!lastAccessed) {
       return undefined;
     }
@@ -397,15 +405,9 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
       },
       async (progress) => {
         try {
-          const AdmZip = require('adm-zip');
-
           progress.report({ increment: 10, message: 'Reading archive...' });
 
-          // Read ZIP archive
-          const zip = new AdmZip(archivePath);
-
-          // Get workspace name from archive (assume root folder name or use filename)
-          const archiveName = path.basename(archivePath, '.rapidkit-archive.zip');
+          const archiveName = sanitizeWorkspaceArchiveName(path.basename(archivePath));
 
           progress.report({ increment: 10, message: 'Selecting destination...' });
 
@@ -424,32 +426,30 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
 
           const extractPath = path.join(destinationResult[0].fsPath, archiveName);
 
-          // Check if already exists
+          progress.report({ increment: 30, message: 'Extracting files...' });
+
+          const extracted = await extractWorkspaceArchiveToTemp({ archivePath });
+
+          progress.report({ increment: 30, message: 'Validating workspace...' });
+
           if (await fs.pathExists(extractPath)) {
             const overwrite = await vscode.window.showWarningMessage(
-              `Folder "${archiveName}" already exists. Overwrite?`,
-              'Overwrite',
+              `Folder "${archiveName}" already exists. Replace it with the validated archive import?`,
+              { modal: true },
+              'Replace Workspace',
               'Cancel'
             );
-            if (overwrite !== 'Overwrite') {
+            if (overwrite !== 'Replace Workspace') {
+              await fs.remove(extracted.tempRoot).catch(() => undefined);
               return;
             }
             await fs.remove(extractPath);
           }
 
-          progress.report({ increment: 30, message: 'Extracting files...' });
-
-          // Extract archive
-          await fs.ensureDir(extractPath);
-          zip.extractAllTo(extractPath, true);
-
-          progress.report({ increment: 30, message: 'Validating workspace...' });
-
-          // Validate it's a valid Workspai workspace
-          const markerPath = path.join(extractPath, '.rapidkit-workspace');
-          if (!(await fs.pathExists(markerPath))) {
-            throw new Error('Extracted archive is not a valid Workspai workspace');
-          }
+          await fs.move(extracted.workspaceRoot, extractPath, {
+            overwrite: false,
+          });
+          await fs.remove(extracted.tempRoot).catch(() => undefined);
 
           progress.report({ increment: 10, message: 'Registering workspace...' });
 
@@ -474,7 +474,9 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
             }
           }
         } catch (error) {
-          vscode.window.showErrorMessage(`Failed to import archive: ${error}`);
+          vscode.window.showErrorMessage(
+            `Failed to import archive: ${error instanceof Error ? error.message : String(error)}`
+          );
         }
       }
     );
@@ -503,8 +505,6 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   }
 
   private async exportFullWorkspace(workspace: WorkspaiWorkspace): Promise<void> {
-    const archiver = require('archiver');
-
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -542,39 +542,26 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
         // Pipe archive to file
         archive.pipe(output);
 
-        // Exclusion patterns (glob patterns)
-        const exclusions = [
-          '**/__pycache__/**',
-          '**/*.pyc',
-          '**/.venv/**',
-          '**/venv/**',
-          '**/node_modules/**',
-          '**/.git/**',
-          '**/dist/**',
-          '**/build/**',
-          '**/.pytest_cache/**',
-          '**/.mypy_cache/**',
-          '**/.ruff_cache/**',
-          '**/htmlcov/**',
-          '**/.coverage',
-          '**/*.log',
-          '**/.DS_Store',
-          '**/Thumbs.db',
-        ];
-
         progress.report({ increment: 20, message: 'Adding workspace files...' });
 
+        const manifest = await buildWorkspaceArchiveManifest({
+          workspacePath: workspace.path,
+          workspaceName: workspace.name,
+        });
+
         // Add workspace directory with exclusions
-        archive.directory(workspace.path, false, (entry: any) => {
-          // Check if file matches any exclusion pattern
-          for (const pattern of exclusions) {
-            const globPattern = pattern.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*');
-            const regex = new RegExp(globPattern);
-            if (regex.test(entry.name)) {
-              return false; // Exclude this file
+        archive.directory(
+          workspace.path,
+          false,
+          (entry: { name: string } | false): { name: string } | false => {
+            if (shouldExcludeWorkspaceArchivePath(entry && entry.name ? entry.name : '')) {
+              return false;
             }
+            return entry;
           }
-          return entry; // Include this file
+        );
+        archive.append(`${JSON.stringify(manifest, null, 2)}\n`, {
+          name: WORKSPACE_ARCHIVE_MANIFEST_PATH,
         });
 
         progress.report({ increment: 30, message: 'Compressing files...' });

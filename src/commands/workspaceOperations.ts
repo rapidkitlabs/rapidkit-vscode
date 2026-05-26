@@ -52,9 +52,13 @@ type WorkspaceBootstrapProfile =
   | 'java-only'
   | 'polyglot'
   | 'enterprise';
+type WorkspaceSnapshotAction = 'create' | 'list' | 'inspect' | 'restore';
 
 type ProfileQuickPickItem = vscode.QuickPickItem & { value: WorkspaceBootstrapProfile };
 type RuntimeQuickPickItem = vscode.QuickPickItem & { value: 'python' | 'node' | 'go' | 'java' };
+type SnapshotActionQuickPickItem = vscode.QuickPickItem & { value: WorkspaceSnapshotAction };
+type SnapshotModeQuickPickItem = vscode.QuickPickItem & { value: 'metadata' | 'full' };
+type SnapshotRestoreModeQuickPickItem = vscode.QuickPickItem & { value: 'dry-run' | 'force' };
 
 function asWorkspaceCommandItem(item: unknown): WorkspaceCommandItem | undefined {
   if (!item || typeof item !== 'object') {
@@ -424,6 +428,69 @@ function resolveWorkspaceTarget(
   return { workspacePath, workspaceName };
 }
 
+function requireWorkspaceTarget(
+  item: unknown,
+  workspaceExplorer?: WorkspaceExplorerLike
+): Required<WorkspaceTarget> | undefined {
+  const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
+  if (!workspacePath) {
+    vscode.window.showErrorMessage(
+      'No workspace selected. Select a workspace in the sidebar first.'
+    );
+    return undefined;
+  }
+
+  return {
+    workspacePath,
+    workspaceName: workspaceName || path.basename(workspacePath),
+  };
+}
+
+function normalizeOptionalInput(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function promptSnapshotName(input: {
+  title: string;
+  prompt: string;
+  placeHolder?: string;
+  required?: boolean;
+}): Promise<string | undefined> {
+  const value = await vscode.window.showInputBox({
+    title: input.title,
+    prompt: input.prompt,
+    placeHolder: input.placeHolder,
+    ignoreFocusOut: true,
+    validateInput: input.required
+      ? (raw) => (raw.trim().length === 0 ? 'Snapshot name is required.' : undefined)
+      : undefined,
+  });
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalized = normalizeOptionalInput(value);
+  return input.required ? normalized : (normalized ?? '');
+}
+
+async function promptSnapshotReason(title: string): Promise<string | undefined> {
+  const value = await vscode.window.showInputBox({
+    title,
+    prompt:
+      'Optional reason recorded by RapidKit. Workspace policy may require a reason for restore.',
+    placeHolder: 'before dependency upgrade',
+    ignoreFocusOut: true,
+  });
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return normalizeOptionalInput(value) ?? '';
+}
+
 export function registerWorkspaceOperationsCommands(options: {
   logger: Logger;
   getWorkspaceExplorer: () => WorkspaceExplorerLike | undefined;
@@ -541,7 +608,216 @@ export function registerWorkspaceOperationsCommands(options: {
     });
   };
 
+  const runWorkspaceSnapshotAction = async (
+    item: unknown,
+    action: WorkspaceSnapshotAction
+  ): Promise<void> => {
+    const workspaceTarget = requireWorkspaceTarget(item, getWorkspaceExplorer());
+    if (!workspaceTarget) {
+      return;
+    }
+
+    const { workspacePath, workspaceName } = workspaceTarget;
+
+    if (action === 'list') {
+      runRapidkitCommandsInTerminal({
+        name: `Workspai: Snapshots — ${workspaceName}`,
+        cwd: workspacePath,
+        commands: [['snapshot', 'list']],
+      });
+      return;
+    }
+
+    if (action === 'create') {
+      const mode = await vscode.window.showQuickPick<SnapshotModeQuickPickItem>(
+        [
+          {
+            label: '$(database) Metadata snapshot',
+            description: 'Workspace metadata only; fastest and safest default',
+            value: 'metadata',
+          },
+          {
+            label: '$(archive) Full snapshot',
+            description: 'Include project source files; excludes RapidKit audit/archive/snapshots',
+            value: 'full',
+          },
+        ],
+        {
+          title: `Create Snapshot — ${workspaceName}`,
+          placeHolder: 'Choose snapshot scope',
+          ignoreFocusOut: true,
+        }
+      );
+
+      if (!mode) {
+        return;
+      }
+
+      const name = await promptSnapshotName({
+        title: `Create Snapshot — ${workspaceName}`,
+        prompt: 'Optional snapshot name. Leave empty to let RapidKit generate one.',
+        placeHolder: 'before-upgrade',
+      });
+      if (name === undefined) {
+        return;
+      }
+
+      const reason = await promptSnapshotReason(`Create Snapshot — ${workspaceName}`);
+      if (reason === undefined) {
+        return;
+      }
+
+      const command = ['snapshot', 'create'];
+      if (name) {
+        command.push(name);
+      }
+      if (mode.value === 'full') {
+        command.push('--include-projects');
+      }
+      if (reason) {
+        command.push('--reason', reason);
+      }
+
+      runRapidkitCommandsInTerminal({
+        name: `Workspai: Snapshot Create — ${workspaceName}`,
+        cwd: workspacePath,
+        commands: [command],
+      });
+      return;
+    }
+
+    const name = await promptSnapshotName({
+      title:
+        action === 'inspect'
+          ? `Inspect Snapshot — ${workspaceName}`
+          : `Restore Snapshot — ${workspaceName}`,
+      prompt: 'Snapshot name',
+      placeHolder: 'before-upgrade',
+      required: true,
+    });
+    if (!name) {
+      return;
+    }
+
+    if (action === 'inspect') {
+      runRapidkitCommandsInTerminal({
+        name: `Workspai: Snapshot Inspect — ${workspaceName}`,
+        cwd: workspacePath,
+        commands: [['snapshot', 'inspect', name]],
+      });
+      return;
+    }
+
+    const restoreMode = await vscode.window.showQuickPick<SnapshotRestoreModeQuickPickItem>(
+      [
+        {
+          label: '$(search) Dry run',
+          description: 'Preview restore impact without changing files',
+          value: 'dry-run',
+        },
+        {
+          label: '$(warning) Restore with --force',
+          description: 'Apply restore; RapidKit creates a safety snapshot first',
+          value: 'force',
+        },
+      ],
+      {
+        title: `Restore Snapshot — ${workspaceName}`,
+        placeHolder: 'Choose restore mode',
+        ignoreFocusOut: true,
+      }
+    );
+
+    if (!restoreMode) {
+      return;
+    }
+
+    const command = ['snapshot', 'restore', name];
+    if (restoreMode.value === 'dry-run') {
+      command.push('--dry-run');
+    } else {
+      const confirmed = await vscode.window.showWarningMessage(
+        `Restore snapshot "${name}" into workspace "${workspaceName}"? RapidKit will use --force and create a safety snapshot first.`,
+        { modal: true },
+        'Restore Snapshot'
+      );
+      if (confirmed !== 'Restore Snapshot') {
+        return;
+      }
+
+      const reason = await promptSnapshotReason(`Restore Snapshot — ${workspaceName}`);
+      if (reason === undefined) {
+        return;
+      }
+
+      command.push('--force');
+      if (reason) {
+        command.push('--reason', reason);
+      }
+    }
+
+    runRapidkitCommandsInTerminal({
+      name: `Workspai: Snapshot Restore — ${workspaceName}`,
+      cwd: workspacePath,
+      commands: [command],
+    });
+  };
+
   return [
+    vscode.commands.registerCommand('workspai.workspaceSnapshot', async (item?: unknown) => {
+      const selected = await vscode.window.showQuickPick<SnapshotActionQuickPickItem>(
+        [
+          {
+            label: '$(add) Create snapshot',
+            description: 'Create metadata or full workspace snapshot',
+            value: 'create',
+          },
+          {
+            label: '$(list-tree) List snapshots',
+            description: 'Show snapshots recorded in this workspace',
+            value: 'list',
+          },
+          {
+            label: '$(search) Inspect snapshot',
+            description: 'Show manifest, file count, size, and project metadata',
+            value: 'inspect',
+          },
+          {
+            label: '$(history) Restore snapshot',
+            description: 'Dry-run or apply a guarded restore',
+            value: 'restore',
+          },
+        ],
+        {
+          title: 'Workspace Snapshots',
+          placeHolder: 'Choose snapshot operation',
+          ignoreFocusOut: true,
+        }
+      );
+
+      if (!selected) {
+        return;
+      }
+
+      await runWorkspaceSnapshotAction(item, selected.value);
+    }),
+
+    vscode.commands.registerCommand('workspai.workspaceSnapshotCreate', async (item?: unknown) => {
+      await runWorkspaceSnapshotAction(item, 'create');
+    }),
+
+    vscode.commands.registerCommand('workspai.workspaceSnapshotList', async (item?: unknown) => {
+      await runWorkspaceSnapshotAction(item, 'list');
+    }),
+
+    vscode.commands.registerCommand('workspai.workspaceSnapshotInspect', async (item?: unknown) => {
+      await runWorkspaceSnapshotAction(item, 'inspect');
+    }),
+
+    vscode.commands.registerCommand('workspai.workspaceSnapshotRestore', async (item?: unknown) => {
+      await runWorkspaceSnapshotAction(item, 'restore');
+    }),
+
     vscode.commands.registerCommand('workspai.workspaceBootstrap', async (item?: unknown) => {
       const workspaceExplorer = getWorkspaceExplorer();
       const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);

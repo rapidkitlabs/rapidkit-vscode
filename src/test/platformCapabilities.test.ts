@@ -97,4 +97,26 @@ describe('platformCapabilities', () => {
       buildRapidkitCommand(['workspace', 'policy', 'set', 'team name', 'strict'], 'win32')
     ).toBe('npx --yes --package rapidkit rapidkit workspace policy set "team name" strict');
   });
+
+  it('quotes snapshot command arguments without changing the CLI contract', () => {
+    expect(
+      buildRapidkitCommand(
+        ['snapshot', 'create', 'before upgrade', '--reason', "owner's release prep"],
+        'linux'
+      )
+    ).toBe(
+      'npx --yes --package rapidkit rapidkit snapshot create ' +
+        `'before upgrade' --reason 'owner'"'"'s release prep'`
+    );
+
+    expect(
+      buildRapidkitCommand(
+        ['snapshot', 'restore', 'before upgrade', '--force', '--reason', 'rollback & verify'],
+        'win32'
+      )
+    ).toBe(
+      'npx --yes --package rapidkit rapidkit snapshot restore ' +
+        '"before upgrade" --force --reason "rollback & verify"'
+    );
+  });
 });

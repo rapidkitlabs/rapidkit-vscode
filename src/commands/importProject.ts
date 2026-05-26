@@ -197,6 +197,16 @@ function toInvocationSeed(seed: unknown): ImportProjectInvocationSeed | null {
   };
 }
 
+function isSameOrInsideDirectory(parentPath: string, childPath: string): boolean {
+  const resolvedParent = path.resolve(parentPath);
+  const resolvedChild = path.resolve(childPath);
+  const relativePath = path.relative(resolvedParent, resolvedChild);
+  return (
+    relativePath === '' ||
+    (relativePath.length > 0 && !relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+  );
+}
+
 async function detectProjectStack(projectPath: string): Promise<StackDetection> {
   try {
     const discovery = await new ByopDiscoveryEngine(projectPath).discover();
@@ -467,6 +477,30 @@ async function resolveWorkspaceDestination(
   return promptNewWorkspaceCreation();
 }
 
+async function resolveAvailableDestinationProjectPath(
+  workspacePath: string,
+  suggestedName: string
+): Promise<string> {
+  const baseName = normalizeProjectName(suggestedName) || 'imported-project';
+
+  let attempt = 0;
+  for (;;) {
+    const candidateName =
+      attempt === 0
+        ? baseName
+        : attempt === 1
+          ? `${baseName}-imported`
+          : `${baseName}-imported-${attempt}`;
+    const candidatePath = path.join(workspacePath, candidateName);
+
+    if (!(await fs.pathExists(candidatePath))) {
+      return candidatePath;
+    }
+
+    attempt += 1;
+  }
+}
+
 async function resolveDestinationProjectPath(
   workspacePath: string,
   suggestedName: string
@@ -482,7 +516,7 @@ async function resolveDestinationProjectPath(
     `A project named "${normalizedSuggested}" already exists in this workspace.`,
     { modal: true },
     'Rename Imported Project',
-    'Replace Existing',
+    'Use Safe Name',
     'Cancel'
   );
 
@@ -490,9 +524,8 @@ async function resolveDestinationProjectPath(
     return null;
   }
 
-  if (choice === 'Replace Existing') {
-    await fs.remove(destinationPath);
-    return destinationPath;
+  if (choice === 'Use Safe Name') {
+    return resolveAvailableDestinationProjectPath(workspacePath, normalizedSuggested);
   }
 
   const renamed = await vscode.window.showInputBox({
@@ -533,41 +566,58 @@ async function importFromFolderPath(
     return null;
   }
 
+  if (isSameOrInsideDirectory(workspacePath, sourcePath)) {
+    vscode.window.showErrorMessage(
+      'Import source must be outside the current workspace root. Choose an external project folder.'
+    );
+    return null;
+  }
+
   const suggestedName = path.basename(sourcePath);
   const destinationPath = await resolveDestinationProjectPath(workspacePath, suggestedName);
   if (!destinationPath) {
     return null;
   }
 
-  const detection = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: progressTitle,
-      cancellable: false,
-    },
-    async (progress) => {
-      progress.report({ increment: 20, message: 'Detecting stack...' });
-      const detected = await detectProjectStack(sourcePath);
+  let destinationPrepared = false;
+  try {
+    const detection = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: progressTitle,
+        cancellable: false,
+      },
+      async (progress) => {
+        progress.report({ increment: 20, message: 'Detecting stack...' });
+        const detected = await detectProjectStack(sourcePath);
 
-      progress.report({ increment: 50, message: 'Copying files into workspace...' });
-      await fs.copy(sourcePath, destinationPath, {
-        overwrite: false,
-        errorOnExist: true,
-      });
+        progress.report({ increment: 50, message: 'Copying files into workspace...' });
+        destinationPrepared = true;
+        await fs.copy(sourcePath, destinationPath, {
+          overwrite: false,
+          errorOnExist: true,
+        });
 
-      progress.report({ increment: 30, message: 'Running initial workspace refresh...' });
-      return detected;
+        progress.report({ increment: 30, message: 'Running initial workspace refresh...' });
+        return detected;
+      }
+    );
+
+    return {
+      name: path.basename(destinationPath),
+      path: destinationPath,
+      detection,
+    };
+  } catch (error) {
+    if (destinationPrepared) {
+      await fs.remove(destinationPath).catch(() => undefined);
     }
-  );
-
-  return {
-    name: path.basename(destinationPath),
-    path: destinationPath,
-    detection,
-  };
+    throw error;
+  }
 }
 
 async function importFromFolderPathWithoutProgress(
+  workspacePath: string,
   sourcePath: string,
   destinationPath: string
 ): Promise<ImportedProject | null> {
@@ -576,17 +626,30 @@ async function importFromFolderPathWithoutProgress(
     return null;
   }
 
-  const detection = await detectProjectStack(sourcePath);
-  await fs.copy(sourcePath, destinationPath, {
-    overwrite: false,
-    errorOnExist: true,
-  });
+  if (isSameOrInsideDirectory(workspacePath, sourcePath)) {
+    return null;
+  }
 
-  return {
-    name: path.basename(destinationPath),
-    path: destinationPath,
-    detection,
-  };
+  let destinationPrepared = false;
+  try {
+    const detection = await detectProjectStack(sourcePath);
+    destinationPrepared = true;
+    await fs.copy(sourcePath, destinationPath, {
+      overwrite: false,
+      errorOnExist: true,
+    });
+
+    return {
+      name: path.basename(destinationPath),
+      path: destinationPath,
+      detection,
+    };
+  } catch (error) {
+    if (destinationPrepared) {
+      await fs.remove(destinationPath).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 async function importFromLocalFolder(workspacePath: string): Promise<ImportedProject | null> {
@@ -771,6 +834,7 @@ async function importFromDroppedPaths(
 
           try {
             importedProjectsByIndex[currentIndex] = await importFromFolderPathWithoutProgress(
+              workspacePath,
               task.sourcePath,
               task.destinationPath
             );
@@ -859,33 +923,42 @@ async function importFromGitUrl(workspacePath: string): Promise<ImportedProject 
     return null;
   }
 
-  const detection = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: 'Cloning and importing project...',
-      cancellable: false,
-    },
-    async (progress) => {
-      const { execa } = await import('execa');
+  let destinationPrepared = false;
+  try {
+    const detection = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Cloning and importing project...',
+        cancellable: false,
+      },
+      async (progress) => {
+        const { execa } = await import('execa');
 
-      progress.report({ increment: 40, message: 'Cloning repository...' });
-      await execa('git', ['clone', '--depth', '1', gitUrl.trim(), destinationPath], {
-        timeout: 120000,
-      });
+        progress.report({ increment: 40, message: 'Cloning repository...' });
+        destinationPrepared = true;
+        await execa('git', ['clone', '--depth', '1', gitUrl.trim(), destinationPath], {
+          timeout: 120000,
+        });
 
-      progress.report({ increment: 40, message: 'Detecting stack...' });
-      const detected = await detectProjectStack(destinationPath);
+        progress.report({ increment: 40, message: 'Detecting stack...' });
+        const detected = await detectProjectStack(destinationPath);
 
-      progress.report({ increment: 20, message: 'Finishing import...' });
-      return detected;
+        progress.report({ increment: 20, message: 'Finishing import...' });
+        return detected;
+      }
+    );
+
+    return {
+      name: path.basename(destinationPath),
+      path: destinationPath,
+      detection,
+    };
+  } catch (error) {
+    if (destinationPrepared) {
+      await fs.remove(destinationPath).catch(() => undefined);
     }
-  );
-
-  return {
-    name: path.basename(destinationPath),
-    path: destinationPath,
-    detection,
-  };
+    throw error;
+  }
 }
 
 async function chooseImportSource(): Promise<ImportSourceType | null> {

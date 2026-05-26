@@ -44,6 +44,12 @@ jobs:
       - name: Contract drift smoke
         run: npm run test:watch -- --run src/test/driftGuard.test.ts
 
+      - name: Backend operations import/archive smoke
+        run: npm run test:watch -- --run src/test/importProjectUtils.test.ts src/test/importedProjectsRegistry.test.ts src/test/workspaceArchive.test.ts src/test/platformCapabilities.test.ts src/test/workspaceSnapshotCommands.test.ts
+
+      - name: AI reliability release gate
+        run: npm run test:ai-reliability
+
       - name: Shared parity contract snapshot
         run: npm run test:parity-contract
 

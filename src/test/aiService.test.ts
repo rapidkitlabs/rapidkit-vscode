@@ -280,6 +280,50 @@ describe('aiService', () => {
     expect(prepared.contract.evidence_confidence).toBe('none');
   });
 
+  it('uses scanned doctor evidence freshness when no explicit doctor snapshot is provided', async () => {
+    fs.mkdirSync(path.join(tempProjectPath, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(tempProjectPath, '.rapidkit', 'reports'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempProjectPath, 'pyproject.toml'),
+      [
+        '[tool.poetry]',
+        'name = "doctor-fresh-api"',
+        '[tool.poetry.dependencies]',
+        'python = "^3.12"',
+        'fastapi = "^0.128.0"',
+      ].join('\n')
+    );
+    fs.writeFileSync(
+      path.join(tempProjectPath, '.rapidkit', 'reports', 'doctor-last-run.json'),
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          healthScore: {
+            total: 10,
+            passed: 9,
+            warnings: 1,
+            errors: 0,
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    const prepared = await prepareAIConversation('ask', 'Is my doctor evidence current?', {
+      type: 'project',
+      name: 'doctor-fresh-api',
+      path: tempProjectPath,
+      framework: 'fastapi',
+      projectRootPath: tempProjectPath,
+    });
+
+    expect(prepared.scanned?.workspaceHealth?.generatedAt).toBeTruthy();
+    expect(prepared.contract.workspace.doctorLastRunAt).toBeTruthy();
+    expect(prepared.contract.workspace.healthPercent).toBe(90);
+    expect(prepared.contract.safetyFlags.doctorEvidenceStale).toBe(false);
+  });
+
   it('redacts sensitive literals from history and question before prompt assembly', async () => {
     const prepared = await prepareAIConversation(
       'ask',

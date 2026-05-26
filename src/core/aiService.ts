@@ -998,6 +998,35 @@ export function buildAIModalUserMessage(
   return buildAIModalUserMessageInternal(mode, question, ctx, scanned);
 }
 
+function deriveDoctorSnapshotFromScannedContext(
+  scanned?: ScannedProjectContext
+): DoctorEvidenceSnapshot | undefined {
+  if (!scanned?.workspaceHealth?.generatedAt) {
+    return undefined;
+  }
+
+  const health = scanned.workspaceHealth;
+  const total = Number.isFinite(health.total) ? health.total : 0;
+  const passed = Number.isFinite(health.passed) ? health.passed : 0;
+  const warnings = Number.isFinite(health.warnings) ? health.warnings : 0;
+  const errors = Number.isFinite(health.errors) ? health.errors : 0;
+  const percent = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+  return {
+    generatedAt: health.generatedAt ?? undefined,
+    health: {
+      total,
+      passed,
+      warnings,
+      errors,
+      percent,
+    },
+    projectCount: 0,
+    projects: [],
+    fixCommands: [],
+  };
+}
+
 export async function prepareAIConversation(
   mode: AIConversationMode,
   question: string,
@@ -1017,7 +1046,8 @@ export async function prepareAIConversation(
     }
   }
 
-  const contract = buildContextContractFromEvidence(ctx, scanned, doctorSnapshot);
+  const effectiveDoctorSnapshot = doctorSnapshot ?? deriveDoctorSnapshotFromScannedContext(scanned);
+  const contract = buildContextContractFromEvidence(ctx, scanned, effectiveDoctorSnapshot);
   const validation = validateContextContract(contract);
 
   // If clarification is needed the system prompt should still be assembled — the

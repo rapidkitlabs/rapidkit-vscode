@@ -267,6 +267,36 @@
         "icon": "$(shield)"
       },
       {
+        "command": "workspai.workspaceSnapshot",
+        "title": "Workspace Snapshots",
+        "category": "Workspai",
+        "icon": "$(history)"
+      },
+      {
+        "command": "workspai.workspaceSnapshotCreate",
+        "title": "Snapshot: Create",
+        "category": "Workspai",
+        "icon": "$(add)"
+      },
+      {
+        "command": "workspai.workspaceSnapshotList",
+        "title": "Snapshot: List",
+        "category": "Workspai",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "workspai.workspaceSnapshotInspect",
+        "title": "Snapshot: Inspect",
+        "category": "Workspai",
+        "icon": "$(search)"
+      },
+      {
+        "command": "workspai.workspaceSnapshotRestore",
+        "title": "Snapshot: Restore",
+        "category": "Workspai",
+        "icon": "$(history)"
+      },
+      {
         "command": "workspai.workspacePolicyShow",
         "title": "Workspace Policy: Show",
         "category": "Workspai",
@@ -821,6 +851,21 @@
           "command": "workspai.workspaceAutopilotRelease"
         },
         {
+          "command": "workspai.workspaceSnapshot"
+        },
+        {
+          "command": "workspai.workspaceSnapshotCreate"
+        },
+        {
+          "command": "workspai.workspaceSnapshotList"
+        },
+        {
+          "command": "workspai.workspaceSnapshotInspect"
+        },
+        {
+          "command": "workspai.workspaceSnapshotRestore"
+        },
+        {
           "command": "workspai.workspacePolicySet"
         },
         {
@@ -1144,6 +1189,31 @@
           "command": "workspai.workspaceAutopilotRelease",
           "when": "view == rapidkitWorkspaces && viewItem == workspace",
           "group": "workspace_run@5"
+        },
+        {
+          "command": "workspai.workspaceSnapshot",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_recovery@1"
+        },
+        {
+          "command": "workspai.workspaceSnapshotCreate",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_recovery@2"
+        },
+        {
+          "command": "workspai.workspaceSnapshotList",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_recovery@3"
+        },
+        {
+          "command": "workspai.workspaceSnapshotInspect",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_recovery@4"
+        },
+        {
+          "command": "workspai.workspaceSnapshotRestore",
+          "when": "view == rapidkitWorkspaces && viewItem == workspace",
+          "group": "workspace_recovery@5"
         },
         {
           "command": "workspai.exportVerifyPackContract",
@@ -1573,6 +1643,7 @@
     "sync:parity-snapshot": "node scripts/sync-import-stack-parity-snapshot.mjs",
     "check:parity-snapshot": "node scripts/sync-import-stack-parity-snapshot.mjs --check",
     "test:parity-contract": "npm run sync:parity-snapshot && vitest run src/test/importStackParity.snapshot.test.ts",
+    "test:ai-reliability": "vitest run src/test/aiReliabilityGate.test.ts src/test/aiService.test.ts src/test/aiContextResolver.test.ts src/test/chatParticipant.test.ts src/test/driftGuard.test.ts src/test/incidentStudioPolicyGates.test.ts src/test/incidentStudioResponseValidator.test.ts src/test/incidentStudioTelemetry.test.ts",
     "stabilization:debt-budget": "node scripts/stabilization-debt-budget.mjs",
     "test:coverage": "vitest run --coverage",
     "test:stress:incident-studio": "vitest run src/test/incidentStudioLifecycle.test.ts src/test/incidentStudioStressGate.test.ts src/test/debounceWatchers.test.ts",

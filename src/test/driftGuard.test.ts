@@ -462,14 +462,17 @@ describe('contract drift guard', () => {
     expect(welcomePanelSource).toContain("command: 'aiStreamDone'");
 
     const clarificationIdx = welcomePanelSource.indexOf('prepared.validation.clarificationNeeded');
-    const streamIdx = welcomePanelSource.indexOf('await streamAIResponse(');
-    const breakIdx = welcomePanelSource.indexOf('break;', clarificationIdx);
+    const streamStageIdx = welcomePanelSource.indexOf("currentStage = 'stream';", clarificationIdx);
+    const streamIdx = welcomePanelSource.indexOf('await streamAIResponse(', clarificationIdx);
+    const returnIdx = welcomePanelSource.indexOf('return;', clarificationIdx);
 
     expect(clarificationIdx).toBeGreaterThan(-1);
+    expect(streamStageIdx).toBeGreaterThan(-1);
     expect(streamIdx).toBeGreaterThan(-1);
-    expect(breakIdx).toBeGreaterThan(clarificationIdx);
+    expect(returnIdx).toBeGreaterThan(clarificationIdx);
+    expect(returnIdx).toBeLessThan(streamStageIdx);
+    expect(returnIdx).toBeLessThan(streamIdx);
     expect(clarificationIdx).toBeLessThan(streamIdx);
-    expect(breakIdx).toBeLessThan(streamIdx);
   });
 
   it('keeps incident telemetry request fail-safe fallback to null payload', () => {
