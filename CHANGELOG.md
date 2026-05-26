@@ -722,7 +722,7 @@ Commit-level audit (v0.29.0..HEAD):
 ### Added
 
 - 🌐 **Dynamic Example Workspaces** - Load example workspaces from GitHub repository
-  - Real-time fetching from `getrapidkit/rapidkit-examples` repository
+  - Real-time fetching from `rapidkitlabs/rapidkit-examples` repository
   - Clone tracking with local state management (`~/.rapidkit/cloned-examples.json`)
   - Update detection for already-cloned examples
   - 1-hour cache with TTL for optimal performance
@@ -1765,7 +1765,7 @@ This is a **breaking change** that completely refactors the extension to use the
 
 ### Changed
 
-- 🌐 **Updated domain references** - Migrated all URLs from `rapidkit.top` to `getrapidkit.com`
+- 🌐 **Updated domain references** - Migrated all URLs from `rapidkit.top` to `www.workspai.com`
   - Updated package.json viewsWelcome contents
   - Updated README.md documentation links and support email
   - Updated source files (createWorkspace.ts, welcomePanel.ts)
@@ -1800,8 +1800,8 @@ This is a **breaking change** that completely refactors the extension to use the
 
 ### Documentation
 
-- 📚 Updated all documentation links to point to getrapidkit.com
-- 📧 Updated support email to support@getrapidkit.com
+- 📚 Updated all documentation links to point to www.workspai.com
+- 📧 Updated support email to support@rapidkitlabs.com
 - 🔗 Updated schema references to use new domain
 
 ## [0.3.1] - 2025-11-15
@@ -1992,29 +1992,29 @@ Welcome to RapidKit for Visual Studio Code! This is the first pre-release of the
 - Full mode will be available in future stable releases
 
 **Feedback:**
-We'd love to hear your feedback! Please report issues or suggestions on our [GitHub repository](https://github.com/getrapidkit/rapidkit-vscode/issues).
+We'd love to hear your feedback! Please report issues or suggestions on our [GitHub repository](https://github.com/rapidkitlabs/rapidkit-vscode/issues).
 
 Thank you for using RapidKit! 🚀
 
 ---
 
-[Unreleased]: https://github.com/getrapidkit/rapidkit-vscode/compare/v0.24.1...HEAD
-[0.24.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.24.1
-[0.24.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.24.0
-[0.18.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.18.0
-[0.12.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.12.0
-[0.6.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.6.1
-[0.4.5]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.4.5
-[0.4.4]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.4.4
-[0.4.3]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.4.3
-[0.4.2]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.4.2
-[0.4.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.4.1
-[0.4.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.4.0
-[0.3.2]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.3.2
-[0.3.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.3.1
-[0.3.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.3.0
-[0.2.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.2.0
-[0.1.3]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.1.3
-[0.1.2]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.1.2
-[0.1.1]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.1.1
-[0.1.0]: https://github.com/getrapidkit/rapidkit-vscode/releases/tag/v0.1.0
+[Unreleased]: https://github.com/rapidkitlabs/rapidkit-vscode/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.24.1
+[0.24.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.24.0
+[0.18.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.18.0
+[0.12.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.12.0
+[0.6.1]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.6.1
+[0.4.5]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.4.5
+[0.4.4]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.4.4
+[0.4.3]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.4.3
+[0.4.2]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.4.2
+[0.4.1]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.4.1
+[0.4.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.4.0
+[0.3.2]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.3.2
+[0.3.1]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.3.1
+[0.3.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.3.0
+[0.2.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.2.0
+[0.1.3]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.1.3
+[0.1.2]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.1.2
+[0.1.1]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.1.1
+[0.1.0]: https://github.com/rapidkitlabs/rapidkit-vscode/releases/tag/v0.1.0

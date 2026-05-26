@@ -274,7 +274,7 @@ export function registerCoreCommands(options: {
     ),
 
     vscode.commands.registerCommand('workspai.openDocs', async () => {
-      await vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs'));
+      await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs'));
     }),
 
     vscode.commands.registerCommand('workspai.addModule', addModuleCommand),

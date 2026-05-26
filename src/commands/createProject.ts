@@ -379,7 +379,7 @@ export async function createProjectCommand(
             // Set project path context then trigger add module
             await vscode.commands.executeCommand('workspai.addModule', projectPath);
           } else if (selected === docsAction) {
-            await vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs'));
+            await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs'));
           }
 
           // Refresh welcome page if it's open
@@ -404,7 +404,7 @@ export async function createProjectCommand(
 
           if (selected === helpAction) {
             await vscode.env.openExternal(
-              vscode.Uri.parse('https://getrapidkit.com/docs/troubleshooting')
+              vscode.Uri.parse('https://www.workspai.com/docs/troubleshooting')
             );
           }
         }

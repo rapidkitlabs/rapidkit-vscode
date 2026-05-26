@@ -10,7 +10,7 @@ Scaffold projects from intent. Debug with full context. Ship faster — all insi
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/rapidkit.rapidkit-vscode?style=flat-square&color=green)](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode)
 [![npm](https://img.shields.io/npm/v/rapidkit?style=flat-square&color=red&label=rapidkit)](https://www.npmjs.com/package/rapidkit)
 
-[Install](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode) · [Docs](https://www.workspai.com/) · [Issues](https://github.com/getrapidkit/rapidkit-vscode/issues)
+[Install](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode) · [Docs](https://www.workspai.com/) · [Issues](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
 
 </div>
 
@@ -185,10 +185,10 @@ Run `Workspai: Run System Check` to verify your environment.
 
 | Component | Role |
 |-----------|------|
-| [rapidkit-vscode](https://github.com/getrapidkit/rapidkit-vscode) | This extension — VS Code UI layer |
+| [rapidkit-vscode](https://github.com/rapidkitlabs/rapidkit-vscode) | This extension — VS Code UI layer |
 | [rapidkit (npm)](https://www.npmjs.com/package/rapidkit) | CLI bridge — workspace and project management |
 | [rapidkit-core (PyPI)](https://pypi.org/project/rapidkit-core/) | Generation engine — scaffolding and modules |
-| [rapidkit-examples](https://github.com/getrapidkit/rapidkit-examples) | Starter workspaces and references |
+| [rapidkit-examples](https://github.com/rapidkitlabs/rapidkit-examples) | Starter workspaces and references |
 
 ---
 
@@ -198,7 +198,7 @@ Run `Workspai: Run System Check` to verify your environment.
 
 **Python not found** — Install Python 3.10+ and restart VS Code, then run `Workspai: Run System Check`
 
-**Project not creating** — Check `View → Output → Workspai` for logs, then [open an issue](https://github.com/getrapidkit/rapidkit-vscode/issues)
+**Project not creating** — Check `View → Output → Workspai` for logs, then [open an issue](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
 
 **Workspace not detected** — Ensure `.rapidkit-workspace` marker exists in the folder root
 
@@ -206,8 +206,8 @@ Run `Workspai: Run System Check` to verify your environment.
 
 ## Links
 
-[Documentation](https://www.workspai.com/) · [npm](https://www.npmjs.com/package/rapidkit) · [PyPI](https://pypi.org/project/rapidkit-core/) · [Issues](https://github.com/getrapidkit/rapidkit-vscode/issues) · [Discord](https://discord.gg/rapidkit) · [Changelog](CHANGELOG.md)
+[Documentation](https://www.workspai.com/) · [npm](https://www.npmjs.com/package/rapidkit) · [PyPI](https://pypi.org/project/rapidkit-core/) · [Issues](https://github.com/rapidkitlabs/rapidkit-vscode/issues) · [Discord](https://discord.gg/rapidkit) · [Changelog](CHANGELOG.md)
 
 ---
 
-MIT © [RapidKit](https://getrapidkit.com)
+MIT © [Workspai](https://www.workspai.com)

@@ -315,7 +315,7 @@ export async function showSystemRequirementsError(
     );
 
     if (selected === setupGuideAction) {
-      await vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs/setup/python'));
+      await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs/setup/python'));
     }
 
     return 'cancel';
@@ -340,7 +340,7 @@ export async function showSystemRequirementsError(
     );
 
     if (selected === setupGuideAction) {
-      await vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs/setup/python'));
+      await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs/setup/python'));
     }
 
     return 'cancel';
@@ -373,7 +373,7 @@ export async function showSystemRequirementsError(
         return 'install';
       } else if (selected === manualAction) {
         await vscode.env.openExternal(
-          vscode.Uri.parse('https://getrapidkit.com/docs/setup/python-venv')
+          vscode.Uri.parse('https://www.workspai.com/docs/setup/python-venv')
         );
         return 'cancel';
       }
@@ -396,7 +396,7 @@ export async function showSystemRequirementsError(
 
       if (selected === setupGuideAction) {
         await vscode.env.openExternal(
-          vscode.Uri.parse('https://getrapidkit.com/docs/setup/python-venv')
+          vscode.Uri.parse('https://www.workspai.com/docs/setup/python-venv')
         );
       } else if (selected === retryAction) {
         return 'retry';

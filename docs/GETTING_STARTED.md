@@ -375,17 +375,17 @@ npx rapidkit create project <kit> <name> [--yes] [--skip-install]
 
 1. ✅ Workspace created
 2. ✅ First project created
-3. 📖 Read [Project Documentation](https://getrapidkit.com/docs)
+3. 📖 Read [Project Documentation](https://www.workspai.com/docs)
 4. 🧩 Add modules: `Workspai: Add Module`
 5. 🚀 Start dev server: `npx rapidkit dev`
 6. 🎨 Customize your project
 
 ## Support
 
-- 📚 [Documentation](https://getrapidkit.com/docs)
-- 💬 [GitHub Discussions](https://github.com/getrapidkit/rapidkit-vscode/discussions)
-- 🐛 [Report Issues](https://github.com/getrapidkit/rapidkit-vscode/issues)
-- 💡 [Feature Requests](https://github.com/getrapidkit/rapidkit-vscode/issues)
+- 📚 [Documentation](https://www.workspai.com/docs)
+- 💬 [GitHub Discussions](https://github.com/rapidkitlabs/rapidkit-vscode/discussions)
+- 🐛 [Report Issues](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
+- 💡 [Feature Requests](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
 
 ---
 

@@ -205,9 +205,9 @@ npx rapidkit dev  # Works! ✅
 
 We'd love to hear your thoughts!
 
-- 🐛 **Bug Reports:** [GitHub Issues](https://github.com/getrapidkit/rapidkit-vscode/issues)
-- 💡 **Feature Requests:** [Discussions](https://github.com/getrapidkit/rapidkit-vscode/discussions)
-- 📧 **Email:** support@getrapidkit.com
+- 🐛 **Bug Reports:** [GitHub Issues](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
+- 💡 **Feature Requests:** [Discussions](https://github.com/rapidkitlabs/rapidkit-vscode/discussions)
+- 📧 **Email:** support@rapidkitlabs.com
 
 ---
 

@@ -1304,7 +1304,7 @@ export class WelcomePanel {
             }
             break;
           case 'openDocs':
-            await vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs'));
+            await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs'));
             break;
           case 'openGitHub':
             await vscode.env.openExternal(vscode.Uri.parse('https://github.com/rapidkit/rapidkit'));
@@ -8001,9 +8001,9 @@ No markdown, no explanation outside the JSON.`;
           // repoUrl: URL used by the UI "Open on GitHub" button (workspace subfolder when available).
           // cloneUrl: URL used by `git clone` and must always be repository root.
           const repoUrl = example.path
-            ? `https://github.com/getrapidkit/rapidkit-examples/tree/main/${example.path}`
-            : 'https://github.com/getrapidkit/rapidkit-examples';
-          const cloneUrl = 'https://github.com/getrapidkit/rapidkit-examples';
+            ? `https://github.com/rapidkitlabs/rapidkit-examples/tree/main/${example.path}`
+            : 'https://github.com/rapidkitlabs/rapidkit-examples';
+          const cloneUrl = 'https://github.com/rapidkitlabs/rapidkit-examples';
 
           return {
             ...example,
@@ -8097,7 +8097,7 @@ No markdown, no explanation outside the JSON.`;
 
       // Clone the repository
       vscode.window.showInformationMessage(`🔄 Cloning ${example.title}...`);
-      const cloneSource = example.cloneUrl || 'https://github.com/getrapidkit/rapidkit-examples';
+      const cloneSource = example.cloneUrl || 'https://github.com/rapidkitlabs/rapidkit-examples';
 
       const terminal = runShellCommandInTerminal({
         name: `Clone ${example.name}`,

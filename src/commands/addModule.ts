@@ -194,7 +194,7 @@ export async function addModuleCommand(
 
               if (selected === setupAction) {
                 await vscode.env.openExternal(
-                  vscode.Uri.parse('https://getrapidkit.com/docs/troubleshooting/python')
+                  vscode.Uri.parse('https://www.workspai.com/docs/troubleshooting/python')
                 );
               }
             } else {
@@ -230,7 +230,7 @@ export async function addModuleCommand(
 
           if (selected === viewDocsAction) {
             await vscode.env.openExternal(
-              vscode.Uri.parse(`https://getrapidkit.com/docs/modules/${module!.id}`)
+              vscode.Uri.parse(`https://www.workspai.com/docs/modules/${module!.id}`)
             );
           } else if (selected === addMoreAction) {
             await vscode.commands.executeCommand('workspai.addModule', projectPath);

@@ -19,7 +19,7 @@ This minor release introduces **dynamic example workspaces** from GitHub, **enha
 Load and manage example workspaces directly from GitHub repository:
 
 - **Real-time GitHub Integration**
-  - Fetch examples from `getrapidkit/rapidkit-examples` repository
+  - Fetch examples from `rapidkitlabs/rapidkit-examples` repository
   - Example metadata with icons, descriptions, framework tags
   - Smart caching (1-hour TTL, 5-minute stale-while-revalidate)
   
@@ -306,16 +306,16 @@ Thanks to everyone who contributed to this release!
 
 ## 📚 Documentation
 
-- [Extension Documentation](https://docs.getrapidkit.com/vscode)
-- [Example Workspaces Guide](https://docs.getrapidkit.com/examples)
-- [Kit Selection Guide](https://docs.getrapidkit.com/kits)
-- [Export/Import Guide](https://docs.getrapidkit.com/backup)
+- [Extension Documentation](https://www.workspai.com/docs/vscode)
+- [Example Workspaces Guide](https://www.workspai.com/docs/examples)
+- [Kit Selection Guide](https://www.workspai.com/docs/kits)
+- [Export/Import Guide](https://www.workspai.com/docs/backup)
 
 ---
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/getrapidkit/rapidkit-vscode)
+- [GitHub Repository](https://github.com/rapidkitlabs/rapidkit-vscode)
 - [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode)
-- [Report Issues](https://github.com/getrapidkit/rapidkit-vscode/issues)
-- [Python Core](https://github.com/getrapidkit/rapidkit-core)
+- [Report Issues](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
+- [Python Core](https://github.com/rapidkitlabs/rapidkit-core)

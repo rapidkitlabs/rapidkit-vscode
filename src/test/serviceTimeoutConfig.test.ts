@@ -140,7 +140,7 @@ describe('service timeout config', () => {
       data: {
         version: '1.0.0',
         lastUpdated: '2026-01-01T00:00:00.000Z',
-        repository: 'https://github.com/getrapidkit/rapidkit-examples',
+        repository: 'https://github.com/rapidkitlabs/rapidkit-examples',
         workspaces: [],
       },
     });
@@ -149,7 +149,7 @@ describe('service timeout config', () => {
     await service.getExamples();
 
     expect(mockAxiosGet).toHaveBeenCalledWith(
-      'https://raw.githubusercontent.com/getrapidkit/rapidkit-examples/main/examples.json',
+      'https://raw.githubusercontent.com/rapidkitlabs/rapidkit-examples/main/examples.json',
       expect.objectContaining({ timeout: 1000 })
     );
   });

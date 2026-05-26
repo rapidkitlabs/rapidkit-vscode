@@ -10,7 +10,7 @@
     "theme": "dark"
   },
   "preview": false,
-  "qna": "https://github.com/getrapidkit/rapidkit-vscode/discussions",
+  "qna": "https://github.com/rapidkitlabs/rapidkit-vscode/discussions",
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -48,10 +48,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/getrapidkit/rapidkit-vscode.git"
+    "url": "https://github.com/rapidkitlabs/rapidkit-vscode.git"
   },
   "bugs": {
-    "url": "https://github.com/getrapidkit/rapidkit-vscode/issues"
+    "url": "https://github.com/rapidkitlabs/rapidkit-vscode/issues"
   },
   "homepage": "https://www.workspai.com/",
   "license": "MIT",

@@ -159,10 +159,10 @@ Feedback
 ## 🔗 Links
 
 - 📦 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode)
-- 🐙 [GitHub Repository](https://github.com/getrapidkit/rapidkit-vscode)
-- 📚 [Documentation](https://getrapidkit.com/docs)
+- 🐙 [GitHub Repository](https://github.com/rapidkitlabs/rapidkit-vscode)
+- 📚 [Documentation](https://www.workspai.com/docs)
 - 🚀 [npm Package](https://www.npmjs.com/package/rapidkit)
-- 🧩 [Module Catalog](https://getrapidkit.com/docs/modules)
+- 🧩 [Module Catalog](https://www.workspai.com/docs/modules)
 
 ---
 

@@ -326,10 +326,10 @@ Ctrl+Shift+P → RapidKit: Generate Demo Project
 
 ### Learn More
 
-- **Documentation:** https://getrapidkit.com/docs
+- **Documentation:** https://www.workspai.com/docs
 - **npm Package:** https://www.npmjs.com/package/rapidkit
-- **GitHub:** https://github.com/getrapidkit/rapidkit-vscode
-- **Troubleshooting:** https://getrapidkit.com/docs/troubleshooting
+- **GitHub:** https://github.com/rapidkitlabs/rapidkit-vscode
+- **Troubleshooting:** https://www.workspai.com/docs/troubleshooting
 
 ---
 
@@ -345,9 +345,9 @@ Ctrl+Shift+P → RapidKit: Generate Demo Project
 
 We'd love to hear your thoughts!
 
-- **Issues:** [GitHub Issues](https://github.com/getrapidkit/rapidkit-vscode/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/getrapidkit/rapidkit-vscode/discussions)
-- **Email:** support@getrapidkit.com
+- **Issues:** [GitHub Issues](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/rapidkitlabs/rapidkit-vscode/discussions)
+- **Email:** support@rapidkitlabs.com
 
 ---
 
@@ -360,6 +360,6 @@ We'd love to hear your thoughts!
 
 ---
 
-**Made with 🚀 by [RapidKit](https://getrapidkit.com)**
+**Made with 🚀 by [RapidKit](https://www.workspai.com)**
 
-⭐ Star us on [GitHub](https://github.com/getrapidkit/rapidkit-vscode)
+⭐ Star us on [GitHub](https://github.com/rapidkitlabs/rapidkit-vscode)

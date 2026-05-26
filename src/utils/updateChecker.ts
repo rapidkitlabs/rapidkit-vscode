@@ -163,7 +163,7 @@ async function showUpdateNotification(
     logger.info('User initiated rapidkit npm update');
   } else if (selected === releaseNotesAction) {
     // Open release notes
-    const url = `https://github.com/getrapidkit/rapidkit-npm/releases/tag/v${versionInfo.latest}`;
+    const url = `https://github.com/rapidkitlabs/rapidkit-npm/releases/tag/v${versionInfo.latest}`;
     vscode.env.openExternal(vscode.Uri.parse(url));
 
     logger.info('User viewed release notes');

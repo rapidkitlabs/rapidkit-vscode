@@ -289,10 +289,10 @@ Looking ahead to v0.10.0:
 
 ## 👥 Community
 
-- **GitHub:** [getrapidkit/rapidkit-vscode](https://github.com/getrapidkit/rapidkit-vscode)
-- **Issues:** [Report bugs](https://github.com/getrapidkit/rapidkit-vscode/issues)
-- **Discussions:** [Ask questions](https://github.com/getrapidkit/rapidkit-vscode/discussions)
-- **Website:** [getrapidkit.com](https://getrapidkit.com)
+- **GitHub:** [rapidkitlabs/rapidkit-vscode](https://github.com/rapidkitlabs/rapidkit-vscode)
+- **Issues:** [Report bugs](https://github.com/rapidkitlabs/rapidkit-vscode/issues)
+- **Discussions:** [Ask questions](https://github.com/rapidkitlabs/rapidkit-vscode/discussions)
+- **Website:** [www.workspai.com](https://www.workspai.com)
 
 ---
 

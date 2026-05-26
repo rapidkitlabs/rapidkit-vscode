@@ -56,7 +56,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand('workspai.showLogs');
           break;
         case 'openDocs':
-          vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs'));
+          vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs'));
           break;
         case 'openWelcome':
           vscode.commands.executeCommand('workspai.showWelcome');

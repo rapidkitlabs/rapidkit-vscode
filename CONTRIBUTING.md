@@ -19,7 +19,7 @@ This project adheres to a Code of Conduct. By participating, you are expected to
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/getrapidkit/rapidkit-vscode.git
+   git clone https://github.com/rapidkitlabs/rapidkit-vscode.git
    cd rapidkit-vscode
    ```
 
@@ -284,8 +284,8 @@ PRs will be reviewed for:
 ## 📞 Getting Help
 
 - **Discord**: [Join our server](https://discord.gg/rapidkit)
-- **GitHub Discussions**: [Ask questions](https://github.com/getrapidkit/rapidkit-vscode/discussions)
-- **Email**: dev@getrapidkit.com
+- **GitHub Discussions**: [Ask questions](https://github.com/rapidkitlabs/rapidkit-vscode/discussions)
+- **Email**: dev@rapidkitlabs.com
 
 ## 🙏 Thank You
 

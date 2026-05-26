@@ -552,6 +552,6 @@ Improved readability of Maximize and Lite/Full view toggle buttons in header:
 ## Links
 
 - 📦 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode)
-- 🐙 [GitHub Repository](https://github.com/getrapidkit/rapidkit-vscode)
+- 🐙 [GitHub Repository](https://github.com/rapidkitlabs/rapidkit-vscode)
 - 📚 [Documentation](https://www.workspai.com/)
 - 🚀 [npm Package](https://www.npmjs.com/package/rapidkit)

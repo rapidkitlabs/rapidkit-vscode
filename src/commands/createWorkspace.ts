@@ -791,7 +791,7 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
               forceNewWindow: false,
             });
           } else if (selected === docsAction) {
-            await vscode.env.openExternal(vscode.Uri.parse('https://getrapidkit.com/docs'));
+            await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.com/docs'));
           }
 
           // Refresh welcome page if it's open
@@ -813,7 +813,7 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
 
           if (selected === helpAction) {
             await vscode.env.openExternal(
-              vscode.Uri.parse('https://getrapidkit.com/docs/troubleshooting')
+              vscode.Uri.parse('https://www.workspai.com/docs/troubleshooting')
             );
           }
         }
@@ -1061,8 +1061,8 @@ npx rapidkit create project springboot.standard billing-api --output .
 
 ## 🆘 Need Help?
 
-- 📖 Documentation: https://getrapidkit.com/docs
-- 💬 GitHub Issues: https://github.com/getrapidkit/rapidkit-vscode/issues
+- 📖 Documentation: https://www.workspai.com/docs
+- 💬 GitHub Issues: https://github.com/rapidkitlabs/rapidkit-vscode/issues
 - 🔧 VS Code Extension: Run \`Workspai: Run System Check\`
 
 ## 🔄 Upgrade to Full Workspace

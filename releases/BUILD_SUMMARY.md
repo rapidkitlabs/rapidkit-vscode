@@ -397,7 +397,7 @@ npm run publish
 
 **Built by**: RapidKit Team
 **License**: MIT
-**Repository**: https://github.com/getrapidkit/rapidkit-vscode
+**Repository**: https://github.com/rapidkitlabs/rapidkit-vscode
 **Marketplace**: https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode
 
 ---
