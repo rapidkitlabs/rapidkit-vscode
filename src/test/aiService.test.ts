@@ -229,6 +229,12 @@ describe('aiService', () => {
       'context_packet: {"project_type":"fastapi.ddd"'
     );
     expect(prepared.messages.at(-1)?.content).toContain('Installed modules: free/auth/core');
+    expect(prepared.messages.at(-1)?.content).toContain('OUTPUT QUALITY CONTRACT');
+    expect(prepared.messages.at(-1)?.content).toContain('## Next Safe Step');
+    expect(prepared.messages.at(-1)?.content).toContain('## Verification');
+    expect(prepared.messages.at(-1)?.content).toContain(
+      'Do not claim fixed, shipped, production-ready, or complete'
+    );
   });
 
   it('injects ancestor workspace memory when AI runs at project scope', async () => {
@@ -265,6 +271,9 @@ describe('aiService', () => {
     expect(prepared.messages[0].content).toContain('Kafka is used for integration events');
     expect(prepared.messages[0].content).toContain(`Selected project root: ${projectRoot}`);
     expect(prepared.messages.at(-1)?.content).toContain(`project_root: ${projectRoot}`);
+    expect(prepared.messages.at(-1)?.content).toContain(
+      'Every command must include the correct execution directory'
+    );
   });
 
   it('returns clarification-needed validation when evidence is missing', async () => {

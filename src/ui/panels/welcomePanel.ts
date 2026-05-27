@@ -13,6 +13,7 @@ import { ExamplesService } from '../../core/examplesService';
 import { KitsService } from '../../core/kitsService';
 import { WorkspaceMemoryService } from '../../core/workspaceMemoryService';
 import { getGitDiffStat } from '../../core/aiProjectContextUtils';
+import type { AIOutputScenario } from '../../core/aiOutputQuality';
 import { isWorkspacePathAncestor } from '../../core/aiContextResolver';
 import {
   indexProjectSystemGraph,
@@ -1978,6 +1979,7 @@ No markdown, no explanation outside the JSON.`;
     let chunkBuffer = '';
     let flushTimer: ReturnType<typeof setInterval> | null = null;
     let streamDoneSent = false;
+    let fullAIResponse = '';
 
     const flushBufferedChunks = () => {
       if (chunkBuffer && !tokenSource.token.isCancellationRequested) {
@@ -2007,6 +2009,7 @@ No markdown, no explanation outside the JSON.`;
     try {
       const { streamAIResponse, prepareAIConversation, extractContractTelemetry } =
         await import('../../core/aiService.js');
+      const { validateAIOutputQuality } = await import('../../core/aiOutputQuality.js');
 
       // Build doctor snapshot for the contract - best-effort, non-blocking
       const aiQueryDoctorSnapshot =
@@ -2084,12 +2087,12 @@ No markdown, no explanation outside the JSON.`;
         prepared.messages,
         (chunk: { text: string; done: boolean }) => {
           if (chunk.text) {
+            fullAIResponse += chunk.text;
             chunkBuffer += chunk.text;
           }
           if (chunk.done) {
             stopFlushTimer();
             flushBufferedChunks();
-            sendDoneOnce();
           }
         },
         tokenSource.token,
@@ -2099,9 +2102,51 @@ No markdown, no explanation outside the JSON.`;
       if (tokenSource.token.isCancellationRequested) {
         await trackAIModalOutcome('cancelled', { stage: 'after-stream' });
       } else {
+        const qualityResult = validateAIOutputQuality(
+          fullAIResponse,
+          this._resolveAIOutputScenario(normalizedMode, normalizedQuestion)
+        );
+
+        if (!qualityResult.isAcceptable) {
+          const topViolations = qualityResult.violations
+            .filter((violation) => violation.severity === 'error')
+            .slice(0, 3)
+            .map((violation) => `- ${violation.detail}`)
+            .join('\n');
+
+          if (topViolations) {
+            panel.webview.postMessage({
+              command: 'aiChunkUpdate',
+              data: {
+                text: `\n\n## Output Quality Gate\n${topViolations}\n\nNext safe step: ask me to regenerate with verification evidence, execution directory, and rollback path.`,
+                requestId: queryRequestId,
+              },
+            });
+          }
+
+          if (canTrackTelemetry) {
+            try {
+              await WorkspaceUsageTracker.getInstance().trackCommandEvent(
+                'workspai.aimodal.output_quality_gate',
+                typeof aiContext?.path === 'string' ? aiContext.path : undefined,
+                {
+                  source: 'ai-modal',
+                  mode: normalizedMode,
+                  violationCount: qualityResult.violations.length,
+                  topRules: qualityResult.violations.slice(0, 5).map((violation) => violation.rule),
+                }
+              );
+            } catch {
+              // Telemetry should never interrupt AI modal UX.
+            }
+          }
+        }
+
         await trackAIModalOutcome('success', {
           modelId,
+          outputQuality: qualityResult.isAcceptable ? 'accepted' : 'flagged',
         });
+        sendDoneOnce();
       }
 
       // Notify the webview which model was used
@@ -3444,6 +3489,44 @@ No markdown, no explanation outside the JSON.`;
           'Show me the next highest-priority workspace action',
           'Save this workspace analysis to memory',
         ];
+  }
+
+  private _getChatBrainPrimaryActionLabel(actionType: string, projectName?: string): string {
+    const target = projectName ? ` for ${projectName}` : '';
+    const labels: Record<string, string> = {
+      orchestrate: projectName
+        ? `Inspect launch blockers for ${projectName}`
+        : 'Inspect workspace launch blockers',
+      'terminal-bridge': `Analyze the failing command${target}`,
+      'fix-preview-lite': `Preview the safest fix${target}`,
+      'change-impact-lite': `Map blast radius before changes${target}`,
+      'doctor-fix': `Run health diagnosis${target}`,
+      'workspace-memory-wizard': 'Capture workspace memory',
+      'recipe-pack': `Run the best guided workflow${target}`,
+      'incident-repro-pack': `Build a reproducible incident pack${target}`,
+      'apply-module-gen': `Generate module plan with verify path${target}`,
+      'apply-debug-patch': `Preview patch with rollback plan${target}`,
+      'inline-command': `Prepare safe command execution${target}`,
+      'release-readiness-commander': 'Generate release Go/No-Go decision',
+      'browser-smoke-test': `Run browser smoke verification${target}`,
+      'verify-pack-autopilot': `Generate deterministic verify pack${target}`,
+    };
+
+    return labels[actionType] ?? `Continue safe investigation${target}`;
+  }
+
+  private _resolveAIOutputScenario(mode: 'ask' | 'debug', question: string): AIOutputScenario {
+    const normalized = question.toLowerCase();
+
+    if (/\b(release|ship|go\/no-go|go-no-go|deploy)\b/.test(normalized)) {
+      return 'release-project';
+    }
+
+    if (/\b(command failed|failing command|exit code|stderr|stdout|traceback)\b/.test(normalized)) {
+      return 'command-failure';
+    }
+
+    return mode === 'debug' ? 'debug' : 'ask';
   }
 
   private async _buildStructuredIncidentPrompt(
@@ -5898,10 +5981,10 @@ No markdown, no explanation outside the JSON.`;
           board: {
             id: `board-${Date.now()}`,
             type: actionType === 'terminal-bridge' ? 'error' : 'solution',
-            title: 'Recommended Next Action',
+            title: 'Next Safe Action',
             summary: current.projectName
-              ? `Selected project: ${current.projectName} • route: ${actionType}`
-              : `Selected route: ${actionType}`,
+              ? `Selected project: ${current.projectName} | ${this._getChatBrainPrimaryActionLabel(actionType, current.projectName)}`
+              : this._getChatBrainPrimaryActionLabel(actionType),
             data: {
               route: actionType,
               confidence: 80,
@@ -5910,12 +5993,7 @@ No markdown, no explanation outside the JSON.`;
             actions: [
               {
                 id: `action-${Date.now()}`,
-                label:
-                  actionType === 'orchestrate'
-                    ? current.projectName
-                      ? `Inspect launch blockers for ${current.projectName}`
-                      : 'Inspect launch blockers'
-                    : `Run ${actionType}`,
+                label: this._getChatBrainPrimaryActionLabel(actionType, current.projectName),
                 actionType: actionType === 'orchestrate' ? 'terminal-bridge' : actionType,
                 riskLevel: actionPolicy.riskLevel,
                 riskClass: actionPolicy.riskClass,
@@ -5977,7 +6055,11 @@ No markdown, no explanation outside the JSON.`;
           finalText: finalAssistantText,
           phase: 'diagnose',
           confidence: 80,
-          nextActions: ['Run suggested action', 'Request verification', 'Ask follow-up'],
+          nextActions: [
+            'Run the next safe action',
+            'Generate verification evidence',
+            'Ask a scoped follow-up',
+          ],
         },
         meta: { requestId, version: 'v1' },
       });

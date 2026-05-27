@@ -1,4 +1,5 @@
 import type { AIModalContext, AIConversationMode, ScannedProjectContext } from './aiService';
+import { getAIOutputQualityContract } from './aiOutputQuality';
 
 /**
  * Build the user-facing message for an AI modal query.
@@ -65,23 +66,14 @@ export function buildAIModalUserMessage(
 Error / Issue to debug:
 ${question}
 
-Structure your response as:
-## Root Cause
-(Precise diagnosis, referencing actual Workspai file paths)
-
-## Fix
-\`\`\`  ← include exact code matching this project's kit and installed modules
-…
-\`\`\`
-Step-by-step instructions.
-
-## Prevention
-(Workspai patterns or module configurations to prevent recurrence)`;
+${getAIOutputQualityContract(mode, kitLabel)}`;
   }
 
   return `${ctxHeader}
 
 Question: ${question}
 
-Answer precisely using the project's actual kit (${kitLabel}), installed modules, and Workspai coding standards. Include working code examples.`;
+Answer precisely using the project's actual kit (${kitLabel}), installed modules, and Workspai coding standards.
+
+${getAIOutputQualityContract(mode, kitLabel)}`;
 }

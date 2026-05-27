@@ -291,6 +291,11 @@ describe('AI reliability release gate', () => {
       expect(joinedPrompt).toContain(fixture.expectedPromptSignal);
       expect(joinedPrompt).toContain('RAPIDKIT COMMAND EXECUTION CONTEXT');
       expect(joinedPrompt).toContain(`Selected project root: ${projectPath}`);
+      expect(joinedPrompt).toContain('OUTPUT QUALITY CONTRACT');
+      expect(joinedPrompt).toContain('## Next Safe Step');
+      expect(joinedPrompt).toContain('## Verification');
+      expect(joinedPrompt).toContain('Every command must include the correct execution directory');
+      expect(joinedPrompt).toContain('Do not claim fixed, shipped, production-ready, or complete');
 
       if (!fixture.moduleSupportExpected) {
         expect(joinedPrompt).toContain('SAFETY GATE — NO MODULE SUPPORT');

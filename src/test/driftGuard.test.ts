@@ -460,6 +460,9 @@ describe('contract drift guard', () => {
     expect(welcomePanelSource).toContain("'workspai.aimodal.clarification_gate'");
     expect(welcomePanelSource).toContain("command: 'aiChunkUpdate'");
     expect(welcomePanelSource).toContain("command: 'aiStreamDone'");
+    expect(welcomePanelSource).toContain("title: 'Next Safe Action'");
+    expect(welcomePanelSource).toContain('Generate verification evidence');
+    expect(welcomePanelSource).toContain('_getChatBrainPrimaryActionLabel');
 
     const clarificationIdx = welcomePanelSource.indexOf('prepared.validation.clarificationNeeded');
     const streamStageIdx = welcomePanelSource.indexOf("currentStage = 'stream';", clarificationIdx);
