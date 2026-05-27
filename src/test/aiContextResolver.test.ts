@@ -2,6 +2,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES } from './fixtures/incidentStudioGraphFixtures';
 
+// Normalize paths to forward slashes for cross-platform test assertions
+const normalizePath = (p?: string) => p?.replace(/\\/g, '/');
+
 const { mockExecuteCommand, mockGetWorkspaceFolder } = vi.hoisted(() => ({
   mockExecuteCommand: vi.fn(),
   mockGetWorkspaceFolder: vi.fn(),
@@ -56,9 +59,9 @@ describe('aiContextResolver', () => {
     const ctx = await resolvePreferredAIModalContext(undefined);
 
     expect(ctx.type).toBe('project');
-    expect(ctx.path).toBe('/tmp/wsp/billing-api');
-    expect(ctx.projectRootPath).toBe('/tmp/wsp/billing-api');
-    expect(ctx.workspaceRootPath).toBe('/tmp/wsp');
+    expect(normalizePath(ctx.path)).toBe('/tmp/wsp/billing-api');
+    expect(normalizePath(ctx.projectRootPath)).toBe('/tmp/wsp/billing-api');
+    expect(normalizePath(ctx.workspaceRootPath)).toBe('/tmp/wsp');
     expect(ctx.framework).toBe('springboot');
   });
 
@@ -76,7 +79,7 @@ describe('aiContextResolver', () => {
     const ctx = await resolvePreferredAIModalContext(undefined);
 
     expect(ctx.type).toBe('project');
-    expect(ctx.path).toBe('/tmp/project-billing');
+    expect(normalizePath(ctx.path)).toBe('/tmp/project-billing');
     expect(ctx.workspaceRootPath).toBeUndefined();
   });
 
@@ -94,8 +97,8 @@ describe('aiContextResolver', () => {
     const ctx = await resolvePreferredAIModalContext(undefined);
 
     expect(ctx.type).toBe('workspace');
-    expect(ctx.path).toBe('/tmp/workspace-a');
-    expect(ctx.workspaceRootPath).toBe('/tmp/workspace-a');
+    expect(normalizePath(ctx.path)).toBe('/tmp/workspace-a');
+    expect(normalizePath(ctx.workspaceRootPath)).toBe('/tmp/workspace-a');
   });
 
   it('falls back to editor workspace folder when no selected project or workspace exists', async () => {
@@ -196,9 +199,9 @@ describe('aiContextResolver', () => {
       const ctx = await resolvePreferredAIModalContext(undefined);
 
       expect(ctx.type).toBe('project');
-      expect(ctx.path).toBe(fixture.projectPath);
-      expect(ctx.projectRootPath).toBe(fixture.projectPath);
-      expect(ctx.workspaceRootPath).toBe(fixture.workspacePath);
+      expect(normalizePath(ctx.path)).toBe(normalizePath(fixture.projectPath));
+      expect(normalizePath(ctx.projectRootPath)).toBe(normalizePath(fixture.projectPath));
+      expect(normalizePath(ctx.workspaceRootPath)).toBe(normalizePath(fixture.workspacePath));
       expect(ctx.framework).toBe(fixture.projectType);
     }
   });
