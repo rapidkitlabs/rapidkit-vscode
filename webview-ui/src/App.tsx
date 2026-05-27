@@ -63,7 +63,7 @@ import {
     type NormalizedIncidentSystemGraphSnapshotPayload,
     type IncidentProjectSelection,
 } from '@/lib/incidentStudioPayload';
-import { AIModal, AIModalContext } from '@/components/AIModal';
+import { AIModal, AIModalContext, AIContextContractSummary } from '@/components/AIModal';
 import { AICreateModal, AICreationPlan, AICreateFramework } from '@/components/AICreateModal';
 import { CreateWorkspaceModal, WorkspaceCreationConfig } from '@/components/CreateWorkspaceModal';
 import { CreateProjectModal } from '@/components/CreateProjectModal';
@@ -307,6 +307,7 @@ export function App() {
     const [aiModelId, setAIModelId] = useState<string | null>(null);
     const [aiAvailableModels, setAIAvailableModels] = useState<{ id: string; name: string; vendor: string }[]>([]);
     const [aiSelectedModelId, setAISelectedModelId] = useState<string | null>(null);
+    const [aiContextContract, setAIContextContract] = useState<AIContextContractSummary | null>(null);
     const [incidentSelectedModelId, setIncidentSelectedModelId] = useState<string | null>(null);
     const [incidentModelId, setIncidentModelId] = useState<string | null>(null);
     const [aiConversationHistory, setAIConversationHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
@@ -602,6 +603,7 @@ export function App() {
                     setAIStreamError(null);
                     setAIIsStreaming(false);
                     setAIModelId(null);
+                    setAIContextContract(null);
                     setAIConversationHistory([]);
                     setShowAIModal(true);
                     // Fetch available models for the selector
@@ -615,6 +617,35 @@ export function App() {
                         break;
                     }
                     setAIStreamContent((prev) => prev + (message.data?.text || ''));
+                    break;
+                case 'aiContextContract':
+                    if (
+                        typeof messageRequestId === 'number' &&
+                        messageRequestId !== aiRequestIdRef.current
+                    ) {
+                        break;
+                    }
+                    setAIContextContract({
+                        persona_level:
+                            typeof message.data?.persona_level === 'string'
+                                ? message.data.persona_level
+                                : undefined,
+                        evidence_confidence:
+                            typeof message.data?.evidence_confidence === 'string'
+                                ? message.data.evidence_confidence
+                                : undefined,
+                        commandScope:
+                            typeof message.data?.commandScope === 'string'
+                                ? message.data.commandScope
+                                : undefined,
+                        missingFields: Array.isArray(message.data?.missingFields)
+                            ? message.data.missingFields.filter((item: unknown): item is string => typeof item === 'string')
+                            : undefined,
+                        safetyFlags:
+                            message.data?.safetyFlags && typeof message.data.safetyFlags === 'object'
+                                ? (message.data.safetyFlags as Record<string, boolean>)
+                                : undefined,
+                    });
                     break;
                 case 'aiStreamDone':
                     if (
@@ -1213,21 +1244,25 @@ export function App() {
     const handleAIQuery = (mode: 'debug' | 'ask', question: string, ctx: AIModalContext) => {
         const requestId = aiRequestIdRef.current + 1;
         aiRequestIdRef.current = requestId;
-        // Snapshot current content as previous assistant response before clearing
-        if (aiStreamContent.trim()) {
-            setAIConversationHistory(prev => [...prev, { role: 'assistant', content: aiStreamContent }]);
-        }
-        setAIConversationHistory(prev => [...prev, { role: 'user', content: question }]);
+        const historyForRequest = [
+            ...aiConversationHistory,
+            ...(aiStreamContent.trim()
+                ? [{ role: 'assistant' as const, content: aiStreamContent }]
+                : []),
+        ].slice(-8);
+        const nextHistory = [...historyForRequest, { role: 'user' as const, content: question }].slice(-8);
+        setAIConversationHistory(nextHistory);
         setAIStreamContent('');
         setAIStreamError(null);
         setAIIsStreaming(true);
         setAIModelId(null);
+        setAIContextContract(null);
         vscode.postMessage('aiQuery', {
             mode,
             question,
             context: ctx,
             requestId,
-            history: aiConversationHistory,
+            history: historyForRequest,
             modelId: normalizeSelectedModelId(aiSelectedModelId) ?? undefined,
         });
     };
@@ -1948,6 +1983,7 @@ export function App() {
                 modelId={aiModelId}
                 availableModels={aiAvailableModels}
                 selectedModelId={aiSelectedModelId}
+                contextContract={aiContextContract}
                 onModelChange={(modelId) =>
                     setAISelectedModelId(normalizeSelectedModelId(modelId))
                 }
@@ -1958,6 +1994,7 @@ export function App() {
                         setAIStreamContent('');
                         setAIStreamError(null);
                         setAIModelId(null);
+                        setAIContextContract(null);
                         setAIConversationHistory([]);
                     }
                 }}

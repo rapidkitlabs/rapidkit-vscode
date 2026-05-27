@@ -438,8 +438,14 @@ describe('contract drift guard', () => {
     );
     expect(appSource).toContain('context: ctx,');
     expect(appSource).toContain('requestId,');
+    expect(appSource).toContain("case 'aiContextContract':");
+    expect(appSource).toContain('contextContract={aiContextContract}');
+    expect(appSource).toContain('history: historyForRequest,');
     expect(appSource).toContain('onCancel={handleAICancelQuery}');
 
+    expect(aiModalSource).toContain('AIContextContractSummary');
+    expect(aiModalSource).toContain('ai-modal-contract-strip');
+    expect(aiModalSource).toContain('Evidence: {contextContract.evidence_confidence}');
     expect(aiModalSource).toContain('onCancel: () => void;');
     expect(aiModalSource).toContain('onClick={isStreaming ? onCancel : handleSubmit}');
     expect(aiModalSource).toContain("{isStreaming ? 'Stop' : 'Send'}");

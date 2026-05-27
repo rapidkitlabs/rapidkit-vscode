@@ -13,6 +13,14 @@ export interface AIModalContext {
     prefillMode?: 'debug' | 'ask';
 }
 
+export interface AIContextContractSummary {
+    persona_level?: string;
+    evidence_confidence?: string;
+    commandScope?: string;
+    missingFields?: string[];
+    safetyFlags?: Record<string, boolean>;
+}
+
 interface AIModalProps {
     isOpen: boolean;
     context: AIModalContext | null;
@@ -22,6 +30,7 @@ interface AIModalProps {
     modelId?: string | null;
     availableModels?: { id: string; name: string; vendor: string }[];
     selectedModelId?: string | null;
+    contextContract?: AIContextContractSummary | null;
     onModelChange?: (modelId: string | null) => void;
     onClose: () => void;
     onCancel: () => void;
@@ -112,6 +121,7 @@ export function AIModal({
     modelId: _modelId,
     availableModels = [],
     selectedModelId,
+    contextContract,
     onModelChange,
     onClose,
     onCancel,
@@ -182,6 +192,11 @@ export function AIModal({
 
     const fwLabel = context.framework ? FRAMEWORK_LABELS[context.framework] || context.framework : null;
     const hasResponse = streamContent.length > 0 || streamError;
+    const activeSafetyFlags = contextContract?.safetyFlags
+        ? Object.entries(contextContract.safetyFlags)
+            .filter(([, value]) => value)
+            .map(([key]) => key)
+        : [];
 
     return (
         <>
@@ -211,6 +226,11 @@ export function AIModal({
                                 <span className="ai-modal-ctx-name">{context.name}</span>
                                 {fwLabel && (
                                     <span className="ai-modal-fw-badge">{fwLabel}</span>
+                                )}
+                                {contextContract?.evidence_confidence && (
+                                    <span className={`ai-modal-evidence-badge ai-modal-evidence-badge--${contextContract.evidence_confidence}`}>
+                                        Evidence: {contextContract.evidence_confidence}
+                                    </span>
                                 )}
                             </div>
                         </div>
@@ -268,6 +288,18 @@ export function AIModal({
 
                 {/* Body */}
                 <div className="ai-modal-body">
+                    {contextContract && (
+                        <div className="ai-modal-contract-strip">
+                            <span>Persona: {contextContract.persona_level || 'standard'}</span>
+                            <span>Scope: {contextContract.commandScope || context.type}</span>
+                            {activeSafetyFlags.length > 0 ? (
+                                <span>Safety flags: {activeSafetyFlags.join(', ')}</span>
+                            ) : (
+                                <span>Safety flags: clear</span>
+                            )}
+                        </div>
+                    )}
+
                     {/* Quick prompts (only when idle — hidden while thinking/streaming) */}
                     {!hasResponse && !isStreaming && quickPrompts.length > 0 && (
                         <div className="ai-modal-chips">
