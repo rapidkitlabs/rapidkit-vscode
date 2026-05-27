@@ -2,8 +2,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { INCIDENT_STUDIO_SUPPORTED_KIT_FIXTURES } from './fixtures/incidentStudioGraphFixtures';
 
-// Normalize paths to forward slashes for cross-platform test assertions
-const normalizePath = (p?: string) => p?.replace(/\\/g, '/');
+// Normalize paths to forward slashes and remove Windows drive letters for cross-platform test assertions
+const normalizePath = (p?: string) => p?.replace(/\\/g, '/').replace(/^[A-Z]:(?=\/)/, '');
 
 const { mockExecuteCommand, mockGetWorkspaceFolder } = vi.hoisted(() => ({
   mockExecuteCommand: vi.fn(),
