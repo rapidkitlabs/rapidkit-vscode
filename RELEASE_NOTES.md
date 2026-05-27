@@ -1,5 +1,22 @@
 # Release Notes
 
+## v0.30.0 (May 27, 2026)
+
+### ✦ Studio, AI, Incident & Workspace Hardening
+
+Summary:
+- Clarify structured AI response cards in Studio and improve card semantics.
+- Improve chat clarity, stream timeout handling, and add an output quality gate.
+- Surface a modal evidence contract used by incident/debug flows.
+- Enrich AI debug actions and the architecture lens in editor surfaces.
+- Harden verify-first release gates and verification flows for incidents.
+- Add snapshot recovery and import hardening for workspace imports.
+- Migrate organization and documentation domain references to rapidkitlabs / www.workspai.com.
+
+Highlights:
+- Commit range included in this release (recent 8 commits): `ce4ee8b..59aa208` (see releases/RELEASE_NOTES_v0.30.0.md for details)
+
+
 ## v0.29.0 (May 19, 2026)
 
 ### ✦ AI Stability And Enterprise Typing Hardening Release

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-05-27
+
+### Added / Changed / Fixed
+
+- Studio: clarify structured AI response cards and improved studio UI card semantics.
+- AI: improve chat clarity, stream timeout handling, and add an output quality gate.
+- AI: surface modal evidence contract used by incident workflows and debug flows.
+- Editor: enrich AI debug actions and the architecture lens surface for better debugging.
+- Incident: harden verify-first release gates and related verification flows.
+- Workspace: add snapshot recovery and import hardening to improve robustness of workspace imports.
+- Chore: migrate organization and documentation domain references to rapidkitlabs / www.workspai.com.
+
+Commit-level audit (recent 8 commits):
+
+- `ce4ee8b` — feat(studio): clarify structured AI response cards
+- `e1daab1` — fix(ai): improve chat clarity and stream timeout
+- `d630705` — feat(ai): surface modal evidence contract
+- `aeebc0b` — feat(editor): enrich AI debug actions and architecture lens
+- `262f407` — fix(incident): harden verify-first release gates
+- `551a9d1` — feat(ai): add output quality gate
+- `6709580` — feat(workspace): add snapshot recovery and import hardening
+- `59aa208` — chore: migrate organization and domain references
+
+
 ## [0.29.1] - 2026-05-23
 
 ### Added / Changed / Fixed (Consolidation)
