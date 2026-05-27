@@ -1592,8 +1592,16 @@ export function buildIncidentActionExecutionMetadata(
           ? 'medium'
           : 'low',
       requiresImpactReview: false,
-      requiresVerifyPath: normalized === 'verify-pack-autopilot',
-      allowCompletionClaimWithoutVerify: normalized !== 'verify-pack-autopilot',
+      requiresVerifyPath:
+        normalized === 'verify-pack-autopilot' ||
+        normalized === 'incident-repro-pack' ||
+        normalized === 'release-readiness-commander' ||
+        normalized === 'browser-smoke-test',
+      allowCompletionClaimWithoutVerify:
+        normalized !== 'verify-pack-autopilot' &&
+        normalized !== 'incident-repro-pack' &&
+        normalized !== 'release-readiness-commander' &&
+        normalized !== 'browser-smoke-test',
     };
   }
 

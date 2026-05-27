@@ -64,4 +64,30 @@ describe('verifyPackContract', () => {
     expect(contract.overallStatus).toBe('skipped');
     expect(contract.summary.totalCommands).toBe(0);
   });
+
+  it('fails closed when a command record has no executable command text', () => {
+    const contract = buildVerifyPackOutputContract({
+      producer: 'verify-pack-runner',
+      generatedAt: '2026-05-03T08:00:00.000Z',
+      commands: [
+        {
+          label: 'placeholder verify',
+          command: '   ',
+          args: ['doctor'],
+          exitCode: 0,
+          durationMs: -50,
+        },
+      ],
+    });
+
+    expect(contract.overallStatus).toBe('failed');
+    expect(contract.summary.failedCommands).toBe(1);
+    expect(contract.commands[0]).toEqual(
+      expect.objectContaining({
+        command: '',
+        durationMs: 0,
+        status: 'failed',
+      })
+    );
+  });
 });

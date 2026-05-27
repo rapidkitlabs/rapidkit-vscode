@@ -36,15 +36,28 @@ export function buildVerifyPackOutputContract(input: {
     durationMs?: number;
   }>;
 }): VerifyPackOutputContract {
-  const commands: VerifyPackCommandContract[] = input.commands.map((item) => ({
-    label: item.label,
-    command: item.command,
-    args: Array.isArray(item.args) ? item.args : [],
-    exitCode: item.exitCode,
-    durationMs:
-      typeof item.durationMs === 'number' && Number.isFinite(item.durationMs) ? item.durationMs : 0,
-    status: item.exitCode === 0 ? 'passed' : 'failed',
-  }));
+  const commands: VerifyPackCommandContract[] = input.commands.map((item) => {
+    const command = typeof item.command === 'string' ? item.command.trim() : '';
+    const exitCode =
+      typeof item.exitCode === 'number' && Number.isFinite(item.exitCode)
+        ? Math.trunc(item.exitCode)
+        : 1;
+
+    return {
+      label:
+        typeof item.label === 'string' && item.label.trim() ? item.label.trim() : 'verify command',
+      command,
+      args: Array.isArray(item.args)
+        ? item.args.filter((arg): arg is string => typeof arg === 'string')
+        : [],
+      exitCode,
+      durationMs:
+        typeof item.durationMs === 'number' && Number.isFinite(item.durationMs)
+          ? Math.max(0, Math.round(item.durationMs))
+          : 0,
+      status: command.length > 0 && exitCode === 0 ? 'passed' : 'failed',
+    };
+  });
 
   const passedCommands = commands.filter((item) => item.status === 'passed').length;
   const failedCommands = commands.length - passedCommands;

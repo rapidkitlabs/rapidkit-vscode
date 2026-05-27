@@ -2104,7 +2104,7 @@ No markdown, no explanation outside the JSON.`;
       } else {
         const qualityResult = validateAIOutputQuality(
           fullAIResponse,
-          this._resolveAIOutputScenario(normalizedMode, normalizedQuestion)
+          this._resolveAIOutputScenario(normalizedMode, normalizedQuestion, aiContext.type)
         );
 
         if (!qualityResult.isAcceptable) {
@@ -3515,11 +3515,15 @@ No markdown, no explanation outside the JSON.`;
     return labels[actionType] ?? `Continue safe investigation${target}`;
   }
 
-  private _resolveAIOutputScenario(mode: 'ask' | 'debug', question: string): AIOutputScenario {
+  private _resolveAIOutputScenario(
+    mode: 'ask' | 'debug',
+    question: string,
+    contextType?: string
+  ): AIOutputScenario {
     const normalized = question.toLowerCase();
 
     if (/\b(release|ship|go\/no-go|go-no-go|deploy)\b/.test(normalized)) {
-      return 'release-project';
+      return contextType === 'workspace' ? 'release-workspace' : 'release-project';
     }
 
     if (/\b(command failed|failing command|exit code|stderr|stdout|traceback)\b/.test(normalized)) {
@@ -4248,18 +4252,20 @@ No markdown, no explanation outside the JSON.`;
       new Set([
         ...input.releaseGateEvidence.blockedReasons,
         ...(evidence.doctorErrors > 0 ? [`Doctor reported ${evidence.doctorErrors} error(s)`] : []),
-        ...(evidence.verifyPackContractStatus === 'failed'
-          ? ['Verify-pack contract status is failed']
+        ...(evidence.verifyPackContractStatus !== 'passed'
+          ? [`Verify-pack contract status is ${evidence.verifyPackContractStatus}`]
           : []),
         ...(!evidence.scopeKnown ? ['Affected scope is unknown'] : []),
         ...(!evidence.verifyPathPresent ? ['Verify path is missing'] : []),
+        ...(!evidence.rollbackPathPresent ? ['Rollback path is missing'] : []),
       ])
     ).slice(0, 12);
 
     const decision: 'go' | 'no-go' =
       input.verifySuccess &&
       blockingReasons.length === 0 &&
-      evidence.verifyPackContractStatus !== 'failed'
+      evidence.verifyPackContractStatus === 'passed' &&
+      evidence.rollbackPathPresent
         ? 'go'
         : 'no-go';
 

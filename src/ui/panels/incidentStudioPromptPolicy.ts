@@ -78,9 +78,18 @@ export function classifyIncidentActionPolicy(actionType: string): IncidentAction
             ? 'medium'
             : 'low',
         requiresImpactReview: false,
-        requiresVerifyPath: normalized === 'doctor-fix' || normalized === 'verify-pack-autopilot',
+        requiresVerifyPath:
+          normalized === 'doctor-fix' ||
+          normalized === 'verify-pack-autopilot' ||
+          normalized === 'incident-repro-pack' ||
+          normalized === 'release-readiness-commander' ||
+          normalized === 'browser-smoke-test',
         allowCompletionClaimWithoutVerify:
-          normalized !== 'doctor-fix' && normalized !== 'verify-pack-autopilot',
+          normalized !== 'doctor-fix' &&
+          normalized !== 'verify-pack-autopilot' &&
+          normalized !== 'incident-repro-pack' &&
+          normalized !== 'release-readiness-commander' &&
+          normalized !== 'browser-smoke-test',
       };
     case 'inline-command':
       return {

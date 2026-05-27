@@ -126,6 +126,20 @@ describe('incidentStudioPromptPolicy', () => {
     }
   });
 
+  it('requires verify evidence before completion claims for artifact-producing killer features', () => {
+    for (const actionType of [
+      'verify-pack-autopilot',
+      'incident-repro-pack',
+      'release-readiness-commander',
+      'browser-smoke-test',
+    ]) {
+      const policy = classifyIncidentActionPolicy(actionType);
+
+      expect(policy.requiresVerifyPath).toBe(true);
+      expect(policy.allowCompletionClaimWithoutVerify).toBe(false);
+    }
+  });
+
   it('keeps inline-command prompt contract sections stable', () => {
     const source = readWelcomePanelSource();
 
