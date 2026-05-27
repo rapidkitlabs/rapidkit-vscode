@@ -60,18 +60,35 @@ export function collectDebugPrefillQuestion(
 }
 
 export function collectExplainPrefillQuestion(
-  issueSummary?: string,
+  issueSummary?: unknown,
   editor = vscode.window.activeTextEditor,
   diagnostics = editor ? vscode.languages.getDiagnostics(editor.document.uri) : []
 ): string | undefined {
+  const invocationSeed = parseAIDebugInvocationSeed(issueSummary);
+  if (invocationSeed) {
+    return invocationSeed;
+  }
   const selected = getEditorSelection(editor);
   if (selected) {
     return selected;
   }
-  if (issueSummary?.trim()) {
-    return issueSummary.trim();
-  }
   return getActiveDiagnostics(editor, diagnostics);
+}
+
+function parseAIDebugInvocationSeed(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const payload = value as Record<string, unknown>;
+  if (typeof payload.seed === 'string') {
+    const trimmed = payload.seed.trim();
+    return trimmed || undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -111,15 +128,18 @@ export async function collectLogFileDebugContext(uri?: vscode.Uri): Promise<{
 // ──────────────────────────────────────────────
 
 export function registerAIDebuggerCommand(context: vscode.ExtensionContext): vscode.Disposable {
-  const debugCommand = vscode.commands.registerCommand('workspai.debugWithAI', async () => {
-    const prefillQuestion = collectDebugPrefillQuestion();
-    const baseContext: AIModalContext = await resolvePreferredAIModalContext();
-    WelcomePanel.showAIModal(context, {
-      ...baseContext,
-      prefillQuestion,
-      prefillMode: 'debug',
-    });
-  });
+  const debugCommand = vscode.commands.registerCommand(
+    'workspai.debugWithAI',
+    async (seed?: unknown) => {
+      const prefillQuestion = parseAIDebugInvocationSeed(seed) ?? collectDebugPrefillQuestion();
+      const baseContext: AIModalContext = await resolvePreferredAIModalContext();
+      WelcomePanel.showAIModal(context, {
+        ...baseContext,
+        prefillQuestion,
+        prefillMode: 'debug',
+      });
+    }
+  );
 
   const explainCommand = vscode.commands.registerCommand(
     'workspai.explainErrorWithAI',

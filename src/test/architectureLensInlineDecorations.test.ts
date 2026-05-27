@@ -44,7 +44,7 @@ describe('architectureLensInlineDecorations', () => {
       fallbackLine: 4,
     });
 
-    expect(model.label).toBe('Workspai lens: HIGH • 2M • 1T');
+    expect(model.label).toBe('Workspai Lens: HIGH risk • 2 modules • 1 test');
     expect(model.detail).toContain('77% confidence');
     expect(model.detail).toContain('Review impact before mutation.');
     expect(model.anchorLines).toEqual([12, 18]);
@@ -71,7 +71,7 @@ describe('architectureLensInlineDecorations', () => {
       fallbackLine: 3,
     });
 
-    expect(model.label).toBe('Workspai lens: MEDIUM • 0M • 0T');
+    expect(model.label).toBe('Workspai Lens: MEDIUM risk • 0 modules • 0 tests');
     expect(model.anchorLines).toEqual([3]);
   });
 });

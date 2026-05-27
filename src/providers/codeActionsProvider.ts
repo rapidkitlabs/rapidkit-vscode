@@ -9,6 +9,58 @@ import {
   isWorkspaiConfigurationFile,
 } from './workspaiConfigFiles';
 
+type DiagnosticSeed = {
+  severity: string;
+  line: number;
+  column: number;
+  fileLineLabel: string;
+  message: string;
+};
+
+export function buildAIDiagnosticSeed(input: {
+  intent: 'debug' | 'fix-preview' | 'explain';
+  fileName: string;
+  languageId: string;
+  diagnostics: DiagnosticSeed[];
+  snippet?: string;
+}): string {
+  const intentLabel =
+    input.intent === 'debug'
+      ? 'Debug with Workspai AI'
+      : input.intent === 'fix-preview'
+        ? 'Preview fix with Workspai AI'
+        : 'Explain error with Workspai AI';
+  const diagnosticsBlock =
+    input.diagnostics.length > 0
+      ? input.diagnostics
+          .slice(0, 8)
+          .map(
+            (diagnostic) =>
+              `- [${diagnostic.severity}] ${diagnostic.fileLineLabel}: ${diagnostic.message}`
+          )
+          .join('\n')
+      : '- No diagnostic supplied; use the selected code snippet as evidence.';
+
+  return [
+    `${intentLabel}: analyze this editor issue with evidence-first output.`,
+    `File: ${input.fileName}`,
+    `Language: ${input.languageId}`,
+    '',
+    'Diagnostics:',
+    diagnosticsBlock,
+    input.snippet ? ['', 'Selected/current code evidence:', '```', input.snippet, '```'] : '',
+    '',
+    'Required output:',
+    '- Diagnosis or explanation grounded in the diagnostic and file context.',
+    '- Smallest safe next step; do not claim the fix is applied.',
+    '- Exact verify command and execution directory.',
+    '- Rollback or undo note for any proposed mutation.',
+  ]
+    .flat()
+    .filter(Boolean)
+    .join('\n');
+}
+
 export class WorkspaiCodeActionsProvider implements vscode.CodeActionProvider {
   public static readonly providedCodeActionKinds = [
     vscode.CodeActionKind.QuickFix,
@@ -46,6 +98,29 @@ export class WorkspaiCodeActionsProvider implements vscode.CodeActionProvider {
       return text;
     }
     return `${text.slice(0, 800)}\n... [truncated]`;
+  }
+
+  private buildDiagnosticSeed(
+    intent: 'debug' | 'fix-preview' | 'explain',
+    document: vscode.TextDocument,
+    range: vscode.Range,
+    context: vscode.CodeActionContext
+  ): string {
+    const diagnostics = context.diagnostics.map((diagnostic) => ({
+      severity: diagnostic.severity === vscode.DiagnosticSeverity.Error ? 'ERROR' : 'WARN',
+      line: diagnostic.range.start.line + 1,
+      column: diagnostic.range.start.character + 1,
+      fileLineLabel: `${vscode.workspace.asRelativePath(document.fileName)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}`,
+      message: diagnostic.message,
+    }));
+
+    return buildAIDiagnosticSeed({
+      intent,
+      fileName: vscode.workspace.asRelativePath(document.fileName),
+      languageId: document.languageId,
+      diagnostics,
+      snippet: this.getRangeSnippet(document, range),
+    });
   }
 
   provideCodeActions(
@@ -98,6 +173,13 @@ export class WorkspaiCodeActionsProvider implements vscode.CodeActionProvider {
       action.command = {
         command: 'workspai.debugWithAI',
         title: 'Debug with Workspai AI',
+        arguments: [
+          {
+            seed: this.buildDiagnosticSeed('debug', document, range, context),
+            source: 'code-action',
+            trigger: 'debug-with-ai',
+          },
+        ],
       };
       action.isPreferred = false;
       actions.push(action);
@@ -109,7 +191,13 @@ export class WorkspaiCodeActionsProvider implements vscode.CodeActionProvider {
       fixPreviewAction.command = {
         command: 'workspai.aiFixPreviewLite',
         title: 'Preview fix with Workspai AI',
-        arguments: [selectionSnippet],
+        arguments: [
+          {
+            seed: this.buildDiagnosticSeed('fix-preview', document, range, context),
+            source: 'code-action',
+            trigger: 'preview-fix',
+          },
+        ],
       };
       actions.push(fixPreviewAction);
     }
@@ -127,7 +215,13 @@ export class WorkspaiCodeActionsProvider implements vscode.CodeActionProvider {
       explainAction.command = {
         command: 'workspai.explainErrorWithAI',
         title: 'Explain error with AI',
-        arguments: [errorMessages],
+        arguments: [
+          {
+            seed: this.buildDiagnosticSeed('explain', document, range, context),
+            source: 'code-action',
+            trigger: 'explain-error',
+          },
+        ],
       };
       actions.push(explainAction);
     }

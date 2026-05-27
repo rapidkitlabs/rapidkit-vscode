@@ -87,6 +87,9 @@ describe('architectureLensCodeLens', () => {
     expect(summary.seedText).toContain('Affected modules: orders, billing');
     expect(summary.seedText).toContain('Candidate tests: tests/orders.spec.ts');
     expect(summary.seedText).toContain('Blocked reasons: Review impact before mutation.');
+    expect(summary.seedText).toContain('Decision Clarity Contract (required):');
+    expect(summary.seedText).toContain('6) Verify plan: exact command(s) and execution directory.');
+    expect(summary.seedText).toContain('7) Rollback plan: how to undo or back out');
   });
 
   it('falls back to scope review wording when impact modules are missing', () => {

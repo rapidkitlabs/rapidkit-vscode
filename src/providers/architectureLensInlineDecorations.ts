@@ -55,7 +55,7 @@ export function buildArchitectureInlineRenderModel(input: {
   ];
 
   return {
-    label: `Workspai lens: ${input.score.riskLevel.toUpperCase()} • ${impactedModules}M • ${candidateTests}T`,
+    label: `Workspai Lens: ${input.score.riskLevel.toUpperCase()} risk • ${impactedModules} module${impactedModules === 1 ? '' : 's'} • ${candidateTests} test${candidateTests === 1 ? '' : 's'}`,
     detail: blockedSummary
       ? `${detailParts.join(' • ')} • ${blockedSummary}`
       : detailParts.join(' • '),

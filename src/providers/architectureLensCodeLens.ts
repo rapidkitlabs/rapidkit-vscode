@@ -81,7 +81,15 @@ export function buildArchitectureCodeLensSummary(input: {
   }
 
   seedLines.push(
-    'Output format: affected files/modules/tests, risk level, rollback concerns, and a safe rollout checklist.'
+    '',
+    'Decision Clarity Contract (required):',
+    '1) Situation: what this file appears to control.',
+    '2) Why: graph evidence and assumptions separated.',
+    '3) Impact scope: affected files/modules/tests.',
+    '4) Risk: confidence, likely failure mode, and blocked reasons.',
+    '5) Next safe step: smallest non-mutating check first.',
+    '6) Verify plan: exact command(s) and execution directory.',
+    '7) Rollback plan: how to undo or back out the proposed change.'
   );
 
   return {
