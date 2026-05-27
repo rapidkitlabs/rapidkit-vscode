@@ -188,7 +188,7 @@ export async function streamAIResponse(
       : vscode.LanguageModelChatMessage.Assistant(sanitizePromptText(m.content, 20000))
   );
 
-  const requestTimeoutMs = getCommandTimeoutMs(DEFAULT_AI_STREAM_TIMEOUT_MS);
+  const requestTimeoutMs = getAIStreamTimeoutMs();
 
   const streamWithModel = async (
     selected: vscode.LanguageModelChat,
@@ -377,6 +377,7 @@ const DEFAULT_LIVE_MODULES_TIMEOUT_MS = 8000;
 const DEFAULT_AI_STREAM_TIMEOUT_MS = 45000;
 const MIN_COMMAND_TIMEOUT_MS = 1000;
 const MAX_COMMAND_TIMEOUT_MS = 60000;
+const MAX_AI_STREAM_TIMEOUT_MS = 120000;
 
 const _projectContextCache = new Map<string, ProjectContextCacheEntry>();
 
@@ -451,6 +452,18 @@ function getCommandTimeoutMs(fallback: number): number {
   }
 
   return Math.max(MIN_COMMAND_TIMEOUT_MS, Math.min(MAX_COMMAND_TIMEOUT_MS, configured));
+}
+
+function getAIStreamTimeoutMs(): number {
+  const configured = vscode.workspace
+    .getConfiguration('workspai')
+    .get<number>('aiStreamTimeoutMs', DEFAULT_AI_STREAM_TIMEOUT_MS);
+
+  if (!Number.isFinite(configured)) {
+    return DEFAULT_AI_STREAM_TIMEOUT_MS;
+  }
+
+  return Math.max(8000, Math.min(MAX_AI_STREAM_TIMEOUT_MS, configured));
 }
 
 /**

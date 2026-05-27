@@ -1507,6 +1507,13 @@
           "maximum": 60000,
           "description": "Timeout in milliseconds for local CLI and git commands used by the extension (AI scanning, module discovery, and diagnostics)"
         },
+        "workspai.aiStreamTimeoutMs": {
+          "type": "number",
+          "default": 45000,
+          "minimum": 8000,
+          "maximum": 120000,
+          "description": "Timeout in milliseconds for AI model streaming responses. Keep this higher than local command timeouts for preview models."
+        },
         "workspai.preferredModel": {
           "type": "string",
           "default": "auto",

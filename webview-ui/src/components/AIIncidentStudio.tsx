@@ -449,6 +449,11 @@ interface AIIncidentStudioProps {
 }
 
 type StructuredIncidentResponse = {
+    answer?: string;
+    evidence?: string;
+    nextSafeStep?: string;
+    verification?: string;
+    assumptions?: string;
     whatHappened?: string;
     why?: string;
     nextCommand?: string;
@@ -558,15 +563,25 @@ function parseStructuredResponse(text: string): StructuredIncidentResponse {
     // Normalise markdown bold/italic: **What happened:** → What happened:
     const normalised = text.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1');
 
-    // Section boundary: any of the four known headings (markdown-stripped)
-    const BOUNDARY = '(?:What happened|Why|Next command|Verify command)';
+    const headings = [
+        'Answer',
+        'Evidence',
+        'Next Safe Step',
+        'Verification',
+        'Assumptions',
+        'What happened',
+        'Why',
+        'Next command',
+        'Verify command',
+    ];
+    const BOUNDARY = `(?:${headings.map((heading) => heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`;
 
     const readSection = (label: string) => {
         const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         // Match the label (with optional leading #, >, or whitespace), then capture
         // everything until the next section heading or end of string.
         const regex = new RegExp(
-            `(?:^|\\n)[#>\\s]*${escaped}\\s*:[ \\t]*([\\s\\S]*?)(?=\\n[#>\\s]*${BOUNDARY}\\s*:|$)`,
+            `(?:^|\\n)[#>\\s]*${escaped}\\s*:?[ \\t]*([\\s\\S]*?)(?=\\n[#>\\s]*${BOUNDARY}\\s*:?|$)`,
             'i'
         );
         const match = normalised.match(regex);
@@ -574,6 +589,11 @@ function parseStructuredResponse(text: string): StructuredIncidentResponse {
     };
 
     return {
+        answer: readSection('Answer'),
+        evidence: readSection('Evidence'),
+        nextSafeStep: readSection('Next Safe Step'),
+        verification: readSection('Verification'),
+        assumptions: readSection('Assumptions'),
         whatHappened: readSection('What happened'),
         why: readSection('Why'),
         nextCommand: readSection('Next command'),
@@ -3868,6 +3888,11 @@ export function AIIncidentStudio({
 
         const structured = parseStructuredResponse(text);
         const hasStructured = Boolean(
+            structured.answer ||
+            structured.evidence ||
+            structured.nextSafeStep ||
+            structured.verification ||
+            structured.assumptions ||
             structured.whatHappened ||
             structured.why ||
             structured.nextCommand ||
@@ -3880,6 +3905,36 @@ export function AIIncidentStudio({
 
         return (
             <div className="incident-structured-response">
+                {structured.answer ? (
+                    <div>
+                        <h5>Answer</h5>
+                        <p>{structured.answer}</p>
+                    </div>
+                ) : null}
+                {structured.evidence ? (
+                    <div>
+                        <h5>Evidence</h5>
+                        <p>{structured.evidence}</p>
+                    </div>
+                ) : null}
+                {structured.nextSafeStep ? (
+                    <div>
+                        <h5>Next safe step</h5>
+                        <p>{structured.nextSafeStep}</p>
+                    </div>
+                ) : null}
+                {structured.verification ? (
+                    <div>
+                        <h5>Verification</h5>
+                        <p>{structured.verification}</p>
+                    </div>
+                ) : null}
+                {structured.assumptions ? (
+                    <div>
+                        <h5>Assumptions</h5>
+                        <p>{structured.assumptions}</p>
+                    </div>
+                ) : null}
                 {structured.whatHappened ? (
                     <div>
                         <h5>What happened</h5>

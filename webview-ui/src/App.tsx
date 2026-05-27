@@ -1057,7 +1057,7 @@ export function App() {
                             {
                                 id: chatBrainMessageIdRef.current || `assistant-partial-${Date.now()}`,
                                 role: 'assistant' as const,
-                                text: `${chatBrainStreamTextRef.current}\n\n[response interrupted]`,
+                                text: `${chatBrainStreamTextRef.current}\n\nResponse interrupted before completion.`,
                                 timestamp: Date.now(),
                             },
                         ].slice(-24));
@@ -1093,7 +1093,7 @@ export function App() {
                             {
                                 id: chatBrainMessageIdRef.current || `assistant-partial-${Date.now()}`,
                                 role: 'assistant' as const,
-                                text: `${chatBrainStreamTextRef.current}\n\n[response interrupted]`,
+                                text: `${chatBrainStreamTextRef.current}\n\nResponse interrupted before completion.`,
                                 timestamp: Date.now(),
                             },
                         ].slice(-24));
