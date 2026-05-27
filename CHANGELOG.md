@@ -9,15 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.30.0] - 2026-05-27
 
-### Added / Changed / Fixed
+### New
 
-- Studio: clarify structured AI response cards and improved studio UI card semantics.
-- AI: improve chat clarity, stream timeout handling, and add an output quality gate.
-- AI: surface modal evidence contract used by incident workflows and debug flows.
-- Editor: enrich AI debug actions and the architecture lens surface for better debugging.
-- Incident: harden verify-first release gates and related verification flows.
-- Workspace: add snapshot recovery and import hardening to improve robustness of workspace imports.
-- Chore: migrate organization and documentation domain references to rapidkitlabs / www.workspai.com.
+* Structured AI response cards in Studio were refined with clearer semantics and improved presentation for better readability.
+* Modal evidence contract is now surfaced across AI incident and debugging workflows, improving traceability and diagnostic transparency.
+* AI output quality gate introduced to strengthen response consistency before downstream execution.
+* Workspace snapshot recovery added to improve resilience during failed imports or workspace restoration scenarios.
+
+### Changed
+
+* AI chat interaction clarity improved, including stronger stream timeout handling for more reliable conversational flows.
+* Editor debugging surfaces expanded with richer AI debug actions and enhanced architecture lens visibility.
+* Incident verification workflows hardened with stricter verify-first release gating behavior.
+* Workspace import pipeline strengthened with additional hardening safeguards.
+* Organization and documentation domain references migrated to `rapidkitlabs` / `www.workspai.com`.
+
+### Fix
+
+* Stream timeout instability and chat clarity regressions addressed in AI interaction flows.
+* Verification gate edge cases in incident release workflows resolved to reduce release validation failures.
+* Workspace import robustness issues mitigated through recovery and defensive import handling.
+
+### Other
+
+* This release primarily focuses on platform stabilization, reliability improvements, and operational hardening across AI, Editor, Incident, and Workspace flows.
+* Recommended release verification steps remain: `npm run compile` and `npm run build` prior to VSIX publishing or marketplace release creation.
+* Commit scope included in this release covers the latest delivery set through `v0.30.0`.
 
 Commit-level audit (recent 8 commits):
 
