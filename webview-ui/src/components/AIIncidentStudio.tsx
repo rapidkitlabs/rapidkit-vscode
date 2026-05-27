@@ -3840,6 +3840,25 @@ export function AIIncidentStudio({
     };
 
     const renderAssistantText = (text: string) => {
+        const renderStructuredSection = (
+            tone: string,
+            title: string,
+            value: string | undefined
+        ) => {
+            if (!value) {
+                return null;
+            }
+            return (
+                <div className={`incident-structured-section incident-structured-section--${tone}`}>
+                    <h5>
+                        <span className="incident-structured-section-dot" />
+                        {title}
+                    </h5>
+                    <p>{value}</p>
+                </div>
+            );
+        };
+
         const renderCommandSection = (label: string, raw: string) => {
             const command = normalizeCommandText(raw);
             if (!command) {
@@ -3905,48 +3924,13 @@ export function AIIncidentStudio({
 
         return (
             <div className="incident-structured-response">
-                {structured.answer ? (
-                    <div>
-                        <h5>Answer</h5>
-                        <p>{structured.answer}</p>
-                    </div>
-                ) : null}
-                {structured.evidence ? (
-                    <div>
-                        <h5>Evidence</h5>
-                        <p>{structured.evidence}</p>
-                    </div>
-                ) : null}
-                {structured.nextSafeStep ? (
-                    <div>
-                        <h5>Next safe step</h5>
-                        <p>{structured.nextSafeStep}</p>
-                    </div>
-                ) : null}
-                {structured.verification ? (
-                    <div>
-                        <h5>Verification</h5>
-                        <p>{structured.verification}</p>
-                    </div>
-                ) : null}
-                {structured.assumptions ? (
-                    <div>
-                        <h5>Assumptions</h5>
-                        <p>{structured.assumptions}</p>
-                    </div>
-                ) : null}
-                {structured.whatHappened ? (
-                    <div>
-                        <h5>What happened</h5>
-                        <p>{structured.whatHappened}</p>
-                    </div>
-                ) : null}
-                {structured.why ? (
-                    <div>
-                        <h5>Why</h5>
-                        <p>{structured.why}</p>
-                    </div>
-                ) : null}
+                {renderStructuredSection('answer', 'Answer', structured.answer)}
+                {renderStructuredSection('evidence', 'Evidence', structured.evidence)}
+                {renderStructuredSection('next', 'Next safe step', structured.nextSafeStep)}
+                {renderStructuredSection('verify', 'Verification', structured.verification)}
+                {renderStructuredSection('assumptions', 'Assumptions', structured.assumptions)}
+                {renderStructuredSection('what', 'What happened', structured.whatHappened)}
+                {renderStructuredSection('why', 'Why', structured.why)}
                 {structured.nextCommand
                     ? renderCommandSection('Next command', structured.nextCommand)
                     : null}

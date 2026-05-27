@@ -4970,22 +4970,92 @@
   .incident-structured-response {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
   }
 
-  .incident-structured-response h5 {
-    margin: 0 0 5px;
+  .incident-structured-section {
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 72%, transparent);
+    border-left-width: 3px;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
+  }
+
+  .incident-structured-section h5 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 6px;
     font-size: 9.5px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--vscode-descriptionForeground);
     font-weight: 700;
+  }
+
+  .incident-structured-section-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
+  }
+
+  .incident-structured-section--answer {
+    border-left-color: #74b9ff;
+  }
+
+  .incident-structured-section--answer h5 {
+    color: #74b9ff;
+  }
+
+  .incident-structured-section--evidence {
+    border-left-color: #a78bfa;
+  }
+
+  .incident-structured-section--evidence h5 {
+    color: #a78bfa;
+  }
+
+  .incident-structured-section--next {
+    border-left-color: #00b894;
+    background: color-mix(in srgb, #00b894 7%, var(--vscode-editor-background));
+  }
+
+  .incident-structured-section--next h5 {
+    color: #00b894;
+  }
+
+  .incident-structured-section--verify {
+    border-left-color: #fbbf24;
+  }
+
+  .incident-structured-section--verify h5 {
+    color: #fbbf24;
+  }
+
+  .incident-structured-section--assumptions,
+  .incident-structured-section--why {
+    border-left-color: #94a3b8;
+  }
+
+  .incident-structured-section--assumptions h5,
+  .incident-structured-section--why h5 {
+    color: #94a3b8;
+  }
+
+  .incident-structured-section--what {
+    border-left-color: #fb7185;
+  }
+
+  .incident-structured-section--what h5 {
+    color: #fb7185;
   }
 
   .incident-structured-response p {
     margin: 0;
     font-size: 11px;
     line-height: 1.6;
+    white-space: pre-line;
   }
 
   .incident-structured-response code {
