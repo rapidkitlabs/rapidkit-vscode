@@ -383,6 +383,10 @@ export function App() {
     const [lastIncidentRefreshedAt, setLastIncidentRefreshedAt] = useState<number | null>(null);
     const [selectedWorkspaceForAnalysis, setSelectedWorkspaceForAnalysis] = useState<string | null>(null);
     const [selectedProjectForAnalysis, setSelectedProjectForAnalysis] = useState<IncidentProjectSelection | null>(null);
+    const [analyzeReport, setAnalyzeReport] = useState<any | null>(null);
+    const [analyzeReportError, setAnalyzeReportError] = useState<string | null>(null);
+    const [analyzeReportExists, setAnalyzeReportExists] = useState<boolean | null>(null);
+    const [isAnalyzeLoading, setIsAnalyzeLoading] = useState(false);
     const aiRequestIdRef = useRef(0);
     const chatBrainMessageIdRef = useRef<string | null>(null);
     const chatBrainStreamTextRef = useRef('');
@@ -509,6 +513,14 @@ export function App() {
                     } else if (message.data?.hasProjectSelected === false) {
                         setSelectedProjectForAnalysis(null);
                     }
+                    break;
+                case 'reportExistsResult':
+                    setAnalyzeReportExists(Boolean(message.data?.exists));
+                    break;
+                case 'reportLoaded':
+                    setIsAnalyzeLoading(false);
+                    setAnalyzeReport(message.data?.data ?? null);
+                    setAnalyzeReportError(typeof message.data?.error === 'string' ? message.data.error : null);
                     break;
                 case 'updateRecentWorkspaces':
                     console.log('[React Webview] Updating workspaces:', message.data);
@@ -1149,6 +1161,13 @@ export function App() {
                     );
                     setIncidentAutoLearningPrompt(message.data?.incidentAutoLearningPrompt !== false);
                     break;
+                case 'reportExistsResult':
+                    setAnalyzeReportExists(Boolean(message.data?.exists));
+                    break;
+                case 'reportLoaded':
+                    setAnalyzeReport(message.data?.data ?? null);
+                    setAnalyzeReportError(typeof message.data?.error === 'string' ? message.data.error : null);
+                    break;
             }
         };
 
@@ -1437,6 +1456,20 @@ export function App() {
         bootstrapIncidentStudioForWorkspace(workspace.path, workspace.name, true, undefined, null);
     };
 
+    const handleRunAnalyze = () => {
+        const workspacePath = selectedWorkspaceForAnalysis || workspaceStatus.workspacePath;
+        const workspaceName = activeWorkspaceName || undefined;
+
+        if (!workspacePath) {
+            console.warn('Select or open a workspace before running analyze.');
+            return;
+        }
+
+        setIsAnalyzeLoading(true);
+        setAnalyzeReportError(null);
+        vscode.postMessage('runAnalyze', { workspacePath, workspaceName });
+    };
+
     useEffect(() => {
         if (activeView !== 'incident-studio') {
             return;
@@ -1461,6 +1494,17 @@ export function App() {
         lastIncidentBootstrapWorkspaceRef.current = workspacePath;
         bootstrapIncidentStudioForWorkspace(workspacePath, workspaceName, true);
     }, [activeView, recentWorkspaces, workspaceStatus.workspaceName, workspaceStatus.workspacePath]);
+
+    useEffect(() => {
+        const workspacePath = selectedWorkspaceForAnalysis || workspaceStatus.workspacePath;
+        if (activeView !== 'incident-studio' || !workspacePath) {
+            return;
+        }
+
+        setIsAnalyzeLoading(true);
+        vscode.postMessage('checkReportExists', { workspacePath });
+        vscode.postMessage('loadReport', { workspacePath, workspaceName: activeWorkspaceName });
+    }, [activeView, selectedWorkspaceForAnalysis, workspaceStatus.workspacePath, activeWorkspaceName]);
 
     const handleChatBrainQuery = (query: string) => {
         const trimmedQuery = query.trim();
@@ -1870,6 +1914,11 @@ export function App() {
                             projectPath: selectedProjectForAnalysis?.path,
                             projectName: selectedProjectForAnalysis?.name,
                         })}
+                        onRunAnalyze={handleRunAnalyze}
+                        analyzeReport={analyzeReport}
+                        analyzeReportError={analyzeReportError}
+                        analyzeReportExists={analyzeReportExists}
+                        isAnalyzeLoading={isAnalyzeLoading}
                         onRunInlineCommand={runIncidentInlineCommand}
                         onRevealArchitectureTarget={revealArchitectureTarget}
                         onPredictiveWarningAccepted={handlePredictiveWarningAccepted}

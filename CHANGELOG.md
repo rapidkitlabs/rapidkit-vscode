@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-05-31
+
+### Added
+
+* Modular workspace analyze helper with stable `runAnalyze`, `loadReport`, and `revealEvidence` message handlers.
+* Dedicated `Workspace Live Diagnosis` analyze card for stable incident workflows.
+
+### Changed
+
+* Moved analyze lifecycle from the redesign-only Incident Studio path into the stable WelcomePanel / AIIncidentStudio experience.
+* Added clearer guidance for missing analyze output and prompt users to run `rapidkit analyze`.
+
+### Fixed
+
+* Fixed missing analyze output flow so users are guided to rerun analysis instead of seeing an empty state.
+
+### Other
+
+* Recommended validation: `npm run compile` and `npm run test`.
+
 ## [0.30.0] - 2026-05-27
 
 ### New

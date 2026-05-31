@@ -122,6 +122,49 @@ describe('workspace snapshot commands', () => {
     );
   });
 
+  it('runs workspace analyze with strict JSON output and writes report to .rapidkit/reports', async () => {
+    const { getCommand } = setupHarness();
+
+    await getCommand('workspai.workspaceAnalyze')();
+
+    expect(terminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: '/tmp/team-ws',
+        commands: [
+          [
+            'analyze',
+            '--json',
+            '--strict',
+            '--output',
+            '/tmp/team-ws/.rapidkit/reports/analyze-last-run.json',
+          ],
+        ],
+      })
+    );
+  });
+
+  it('contributes workspace analyze to extension manifest and workspace context menu', () => {
+    const packageJsonPath = path.resolve(__dirname, '../../package.json');
+    const manifest = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
+      contributes?: {
+        commands?: Array<{ command?: string }>;
+        menus?: Record<string, Array<{ command?: string; when?: string }>>;
+      };
+    };
+
+    const contributedCommands = new Set(
+      (manifest.contributes?.commands || []).map((item) => item.command)
+    );
+    const workspaceContextCommands = new Set(
+      (manifest.contributes?.menus?.['view/item/context'] || [])
+        .filter((item) => item.when === 'view == rapidkitWorkspaces && viewItem == workspace')
+        .map((item) => item.command)
+    );
+
+    expect(contributedCommands.has('workspai.workspaceAnalyze')).toBe(true);
+    expect(workspaceContextCommands.has('workspai.workspaceAnalyze')).toBe(true);
+  });
+
   it('inspects a named snapshot', async () => {
     const { getCommand } = setupHarness();
 

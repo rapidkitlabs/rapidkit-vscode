@@ -993,6 +993,26 @@ export function registerWorkspaceOperationsCommands(options: {
       }
     ),
 
+    vscode.commands.registerCommand('workspai.workspaceAnalyze', async (item?: unknown) => {
+      const workspaceExplorer = getWorkspaceExplorer();
+      const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
+      if (!workspacePath) {
+        vscode.window.showErrorMessage(
+          'No workspace selected. Select a workspace in the sidebar first.'
+        );
+        return;
+      }
+
+      const wsName = workspaceName || path.basename(workspacePath);
+      const reportPath = path.join(workspacePath, '.rapidkit', 'reports', 'analyze-last-run.json');
+
+      runRapidkitCommandsInTerminal({
+        name: `Workspai: Analyze Workspace — ${wsName}`,
+        cwd: workspacePath,
+        commands: [['analyze', '--json', '--strict', '--output', reportPath]],
+      });
+    }),
+
     vscode.commands.registerCommand('workspai.workspaceRunStage', async (item?: unknown) => {
       const typedItem = asWorkspaceCommandItem(item);
       const requestedStage = parseWorkspaceRunStage(typedItem?.stage);

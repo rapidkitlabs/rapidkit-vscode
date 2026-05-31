@@ -1,5 +1,18 @@
 # Release Notes
 
+## v0.31.0 (May 31, 2026)
+
+### ✦ Stable Analyze Integration and Incident Studio Reuse
+
+Summary:
+- Move analyze lifecycle out of the redesign-only Incident Studio path and into the stable WelcomePanel / AIIncidentStudio experience.
+- Add a reusable modular analyze helper with stable message handlers: `runAnalyze`, `loadReport`, and `revealEvidence`.
+- Surface a dedicated `Workspace Live Diagnosis` analyze card with run-analyze guidance and retry support when analysis output is missing.
+- Improve user flow so missing analyze data now prompts the user to run `rapidkit analyze` rather than leaving an empty state.
+
+Highlights:
+- Commit range included in this release (recent commits): `59aa208..HEAD` (see releases/RELEASE_NOTES_v0.31.0.md for details)
+
 ## v0.30.0 (May 27, 2026)
 
 ### ✦ Studio, AI, Incident & Workspace Hardening

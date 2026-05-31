@@ -413,6 +413,11 @@ interface AIIncidentStudioProps {
     onRunMemoryWizard: () => void;
     onRunDoctorChecks: () => void;
     onRunDoctorFix?: () => void;
+    onRunAnalyze?: () => void;
+    analyzeReport?: any | null;
+    analyzeReportError?: string | null;
+    analyzeReportExists?: boolean | null;
+    isAnalyzeLoading?: boolean;
     onViewComplianceReport?: () => void;
     onViewProjectDoctorReport?: () => void;
     onRunInlineCommand?: (command: string) => void;
@@ -1373,6 +1378,11 @@ export function AIIncidentStudio({
     onRunMemoryWizard: _onRunMemoryWizard,
     onRunDoctorChecks,
     onRunDoctorFix,
+    onRunAnalyze,
+    analyzeReport,
+    analyzeReportError,
+    analyzeReportExists,
+    isAnalyzeLoading,
     onViewComplianceReport,
     onViewProjectDoctorReport,
     onRunInlineCommand,
@@ -1432,6 +1442,77 @@ export function AIIncidentStudio({
     const architectureLensScopeRef = useRef<string | null>(null);
     const isLiteDisplay = studioDisplayMode === 'lite';
     const isFullDisplay = studioDisplayMode === 'full';
+
+    const analyzeReportSummary = analyzeReport?.summary;
+    const analyzeReportFindings = analyzeReportSummary?.findings;
+    const isAnalyzeReportLoaded = Boolean(analyzeReport);
+    const isAnalyzeReportMissing = analyzeReportExists === false && !analyzeReportError;
+    const isAnalyzeError = Boolean(analyzeReportError);
+
+    const renderAnalyzeCard = () => {
+        if (!onRunAnalyze) {
+            return null;
+        }
+
+        if (isAnalyzeError) {
+            return (
+                <div className="incident-studio-analyze-card incident-studio-analyze-card--error">
+                    <div>
+                        <strong>Analyze report failed to load:</strong> {analyzeReportError}
+                    </div>
+                    <button
+                        type="button"
+                        className="incident-studio-analyze-card__action"
+                        onClick={onRunAnalyze}
+                    >
+                        Retry analyze
+                    </button>
+                </div>
+            );
+        }
+
+        if (isAnalyzeReportMissing) {
+            return (
+                <div className="incident-studio-analyze-card incident-studio-analyze-card--warning">
+                    <div>
+                        <strong>Workspace analysis not found.</strong> Run <code>rapidkit analyze</code> to populate workspace health diagnostics.
+                    </div>
+                    <button
+                        type="button"
+                        className="incident-studio-analyze-card__action"
+                        onClick={onRunAnalyze}
+                    >
+                        Run analyze
+                    </button>
+                </div>
+            );
+        }
+
+        if (isAnalyzeReportLoaded) {
+            return (
+                <div className="incident-studio-analyze-card incident-studio-analyze-card--info">
+                    <div>
+                        <strong>Analyze report loaded.</strong>
+                        {analyzeReportSummary?.score != null && (
+                            <span> Score: {analyzeReportSummary.score}%.</span>
+                        )}
+                        {analyzeReportFindings ? (
+                            <span> Findings: {analyzeReportFindings.fail} fail, {analyzeReportFindings.warn} warn, {analyzeReportFindings.info} info.</span>
+                        ) : null}
+                    </div>
+                    <button
+                        type="button"
+                        className="incident-studio-analyze-card__action"
+                        onClick={onRunAnalyze}
+                    >
+                        Re-run analyze
+                    </button>
+                </div>
+            );
+        }
+
+        return null;
+    };
 
     // Auto-scroll to bottom whenever history grows or streaming is active
     const [activeUserMode, setActiveUserMode] = useState<IncidentUserMode>(userMode);
@@ -4256,6 +4337,8 @@ export function AIIncidentStudio({
                                             </button>
                                         </div>
                                     ) : null}
+
+                                    {renderAnalyzeCard()}
 
                                     <details className="incident-collapse incident-focus-diagnosis">
                                         <summary>

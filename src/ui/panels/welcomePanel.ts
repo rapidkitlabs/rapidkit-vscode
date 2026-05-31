@@ -64,6 +64,11 @@ import {
   type CachedIncidentStudioTelemetry,
 } from './incidentStudioTelemetry';
 import { buildIncidentLifecycleMetrics } from './incidentConversationMetrics';
+import {
+  analyzeReportExists,
+  loadAnalyzeReport,
+  runWorkspaceAnalyze,
+} from './incidentStudioAnalyze';
 import { ProjectSelectionSequence } from './projectSelectionSequence';
 import { buildIncidentResumeSnapshot, type IncidentResumeSnapshot } from './incidentStudioResume';
 import {
@@ -963,6 +968,78 @@ export class WelcomePanel {
                   ? message.data.preferredArchitectureLensView
                   : undefined,
             });
+            break;
+          }
+          case 'runAnalyze': {
+            const workspacePath =
+              typeof message.data?.workspacePath === 'string' ? message.data.workspacePath : '';
+            const workspaceName =
+              typeof message.data?.workspaceName === 'string'
+                ? message.data.workspaceName
+                : 'Unknown Workspace';
+            if (!workspacePath.trim()) {
+              vscode.window.showWarningMessage('Workspace path is required to run analyze.');
+              break;
+            }
+            await runWorkspaceAnalyze({ workspacePath, workspaceName });
+            break;
+          }
+          case 'checkReportExists': {
+            const workspacePath =
+              typeof message.data?.workspacePath === 'string' ? message.data.workspacePath : '';
+            const exists = workspacePath.trim() ? analyzeReportExists(workspacePath) : false;
+            this._panel.webview.postMessage({
+              command: 'reportExistsResult',
+              exists,
+              workspacePath,
+            });
+            break;
+          }
+          case 'loadReport': {
+            const workspacePath =
+              typeof message.data?.workspacePath === 'string' ? message.data.workspacePath : '';
+            const workspaceName =
+              typeof message.data?.workspaceName === 'string'
+                ? message.data.workspaceName
+                : 'Unknown Workspace';
+            const { report, error } = loadAnalyzeReport({ workspacePath, workspaceName });
+            this._panel.webview.postMessage({
+              command: 'reportLoaded',
+              data: report,
+              error,
+            });
+            break;
+          }
+          case 'revealEvidence': {
+            const evidencePath = typeof message.data?.path === 'string' ? message.data.path : '';
+            const workspacePath =
+              typeof message.data?.workspacePath === 'string' ? message.data.workspacePath : '';
+
+            if (!evidencePath.trim() || !workspacePath.trim()) {
+              vscode.window.showWarningMessage('Evidence path is not available.');
+              break;
+            }
+
+            const resolvedEvidence = path.isAbsolute(evidencePath)
+              ? evidencePath
+              : path.join(workspacePath, evidencePath);
+
+            try {
+              const fileUri = vscode.Uri.file(resolvedEvidence);
+              await vscode.commands.executeCommand('revealFileInOS', fileUri);
+            } catch (error) {
+              vscode.window.showErrorMessage(
+                `Unable to reveal evidence path: ${error instanceof Error ? error.message : String(error)}`
+              );
+            }
+            break;
+          }
+          case 'copyText': {
+            const text = typeof message.data?.text === 'string' ? message.data.text : '';
+            if (text.trim()) {
+              await vscode.env.clipboard.writeText(text);
+              vscode.window.showInformationMessage('Copied to clipboard.');
+            }
             break;
           }
           case 'debugWithAI':

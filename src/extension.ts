@@ -582,7 +582,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }),
       // Open Incident Studio (Next) — new fullscreen redesign
       vscode.commands.registerCommand('workspai.incidentStudioNext', async () => {
-        await showIncidentStudioNextCommand(context.extensionUri);
+        await showIncidentStudioNextCommand(context.extensionUri, workspaceExplorer);
       })
     );
 
