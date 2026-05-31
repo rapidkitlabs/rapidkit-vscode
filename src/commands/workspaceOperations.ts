@@ -1004,12 +1004,14 @@ export function registerWorkspaceOperationsCommands(options: {
       }
 
       const wsName = workspaceName || path.basename(workspacePath);
+      // Create a platform-independent CLI-friendly output path (use POSIX separators)
       const reportPath = path.join(workspacePath, '.rapidkit', 'reports', 'analyze-last-run.json');
+      const reportOutputPath = reportPath.split(path.sep).join(path.posix.sep);
 
       runRapidkitCommandsInTerminal({
         name: `Workspai: Analyze Workspace — ${wsName}`,
         cwd: workspacePath,
-        commands: [['analyze', '--json', '--strict', '--output', reportPath]],
+        commands: [['analyze', '--json', '--strict', '--output', reportOutputPath]],
       });
     }),
 
