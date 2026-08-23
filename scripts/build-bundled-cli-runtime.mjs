@@ -17,6 +17,7 @@ const checkOnly = process.argv.includes('--check');
 const releaseOnly = process.argv.includes('--release');
 const runtimeLauncherPath = path.join(runtimeRoot, 'launcher.cjs');
 const terminalBinRoot = path.join(runtimeRoot, 'terminal-bin');
+const RUNTIME_EXTERNAL_DEPENDENCIES = Object.freeze(['fsevents']);
 
 const RUNTIME_LAUNCHER_SOURCE = `'use strict';
 
@@ -211,7 +212,9 @@ function writeThirdPartyNotices(sourceRoot) {
   const queue = Object.keys({
     ...(readJson(path.join(sourceRoot, 'package.json')).dependencies ?? {}),
     ...(readJson(path.join(sourceRoot, 'package.json')).optionalDependencies ?? {}),
-  }).map((name) => ({ name, parentRoot: sourceRoot }));
+  })
+    .filter((name) => !RUNTIME_EXTERNAL_DEPENDENCIES.includes(name))
+    .map((name) => ({ name, parentRoot: sourceRoot }));
   const packages = [];
   const seen = new Set();
 
@@ -263,7 +266,9 @@ function writeThirdPartyNotices(sourceRoot) {
       ...(manifest.dependencies ?? {}),
       ...(manifest.optionalDependencies ?? {}),
     };
-    for (const child of Object.keys(children)) {
+    for (const child of Object.keys(children).filter(
+      (name) => !RUNTIME_EXTERNAL_DEPENDENCIES.includes(name)
+    )) {
       queue.push({ name: child, parentRoot: dependencyRoot });
     }
   }
@@ -370,6 +375,9 @@ async function buildRuntime({ sourceRoot, version, channel, distribution }) {
     platform: 'node',
     format: 'esm',
     target: 'node20',
+    // Native optional watchers cannot be embedded in a portable VSIX. Chokidar
+    // already treats fsevents as optional and falls back when it is unavailable.
+    external: RUNTIME_EXTERNAL_DEPENDENCIES,
     legalComments: 'none',
     sourcemap: false,
     banner: {

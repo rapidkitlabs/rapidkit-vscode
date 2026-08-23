@@ -35,12 +35,21 @@ describe('bundled CLI packaging contract', () => {
       path.join(repoRoot, 'scripts', 'package-vsix-variants.mjs'),
       'utf8'
     );
+    const runtimeBuilder = fs.readFileSync(
+      path.join(repoRoot, 'scripts', 'build-bundled-cli-runtime.mjs'),
+      'utf8'
+    );
     expect(packager).toContain('withPinnedReleaseContracts');
     expect(packager).toContain("'--release-package'");
     expect(packager).toContain('restoreContractMirrors(snapshot)');
     expect(packager).toContain("new AggregateError(failures, 'One or more VSIX variants failed");
     expect(packageJson.scripts?.['esbuild-base']).toContain('build:cli-runtime');
     expect(packageJson.scripts?.['package:ci']).toContain('smoke:cli-first-run');
+    expect(runtimeBuilder).toContain(
+      "const RUNTIME_EXTERNAL_DEPENDENCIES = Object.freeze(['fsevents']);"
+    );
+    expect(runtimeBuilder).toContain('external: RUNTIME_EXTERNAL_DEPENDENCIES');
+    expect(runtimeBuilder).toContain('!RUNTIME_EXTERNAL_DEPENDENCIES.includes(name)');
   });
 
   it('requires the runtime, integrity manifest, and license notices in the VSIX gate', () => {

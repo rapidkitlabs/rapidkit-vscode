@@ -30,7 +30,7 @@
 
 # Workspai VS Code v0.43.0
 
-Pending publication.
+Published.
 
 ## Conversational Create and embedded CLI authority
 

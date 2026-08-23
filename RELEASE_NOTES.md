@@ -50,7 +50,7 @@ Compatibility:
 
 Release posture: `conversational-create-and-embedded-cli-authority`
 
-Publication status: pending.
+Publication status: published.
 
 ## v0.42.0 (August 21, 2026)
 
