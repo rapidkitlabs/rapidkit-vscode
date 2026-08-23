@@ -45,6 +45,7 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
       'sidebarAiScope',
       'sidebarAiModelsList',
       'sidebarAiCreateThinking',
+      'sidebarAiCreateGuidance',
       'sidebarAiCreatePlan',
       'sidebarAiCreateProgress',
       'sidebarAiCreateDone',
@@ -55,6 +56,24 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
       expect(secondary, `React should handle inbound "${command}"`).toContain(`case '${command}'`);
       expect(provider, `host should emit "${command}"`).toContain(`'${command}'`);
     }
+  });
+
+  it('routes free-form Create messages before planning and preserves clarification history', () => {
+    const router = read('src/core/createIntentRouter.ts');
+    const createTab = read('webview-ui/src/sidebar/CreateTab.tsx');
+
+    expect(provider.indexOf('await routeCreateIntent')).toBeGreaterThanOrEqual(0);
+    expect(provider.indexOf('await routeCreateIntent')).toBeLessThan(
+      provider.indexOf('await parseCreationIntent')
+    );
+    expect(provider).toContain("route.intent !== 'create' || route.confidence !== 'high'");
+    expect(router).toContain('Workspai Create tab');
+    expect(router).toContain('one canonical workspace owns registered projects');
+    expect(router).toContain('Never convert a greeting');
+    expect(secondary).toContain("lastMessage?.kind === 'guidance'");
+    expect(secondary).toContain('history,');
+    expect(createTab).toContain('Continue in Agent');
+    expect(createTab).toContain('Choose project folder');
   });
 
   it('keeps the manual-create profile + framework option tables aligned with the host', () => {
@@ -185,12 +204,13 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
 
     expect(createTab).toContain("scope.workspacePath ? 'project' : 'workspace'");
     expect(createTab).toContain('target={createTarget}');
-    expect(createTab).toContain('onTargetChange={setCreateTarget}');
-    expect(createTab).toContain("setCreateTarget('workspace')");
-    expect(createTab).toContain("setCreateTarget('project')");
+    expect(createTab).toContain('onTargetChange={selectCreateTarget}');
+    expect(createTab).toContain("selectCreateTarget('workspace')");
+    expect(createTab).toContain("selectCreateTarget('project')");
     expect(createTab).toContain('resolveCreatePlaceholder(');
     expect(createTab).toContain('setCreateTarget(contextualTarget)');
-    expect(createTab).toContain('setCreateTarget(activeSession?.target ?? contextualTarget)');
+    expect(createTab).toContain('resolveCreateTargetAfterScopeChange({');
+    expect(createTab).toContain('userSelectedTarget: createTargetExplicitRef.current');
     expect(createTab).toContain('setCreateTarget(session.target)');
     expect(addDrawer).toContain('quickStartsForCreateTarget(stackLane, target)');
     expect(addDrawer).toContain('role="radiogroup"');
@@ -221,7 +241,7 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     expect(secondary).toContain('handleBootstrapCreatedWorkspace');
     expect(secondary).toContain('onBootstrapWorkspace={handleBootstrapCreatedWorkspace}');
     const createTab = read('webview-ui/src/sidebar/CreateTab.tsx');
-    expect(createTab).toContain('Bootstrap workspace');
+    expect(createTab).toContain('Initialize dependencies');
     expect(createTab).toContain('message.workspacePath');
     expect(createTab).toContain('const canBootstrapWorkspace = Boolean(message.workspacePath)');
     expect(createTab).toContain(
@@ -253,11 +273,13 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     );
   });
 
-  it('never routes fallback onboarding back to the legacy rapidkit npm package', () => {
+  it('uses verified runtime creation without synthetic or legacy npm fallbacks', () => {
     const createWorkspace = read('src/commands/createWorkspace.ts');
     const createProject = read('src/commands/createProject.ts');
-    expect(createWorkspace).toContain("args: ['install', '-g', 'workspai']");
+    expect(createWorkspace).toContain('Starting verified Workspai runtime');
     expect(createWorkspace).toContain('workspai create');
+    expect(createWorkspace).not.toContain("args: ['install', '-g', 'workspai']");
+    expect(createWorkspace).not.toContain('createBasicWorkspace');
     expect(createWorkspace).not.toContain("args: ['install', '-g', 'rapidkit']");
     expect(createWorkspace).not.toContain('rapidkit create');
     expect(createProject).not.toContain('rapidkit create project failed');

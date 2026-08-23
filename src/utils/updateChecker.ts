@@ -8,6 +8,7 @@ import { Logger } from './logger';
 import { runShellCommandInTerminal } from './terminalExecutor';
 import { run } from './exec';
 import { buildNpxRapidkitArgs } from './platformCapabilities';
+import { resolveBundledCliRuntime } from '../core/bundledCliRuntime';
 
 interface VersionInfo {
   current: string | null;
@@ -91,6 +92,18 @@ function compareVersions(v1: string, v2: string): number {
  */
 export async function checkForUpdates(): Promise<VersionInfo> {
   const logger = Logger.getInstance();
+
+  // The packaged extension owns an exact, integrity-bound CLI runtime. A newer
+  // npm package cannot replace that runtime independently; it arrives through
+  // an extension update after compatibility validation.
+  const bundledRuntime = resolveBundledCliRuntime();
+  if (bundledRuntime) {
+    return {
+      current: bundledRuntime.version,
+      latest: bundledRuntime.version,
+      updateAvailable: false,
+    };
+  }
 
   const current = await getCurrentVersion();
   const latest = await getLatestVersion();

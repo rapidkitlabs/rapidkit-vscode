@@ -2,7 +2,9 @@
  * Workspai CLI wrapper with an explicit RapidKit Core compatibility path.
  * Wraps the Workspai npm package for use in the VS Code extension.
  *
- * Execution uses unpinned `npx --yes workspai ...` (see platformCapabilities).
+ * Execution is resolved by the central runtime broker: packaged extensions use
+ * the integrity-checked bundled CLI, while source development retains a
+ * serialized npm fallback (see platformCapabilities and utils/exec).
  * Frontend generators: `create frontend <id>`; backend kits: `create project <kit>`.
  */
 
@@ -18,6 +20,7 @@ import { normalizeRapidkitNpmVersion } from '../utils/cliOutputSanitizer';
 import {
   buildNpxRapidkitArgs,
   buildRapidkitDisplayCommand,
+  buildRapidkitExecutionSpec,
   getWorkspaceVenvRapidkitCandidates,
 } from '../utils/platformCapabilities';
 import * as path from 'path';
@@ -279,25 +282,15 @@ export class WorkspaiCLI {
    * Check if the Workspai npm CLI is available.
    */
   async isAvailable(): Promise<boolean> {
-    // Prefer direct `workspai` binary if available (user-installed global),
-    // fallback to npx otherwise. This avoids environment/path
-    // differences between VS Code extension host and the user's interactive shell.
     try {
-      // Try direct executable first
-      const direct = await run('workspai', ['--version'], { stdio: 'pipe', timeout: 3000 });
-      if (direct && typeof direct.stdout === 'string' && direct.stdout.trim()) {
-        return true;
-      }
-    } catch {
-      // ignore and try npx
-    }
-
-    try {
-      await run('npx', this.buildPortableNpxRapidkitArgs(['--version']), {
+      const execution = buildRapidkitExecutionSpec(['--version']);
+      const result = await run(execution.command, execution.args, {
         stdio: 'pipe',
         timeout: 5000,
+        shell: execution.shell,
+        env: execution.env,
       });
-      return true;
+      return result.exitCode === 0 && Boolean(result.stdout?.trim());
     } catch (error) {
       this.logger.debug('Workspai CLI not available', error);
       return false;
@@ -309,21 +302,14 @@ export class WorkspaiCLI {
    */
   async getVersion(): Promise<string | null> {
     try {
-      // Prefer direct binary
-      const direct = await run('workspai', ['--version'], { stdio: 'pipe', timeout: 3000 });
-      if (direct && direct.stdout) {
-        return normalizeRapidkitNpmVersion(direct.stdout);
-      }
-    } catch {
-      // ignore
-    }
-
-    try {
-      const result = await run('npx', this.buildPortableNpxRapidkitArgs(['--version']), {
+      const execution = buildRapidkitExecutionSpec(['--version']);
+      const result = await run(execution.command, execution.args, {
         stdio: 'pipe',
         timeout: 5000,
+        shell: execution.shell,
+        env: execution.env,
       });
-      return normalizeRapidkitNpmVersion(result.stdout);
+      return result.exitCode === 0 ? normalizeRapidkitNpmVersion(result.stdout) : null;
     } catch (error) {
       this.logger.error('Failed to get Workspai CLI version', error);
       return null;

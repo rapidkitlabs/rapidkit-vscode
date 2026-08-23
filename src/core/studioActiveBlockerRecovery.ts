@@ -53,6 +53,11 @@ export async function runStudioActiveBlockerRecovery(input: {
   const observations: RecoveryObservation[] = [];
   const dependencyIncident = input.blockers.some(isDependencySecurityBlocker);
   const dependencyMaterializationIncident = input.blockers.some(isDependencyMaterializationBlocker);
+  const dependencyCapabilityAvailable = Boolean(
+    input.host.inspectDependencySecurity &&
+    input.host.repairDependencySecurity &&
+    input.host.upgradeDependencySecurity
+  );
   const dependencyDiagnostics: Array<{
     projectName: string;
     sourceFiles: string[];
@@ -87,14 +92,15 @@ export async function runStudioActiveBlockerRecovery(input: {
   if (
     !dependencyMaterializationIncident &&
     dependencyIncident &&
-    input.dependencyProjectNames.length > 0
+    input.dependencyProjectNames.length > 0 &&
+    dependencyCapabilityAvailable
   ) {
     let dependencySourceChanged = false;
     const unresolvedProjects: string[] = [];
     const clearedProjects: string[] = [];
 
     for (const projectName of input.dependencyProjectNames) {
-      const inspection = await input.host.inspectDependencySecurity({
+      const inspection = await input.host.inspectDependencySecurity!({
         projectName,
         workspacePath: input.workspacePath,
         ...scopedProject(input.projectPath),
@@ -144,7 +150,7 @@ export async function runStudioActiveBlockerRecovery(input: {
         continue;
       }
 
-      const repair = await input.host.repairDependencySecurity({
+      const repair = await input.host.repairDependencySecurity!({
         projectName,
         workspacePath: input.workspacePath,
         ...scopedProject(input.projectPath),
@@ -170,7 +176,7 @@ export async function runStudioActiveBlockerRecovery(input: {
           if (typeof candidate.packageName !== 'string') {
             continue;
           }
-          const upgrade = await input.host.upgradeDependencySecurity({
+          const upgrade = await input.host.upgradeDependencySecurity!({
             projectName,
             packageName: candidate.packageName,
             transactionId: input.transactionId?.() ?? crypto.randomUUID(),

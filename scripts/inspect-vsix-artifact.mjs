@@ -2,6 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'node:crypto';
 import AdmZip from 'adm-zip';
 import { findLocalPathViolations, looksBinary } from './local-path-guard.mjs';
 
@@ -13,6 +14,11 @@ const REQUIRED_FILES = [
   'extension/dist/graphWorker.js',
   'extension/dist/sidebar.js',
   'extension/dist/sidebar.css',
+  'extension/dist/workspai-runtime/manifest.json',
+  'extension/dist/workspai-runtime/launcher.cjs',
+  'extension/dist/workspai-runtime/dist/index.mjs',
+  'extension/dist/workspai-runtime/terminal-bin/workspai',
+  'extension/dist/workspai-runtime/terminal-bin/workspai.cmd',
   'extension/contracts/runtime-command-surface.v1.json',
   'extension/contracts/extension-cli-compatibility.v1.json',
   'extension/contracts/extension-cli-release-policy.v1.json',
@@ -25,6 +31,7 @@ const REQUIRED_FILES = [
 ];
 
 const DENIED_PATTERNS = [
+  /^extension\/\.workspai-cli-local\.json$/,
   /^extension\/src\//,
   /^extension\/scripts\//,
   /^extension\/\.github\//,
@@ -45,6 +52,8 @@ function parseArgs(argv) {
   const options = {
     artifact: '',
     strictSizeMb: 25,
+    channel: 'release',
+    cliVersion: '',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -59,6 +68,16 @@ function parseArgs(argv) {
       if (Number.isFinite(value) && value > 0) {
         options.strictSizeMb = value;
       }
+      index += 1;
+      continue;
+    }
+    if (arg === '--channel') {
+      options.channel = argv[index + 1] ?? '';
+      index += 1;
+      continue;
+    }
+    if (arg === '--cli-version') {
+      options.cliVersion = argv[index + 1] ?? '';
       index += 1;
       continue;
     }
@@ -88,6 +107,14 @@ function readPackageJson(zip) {
   const entry = zip.getEntry('extension/package.json');
   if (!entry) {
     throw new Error('VSIX is missing extension/package.json.');
+  }
+  return JSON.parse(entry.getData().toString('utf8'));
+}
+
+function readJsonEntry(zip, entryName) {
+  const entry = zip.getEntry(entryName);
+  if (!entry) {
+    throw new Error(`VSIX is missing ${entryName}.`);
   }
   return JSON.parse(entry.getData().toString('utf8'));
 }
@@ -161,11 +188,94 @@ function inspectVsix(options) {
     throw new Error('VSIX package.json is missing contributed views.');
   }
 
+  const releasePolicy = readJsonEntry(
+    zip,
+    'extension/contracts/extension-cli-release-policy.v1.json'
+  );
+  const runtimeManifest = readJsonEntry(zip, 'extension/dist/workspai-runtime/manifest.json');
+  const expectedRuntimeVersion =
+    options.channel === 'release' ? releasePolicy.verifiedCliVersion : options.cliVersion;
+  const expectedDistribution = options.channel === 'release' ? 'release' : 'local-vsix';
+  if (options.channel !== 'release' && options.channel !== 'local-candidate') {
+    throw new Error(`Unsupported VSIX inspection channel: ${options.channel}`);
+  }
+  if (options.channel === 'local-candidate' && !expectedRuntimeVersion) {
+    throw new Error('Local candidate inspection requires --cli-version.');
+  }
+  if (
+    runtimeManifest.schemaVersion !== 'workspai-vscode-bundled-cli-runtime.v1' ||
+    runtimeManifest.channel !== options.channel ||
+    runtimeManifest.distribution !== expectedDistribution ||
+    runtimeManifest.cli?.name !== 'workspai' ||
+    runtimeManifest.cli?.version !== expectedRuntimeVersion ||
+    runtimeManifest.entry !== 'launcher.cjs' ||
+    runtimeManifest.terminal?.bin !== 'terminal-bin' ||
+    runtimeManifest.terminal?.command !== 'workspai' ||
+    runtimeManifest.integrity !== 'sha256' ||
+    !Array.isArray(runtimeManifest.files) ||
+    runtimeManifest.files.length === 0
+  ) {
+    throw new Error(
+      `VSIX bundled CLI runtime is incompatible with the ${options.channel} packaging contract.`
+    );
+  }
+
+  const runtimePrefix = 'extension/dist/workspai-runtime/';
+  const declaredRuntimePaths = runtimeManifest.files.map((file) => file.path);
+  const duplicateRuntimePaths = declaredRuntimePaths.filter(
+    (file, index) => declaredRuntimePaths.indexOf(file) !== index
+  );
+  if (
+    duplicateRuntimePaths.length > 0 ||
+    declaredRuntimePaths.some(
+      (file) =>
+        typeof file !== 'string' ||
+        file.length === 0 ||
+        file.startsWith('/') ||
+        file.split('/').includes('..')
+    )
+  ) {
+    throw new Error('VSIX bundled CLI manifest contains duplicate or unsafe paths.');
+  }
+
+  const actualRuntimePaths = entries
+    .map((entry) => entry.entryName)
+    .filter(
+      (entryName) =>
+        entryName.startsWith(runtimePrefix) && entryName !== `${runtimePrefix}manifest.json`
+    )
+    .map((entryName) => entryName.slice(runtimePrefix.length))
+    .sort((left, right) => left.localeCompare(right));
+  const expectedRuntimePaths = [...declaredRuntimePaths].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  if (JSON.stringify(actualRuntimePaths) !== JSON.stringify(expectedRuntimePaths)) {
+    throw new Error('VSIX bundled CLI file inventory does not exactly match its manifest.');
+  }
+
+  for (const file of runtimeManifest.files) {
+    const entryName = `${runtimePrefix}${file.path}`;
+    const entry = zip.getEntry(entryName);
+    const data = entry?.getData();
+    const digest = data ? crypto.createHash('sha256').update(data).digest('hex') : '';
+    if (
+      !entry ||
+      !data ||
+      data.length !== file.size ||
+      !/^[a-f0-9]{64}$/.test(file.sha256) ||
+      digest !== file.sha256
+    ) {
+      throw new Error(`VSIX bundled CLI inventory mismatch: ${entryName}`);
+    }
+  }
+
   const summary = {
     artifact: path.basename(artifactPath),
     sizeMb: Number((sizeBytes / 1024 / 1024).toFixed(2)),
     files: entries.length,
     requiredFiles: REQUIRED_FILES.length,
+    bundledCliVersion: runtimeManifest.cli.version,
+    channel: runtimeManifest.channel,
   };
   console.log(`VSIX artifact smoke passed: ${JSON.stringify(summary)}`);
 }

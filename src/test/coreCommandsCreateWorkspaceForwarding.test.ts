@@ -179,4 +179,18 @@ describe('coreCommands createWorkspace forwarding', () => {
     expect(showErrorMessageMock).toHaveBeenCalledTimes(1);
     expect(showErrorMessageMock.mock.calls[0]?.[0]).toContain('Failed to create workspace: boom');
   });
+
+  it('propagates silent creation failures to the owning chat operation', async () => {
+    const { handler, workspaceExplorer, logger } = setupHarness();
+    const failure = new Error('runtime failed');
+    createWorkspaceCommandMock.mockRejectedValueOnce(failure);
+
+    await expect(handler({ name: 'ws-chat', profile: 'minimal', silent: true })).rejects.toBe(
+      failure
+    );
+
+    expect(workspaceExplorer.refresh).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith('Failed to create workspace', failure);
+    expect(showErrorMessageMock).not.toHaveBeenCalled();
+  });
 });

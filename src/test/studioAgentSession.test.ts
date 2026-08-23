@@ -2818,6 +2818,65 @@ describe('Studio Agent session runtime', () => {
     );
   });
 
+  it('does not treat repeated verify generations as causal progress', async () => {
+    const registry = new StudioAgentToolRegistry();
+    let verifyCalls = 0;
+    registry.register({
+      name: 'verify-blocker',
+      title: 'Verify blocker',
+      activity: 'verify',
+      risk: 'read',
+      async execute() {
+        verifyCalls += 1;
+        return {
+          ok: false,
+          cardBlocking: true,
+          blockerSignature: 'same-doctor-blocker',
+          evidenceGeneration: `doctor-run-${verifyCalls}`,
+          output: {
+            exitCode: 1,
+            nextAction: 'repair',
+          },
+          error: 'The same Doctor finding remains.',
+        };
+      },
+    });
+    const session = new StudioAgentSession(
+      {
+        id: 'verify-evidence-churn-session',
+        workspacePath: '/workspace',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        blockerSignature: 'same-doctor-blocker',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      {
+        async next() {
+          return {
+            type: 'tool',
+            toolName: 'verify-blocker',
+            input: {},
+            reason: 'Retry the same Doctor verification.',
+          };
+        },
+      },
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Fix Doctor');
+
+    expect(result.status).toBe('failed');
+    expect(verifyCalls).toBe(1);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.failed',
+        data: expect.objectContaining({ toolName: 'verify-blocker', duplicate: true }),
+      })
+    );
+  });
+
   it('removes an exhausted accelerator until a general source capability advances evidence', async () => {
     const registry = new StudioAgentToolRegistry();
     registry.register({

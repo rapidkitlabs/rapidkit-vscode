@@ -211,6 +211,23 @@ describe('createWorkspaceCommand profile-aware Python gating', () => {
     expect(createWorkspaceMock).not.toHaveBeenCalled();
   });
 
+  it('returns a typed prerequisite failure without nested UI in silent Create sessions', async () => {
+    await expect(
+      createWorkspaceCommand({
+        name: 'ws-python-chat',
+        profile: 'python-only',
+        installMethod: 'auto',
+        silent: true,
+      })
+    ).rejects.toMatchObject({
+      code: 'python-runtime-unavailable',
+      message: expect.stringContaining('Python 3.10+ is required'),
+    });
+
+    expect(showWarningMessageMock).not.toHaveBeenCalled();
+    expect(createWorkspaceMock).not.toHaveBeenCalled();
+  });
+
   it('does not show Python warning for Python-free profile and proceeds with workspace flow', async () => {
     const configPath = '/home/test/rapidkit/workspaces/ws-node';
     const markerPath = `${configPath}/.rapidkit-workspace`;

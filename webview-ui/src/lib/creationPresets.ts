@@ -1,5 +1,6 @@
 import type { ScaffoldFramework } from '@/types';
 import { isFrontendScaffoldFramework } from '@/lib/scaffoldFrameworks';
+import createContract from '@workspai-contracts/create-planner-capabilities.v1.json';
 
 export type CreationStackLane = 'balanced' | 'frontend' | 'backend' | 'polyglot' | 'enterprise';
 
@@ -103,16 +104,16 @@ export function resolveManualWorkspaceNamePlaceholder(lane: CreationStackLane): 
   return resolveDefaultWorkspaceName(lane, defaultProfileForStackLane(lane));
 }
 
-const PYTHON_FREE_PROFILES = new Set<WorkspaceBootstrapProfile>([
-  'minimal',
-  'node-only',
-  'go-only',
-  'java-only',
-  'dotnet-only',
-]);
+const WORKSPACE_PROFILE_CAPABILITIES = createContract.workspaceProfiles as Array<{
+  id: WorkspaceBootstrapProfile;
+  pythonEngineAtCreate: 'skipped' | 'optional-default-install';
+}>;
 
 export function profileRequiresPythonInstallMethod(profile: WorkspaceBootstrapProfile): boolean {
-  return !PYTHON_FREE_PROFILES.has(profile);
+  return (
+    WORKSPACE_PROFILE_CAPABILITIES.find((candidate) => candidate.id === profile)
+      ?.pythonEngineAtCreate === 'optional-default-install'
+  );
 }
 
 export function defaultInstallPythonEngineForProfile(profile: WorkspaceBootstrapProfile): boolean {

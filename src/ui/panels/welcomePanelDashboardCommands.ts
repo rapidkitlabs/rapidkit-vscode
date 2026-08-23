@@ -6,7 +6,6 @@ import { resolveDashboardCommandContract } from '../../core/dashboardCommandCont
 import { enrichDashboardEvidenceCommandData } from '../../core/dashboardEvidenceDirectRun';
 import { runDashboardEvidenceContractCli } from '../../core/evidenceCommandRunner';
 import { gateCompatibleCliVersion } from '../../core/cliVersionGate';
-import { resolveEvidenceCardIdsForDashboardCommand } from '../../core/dashboardReportRegistry';
 import { gateDashboardCommandCapability } from '../../core/dashboardCommandCapabilityGate';
 
 export type DashboardSelectedProject = {
@@ -254,7 +253,8 @@ export async function executeDashboardContractCommand(
       }
     });
     host.postDashboardCommandFailed(command, capability.reason, {
-      suggestedNextAction: 'Run workspai commands --json and update or link Workspai if needed.',
+      suggestedNextAction:
+        'Open Setup to validate or reinstall the extension-managed Workspai runtime, then reload the window.',
     });
     return false;
   }
@@ -307,7 +307,7 @@ export async function executeDashboardContractCommand(
     if (!versionAllowed) {
       host.postDashboardCommandFailed(
         command,
-        `${contract.label} is blocked until the linked Workspai CLI is compatible.`
+        `${contract.label} is blocked until the active Workspai runtime is compatible.`
       );
       return false;
     }
@@ -331,14 +331,14 @@ export async function executeDashboardContractCommand(
       return false;
     }
 
-    const affectedCardIds = resolveEvidenceCardIdsForDashboardCommand(command);
-    if (affectedCardIds.length > 0) {
-      await host.sendDashboardEvidence({
-        workspacePath: workspacePayload.path,
-        cardIds: affectedCardIds as DashboardEvidenceRefreshContext['cardIds'],
-        refreshMode: 'patch',
-      });
-    }
+    // A producer can refresh a causal family of reports (for example doctor,
+    // readiness, verify, explain, and the reports index). Rebuild the complete
+    // snapshot after the awaited CLI run; a command-to-single-card patch is not
+    // an authoritative post-operation state transition.
+    await host.sendDashboardEvidence({
+      workspacePath: workspacePayload.path,
+      refreshMode: 'full',
+    });
 
     await host.refreshWorkspaceStatus();
     return true;

@@ -105,7 +105,12 @@ export function buildHeuristicCreationDraft(
   return {
     type: mode,
     workspaceName: names.workspaceName,
-    profile: inferWorkspaceProfileFromCreationPrompt(framework, promptLower, stackIntent),
+    profile: inferWorkspaceProfileFromCreationPrompt(
+      framework,
+      promptLower,
+      stackIntent,
+      secondaryProject?.framework
+    ),
     installMethod: 'auto',
     framework,
     kit: defaultKitForFramework(framework, promptLower),

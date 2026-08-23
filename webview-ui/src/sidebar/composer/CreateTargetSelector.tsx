@@ -13,7 +13,7 @@ const TARGETS = [
   {
     id: 'project' as const,
     label: 'Project',
-    description: 'Create one project in the selected or default workspace',
+    description: 'Create one project in the active selected workspace',
     icon: FolderPlus,
   },
 ] as const;

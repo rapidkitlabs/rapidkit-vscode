@@ -22,6 +22,13 @@ export interface CreationPlan {
   suggestedModules: string[];
   description?: string;
   secondaryProject?: CreationPlanSecondaryProject;
+  authorization?: {
+    schemaVersion: 'workspai.create-plan-authorization.v1';
+    planId: string;
+    planHash: string;
+    issuedAt: string;
+    expiresAt: string;
+  };
 }
 
 export interface CreatedProject {
@@ -31,10 +38,29 @@ export interface CreatedProject {
   path?: string;
 }
 
+export type CreateGuidanceAction =
+  | 'none'
+  | 'plan-workspace'
+  | 'plan-project'
+  | 'adopt-project'
+  | 'import-project'
+  | 'import-workspace'
+  | 'continue-in-agent';
+
 export type CreateMessage =
   | { id: string; role: 'user' | 'ai'; kind: 'text'; text: string }
   | { id: string; role: 'ai'; kind: 'thinking'; label: string }
   | { id: string; role: 'ai'; kind: 'progress'; title: string; detail?: string }
+  | {
+      id: string;
+      role: 'ai';
+      kind: 'guidance';
+      response: string;
+      intent: string;
+      confidence: 'high' | 'medium' | 'low';
+      action: CreateGuidanceAction;
+      request: string;
+    }
   | {
       id: string;
       role: 'ai';
@@ -68,6 +94,10 @@ export type CreateMessage =
       kind: 'error';
       error: string;
       unsupportedStack?: boolean;
+      failureCode?: string;
+      setupRequired?: boolean;
+      retryable?: boolean;
+      retryPlan?: CreationPlan;
     };
 
 export type CreateSessionStatus = 'planning' | 'ready' | 'running' | 'done' | 'error';

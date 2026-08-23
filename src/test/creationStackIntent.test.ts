@@ -18,7 +18,9 @@ describe('creationStackIntent', () => {
   it('detects polyglot intent when frontend and backend are both mentioned', () => {
     const prompt = 'full-stack saas with next.js frontend and nestjs api';
     expect(inferStackIntentFromPrompt(prompt)).toBe('polyglot');
-    expect(inferWorkspaceProfileFromCreationPrompt('nextjs', prompt)).toBe('polyglot');
+    expect(inferWorkspaceProfileFromCreationPrompt('nextjs', prompt, undefined, 'nestjs')).toBe(
+      'node-only'
+    );
   });
 
   it('maps explicit stack lanes to sensible defaults', () => {
@@ -61,9 +63,27 @@ describe('creationStackIntent', () => {
   it('prefers polyglot over governance-only enterprise cues when both stacks are mentioned', () => {
     const prompt = 'governance portal with next.js frontend and nestjs api';
     expect(inferStackIntentFromPrompt(prompt.toLowerCase())).toBe('polyglot');
-    expect(inferWorkspaceProfileFromCreationPrompt('nextjs', prompt.toLowerCase())).toBe(
-      'polyglot'
+    expect(
+      inferWorkspaceProfileFromCreationPrompt('nextjs', prompt.toLowerCase(), undefined, 'nestjs')
+    ).toBe('node-only');
+  });
+
+  it('uses polyglot only when full-stack projects cross runtime families', () => {
+    const prompt = 'Build a full-stack shop with an API and frontend';
+    expect(
+      inferWorkspaceProfileFromCreationPrompt('nextjs', prompt.toLowerCase(), undefined, 'fastapi')
+    ).toBe('polyglot');
+    expect(
+      inferWorkspaceProfileFromCreationPrompt('nextjs', prompt.toLowerCase(), undefined, 'nestjs')
+    ).toBe('node-only');
+  });
+
+  it('defaults delegated full-stack backend selection to the host Node runtime', () => {
+    const companion = inferPolyglotCompanionProject(
+      'Build a full-stack shop with an API and frontend',
+      'nextjs'
     );
+    expect(companion?.framework).toBe('nestjs');
   });
 
   it('does not force ambiguous product-domain prompts into full-stack', () => {

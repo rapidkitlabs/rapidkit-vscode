@@ -803,7 +803,7 @@ describe('welcomePanelDoctorEvidenceWatcher', () => {
     );
 
     expect(source).toContain('export function registerWelcomePanelDoctorEvidenceWatcher');
-    expect(source).toContain("const REPORT_GLOB = '{.workspai,.rapidkit}/reports/**/*.json'");
+    expect(source).toContain("const GOVERNED_EVIDENCE_GLOB = '{.workspai,.rapidkit}/**/*'");
     expect(source).toContain('new vscode.RelativePattern');
     expect(source).toContain('watcher.onDidDelete(onFileSystemEvent)');
     expect(welcomePanelSource).toContain('registerWelcomePanelDoctorEvidenceWatcher');

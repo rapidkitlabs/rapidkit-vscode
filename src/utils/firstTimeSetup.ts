@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { run } from './exec';
 import { Logger } from './logger';
 import { buildNpxRapidkitArgs } from './platformCapabilities';
-import { resolveLinkedCliVersion } from '../core/cliVersionGate';
+import { resolveActiveWorkspaiRuntimeVersion } from '../core/cliVersionGate';
 
 /**
  * Check if this is user's first time using Workspai extension
@@ -15,9 +15,9 @@ import { resolveLinkedCliVersion } from '../core/cliVersionGate';
 export async function isFirstTimeSetup(): Promise<boolean> {
   const logger = Logger.getInstance();
 
-  const linkedVersion = await resolveLinkedCliVersion();
-  if (linkedVersion) {
-    logger.debug(`Workspai CLI detected for first-time setup: ${linkedVersion}`);
+  const activeRuntimeVersion = await resolveActiveWorkspaiRuntimeVersion();
+  if (activeRuntimeVersion) {
+    logger.debug(`Active Workspai runtime detected for first-time setup: ${activeRuntimeVersion}`);
     return false;
   }
 
@@ -85,7 +85,7 @@ export function getFirstTimeProgressMessage(
   stage: 'download' | 'venv' | 'core' | 'validate'
 ): string {
   const messages = {
-    download: 'Downloading Workspai CLI from npm (first time only)...',
+    download: 'Verifying the bundled Workspai CLI runtime...',
     venv: 'Creating Python virtual environment...',
     core: 'Installing RapidKit Core engine (this may take a minute)...',
     validate: 'Validating workspace setup...',

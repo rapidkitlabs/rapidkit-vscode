@@ -5,12 +5,11 @@
       "name": "Run Extension",
       "type": "extensionHost",
       "request": "launch",
-      "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}"
-      ],
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "env": {
+        "WORKSPAI_ALLOW_LOCAL_CLI_CANDIDATE": "1"
+      },
       "preLaunchTask": "${defaultBuildTask}"
     },
     {
@@ -21,9 +20,10 @@
         "--extensionDevelopmentPath=${workspaceFolder}",
         "--extensionTestsPath=${workspaceFolder}/dist/test/suite/index"
       ],
-      "outFiles": [
-        "${workspaceFolder}/dist/test/**/*.js"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/test/**/*.js"],
+      "env": {
+        "WORKSPAI_ALLOW_LOCAL_CLI_CANDIDATE": "1"
+      },
       "preLaunchTask": "${defaultBuildTask}"
     }
   ]

@@ -12,6 +12,7 @@ import {
 import { compareSemver, MIN_RAPIDKIT_CLI_VERSION } from './cliVersionPolicy.js';
 import { redactLocalPathsForConsumer } from './consumerPathRedaction.js';
 import { summarizeStudioRepairMessage } from './studioRepairPresentation.js';
+import { resolveBundledCliRuntime } from './bundledCliRuntime.js';
 
 const CLI_OPERATION_SCHEMA = 'workspai-cli-operation-result-v1';
 const REPAIR_PROPOSAL_SCHEMA = 'workspai.workspace-repair-proposal.v1';
@@ -370,9 +371,10 @@ type WorkspaiCliEntrypoint = {
   version: string;
   packageRoot: string;
   entrypoint: string;
-  source: InstalledNpmPackageMetadata['source'];
+  source: InstalledNpmPackageMetadata['source'] | 'bundled';
   nodeExecutables: string[];
   nodeExecutable?: string;
+  runtimeEnv?: NodeJS.ProcessEnv;
   protocolVersion?: typeof REPAIR_CONSUMER_PROTOCOL;
   features?: {
     registeredLinkedProjectMutationBoundary: boolean;
@@ -568,6 +570,18 @@ async function resolveInstalledWorkspaiCliCandidates(input: {
   workspacePath: string;
   installedPackages?: InstalledNpmPackageMetadata[];
 }): Promise<WorkspaiCliEntrypoint[]> {
+  const bundledRuntime = resolveBundledCliRuntime();
+  const bundledCandidate: WorkspaiCliEntrypoint | undefined = bundledRuntime
+    ? {
+        version: bundledRuntime.version,
+        packageRoot: bundledRuntime.root,
+        entrypoint: bundledRuntime.entry,
+        source: 'bundled',
+        nodeExecutables: [bundledRuntime.command],
+        nodeExecutable: bundledRuntime.command,
+        runtimeEnv: bundledRuntime.env,
+      }
+    : undefined;
   const installed = (
     input.installedPackages ??
     discoverInstalledNpmPackages('workspai', { cwd: input.workspacePath })
@@ -580,7 +594,7 @@ async function resolveInstalledWorkspaiCliCandidates(input: {
       return compareSemver(right.version, left.version);
     });
 
-  const candidates: WorkspaiCliEntrypoint[] = [];
+  const candidates: WorkspaiCliEntrypoint[] = bundledCandidate ? [bundledCandidate] : [];
   const candidateByEntrypoint = new Map<string, WorkspaiCliEntrypoint>();
   for (const candidate of installed) {
     try {
@@ -647,7 +661,10 @@ const defaultCliRunner: CliRunner = async ({ entrypoint, workspacePath, args, ti
     cwd: workspacePath,
     timeout: timeoutMs,
     shell: false,
-    env: buildWorkspaiCliRuntimeEnv({ nodeExecutable }),
+    env: {
+      ...buildWorkspaiCliRuntimeEnv({ nodeExecutable }),
+      ...entrypoint.runtimeEnv,
+    },
   });
   return {
     exitCode: result.exitCode ?? 1,
@@ -1208,30 +1225,45 @@ export async function hydrateStudioRepairEventFileChanges<
   }
   const cache = input.fileChangeCache;
   let fileChanges = cache?.get(transactionId);
+  let authoritativeTransaction: WorkspaceRepairCliTransaction | undefined;
+  try {
+    authoritativeTransaction = await readCliOwnedRepairById({
+      workspacePath: input.workspacePath,
+      transactionId,
+    });
+  } catch {
+    authoritativeTransaction = undefined;
+  }
   if (!fileChanges) {
-    try {
-      const loaded = await readCliOwnedRepairById({
-        workspacePath: input.workspacePath,
-        transactionId,
-      });
+    if (authoritativeTransaction) {
       fileChanges = await readCliOwnedRepairFileChanges({
         workspacePath: input.workspacePath,
-        transaction: loaded,
+        transaction: authoritativeTransaction,
       });
-    } catch {
+    } else {
       fileChanges = [];
     }
     cache?.set(transactionId, fileChanges);
   }
-  if (fileChanges.length === 0) {
+  if (fileChanges.length === 0 && !authoritativeTransaction) {
     return input.event;
   }
+  const projectedTransaction = authoritativeTransaction
+    ? {
+        ...(transaction ?? {}),
+        transactionId: authoritativeTransaction.transactionId,
+        state: authoritativeTransaction.state,
+        verification: authoritativeTransaction.verification,
+        decision: authoritativeTransaction.decision,
+      }
+    : transaction;
   return {
     ...input.event,
     data: {
       ...(data ?? {}),
       output: {
         ...(output ?? {}),
+        ...(projectedTransaction ? { transaction: projectedTransaction } : {}),
         fileChanges,
       },
     },

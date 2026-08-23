@@ -146,11 +146,7 @@
   }
 
   .tagline--inline {
-    font-size: 9px;
-    line-height: 1.15;
-    white-space: nowrap;
-    letter-spacing: 0.01em;
-    opacity: 0.88;
+    display: none;
   }
 
   .workspai-top-bar {
@@ -1156,7 +1152,7 @@
   }
 
   .ws-card {
-    @apply rounded-md cursor-pointer transition-all;
+    @apply rounded-md transition-all;
     background: transparent;
     border: 1px solid var(--vscode-panel-border);
     min-width: 0;
@@ -1197,6 +1193,73 @@
   .ws-name-row .ws-name {
     min-width: 0;
     flex: 1;
+  }
+
+  .ws-workspace-open {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 4px 2px 0;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+  }
+
+  .ws-workspace-open:hover .ws-name {
+    color: var(--vscode-textLink-foreground);
+  }
+
+  .ws-workspace-open:disabled {
+    cursor: default;
+    opacity: 0.65;
+  }
+
+  .ws-workspace-actions {
+    position: relative;
+    flex: 0 0 auto;
+  }
+
+  .ws-workspace-actions > summary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .ws-workspace-actions > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .ws-workspace-actions > summary:hover,
+  .ws-workspace-actions[open] > summary {
+    background: var(--vscode-toolbar-hoverBackground);
+    color: var(--vscode-foreground);
+  }
+
+  .ws-workspace-actions__menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 5px;
+    border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+    border-radius: 7px;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+    box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+  }
+
+  .ws-inline-action--remove {
+    color: var(--vscode-errorForeground);
   }
 
   .ws-inline-action {
@@ -3145,10 +3208,6 @@
       font-size: 11px;
     }
 
-    .header--inline .tagline--inline {
-      font-size: 8.5px;
-    }
-
     .workspai-view-tab-label--setup {
       max-width: 7rem;
     }
@@ -3166,14 +3225,16 @@
 
   .ws-dashboard-sub-nav {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 6px;
+    gap: 3px;
     border: 1px solid var(--vscode-panel-border);
     border-radius: 10px;
-    padding: 4px;
+    padding: 3px;
     margin: 0;
     background: color-mix(in srgb, var(--vscode-editor-background) 96%, transparent);
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   .ws-dashboard-sticky-chrome {
@@ -3181,8 +3242,8 @@
     top: 0;
     z-index: 8;
     display: grid;
-    gap: 8px;
-    margin: 0 0 10px;
+    gap: 5px;
+    margin: 0 0 7px;
     padding-bottom: 2px;
     background: color-mix(in srgb, var(--vscode-editor-background) 98%, transparent);
     box-shadow: 0 1px 0 color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
@@ -3223,8 +3284,8 @@
     min-width: 0;
     border: 1px solid transparent;
     border-radius: 7px;
-    padding: 5px 10px;
-    font-size: 10.5px;
+    padding: 6px 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.02em;
     line-height: 1;
@@ -7224,7 +7285,9 @@
     padding: 10px 12px;
     flex-wrap: wrap;
     border-radius: var(--workspai-radius-md, 7px);
-    transition: border-color 0.12s ease, background 0.12s ease;
+    transition:
+      border-color 0.12s ease,
+      background 0.12s ease;
   }
 
   .workspai-action-tile--full {

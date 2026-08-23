@@ -13,6 +13,13 @@ npm run check:local-paths:staged || {
 	exit 1
 }
 
+echo "🔗 Validating the canonical CLI release policy..."
+npm run check:cli-release-policy || {
+	echo "❌ Workspai CLI version projections are out of sync."
+	echo "   Update contracts/extension-cli-release-policy.v1.json, then run npm run sync:cli-release-policy."
+	exit 1
+}
+
 # Shared contracts (canonical: workspai/packages/cli/contracts/)
 echo "📋 Validating shared contracts..."
 npm run validate:contracts || {

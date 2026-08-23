@@ -7,8 +7,11 @@ import {
   isBackendScaffoldFramework,
   isFrontendScaffoldKit,
   resolveFrontendKitDefinition,
+  scaffoldRuntimeForFramework,
   SCAFFOLD_KIT_IDS,
+  workspacePythonEngineForKit,
 } from '../core/scaffoldKits';
+import createContract from '../contracts/create-planner-capabilities.v1.json';
 
 describe('scaffold kits', () => {
   it('includes all canonical frontend kits from the runtime command surface contract', () => {
@@ -32,6 +35,20 @@ describe('scaffold kits', () => {
     expect(isBackendScaffoldFramework('vite-vue')).toBe(false);
     expect(isBackendScaffoldFramework('rust')).toBe(true);
     expect(isBackendScaffoldFramework('laravel')).toBe(true);
+  });
+
+  it('derives executable kits, runtimes, and engine ownership from the CLI contract', () => {
+    const contractedKits = [
+      ...createContract.nativeCreate.map((entry) => entry.id),
+      ...createContract.officialCreate
+        .filter((entry) => entry.canExecuteCreate)
+        .map((entry) => entry.id),
+    ];
+    expect(SCAFFOLD_KIT_IDS).toEqual(contractedKits);
+    expect(scaffoldRuntimeForFramework('nextjs')).toBe('node');
+    expect(workspacePythonEngineForKit('fastapi.standard')).toBe('required');
+    expect(workspacePythonEngineForKit('nestjs.standard')).toBe('optional');
+    expect(workspacePythonEngineForKit('frontend.nextjs')).toBe('none');
   });
 
   it('keeps the webview enterprise dashboard aligned with eleven frontend starters', () => {

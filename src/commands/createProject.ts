@@ -308,12 +308,18 @@ export async function createProjectCommand(
         featureLabel: 'Create Frontend Project',
       });
       if (!versionAllowed) {
+        if (options?.silent) {
+          throw new Error('The active Workspai runtime is not compatible with frontend creation.');
+        }
         return;
       }
       const allowed = await gateCreateFrontendCli('Create Frontend Project', {
         cwd: outputParentAbs,
       });
       if (!allowed) {
+        if (options?.silent) {
+          throw new Error('The active Workspai runtime does not support frontend creation.');
+        }
         return;
       }
     }
@@ -457,7 +463,7 @@ export async function createProjectCommand(
             runCommandsInTerminal({
               name: `Workspai - ${config.name}`,
               cwd: projectPath,
-              commands: ['# Run: rapidkit init && rapidkit dev'],
+              commands: ['# Run: workspai init && workspai dev'],
             });
           } else if (selected === addModulesAction) {
             await vscode.commands.executeCommand('workspai.addModule', projectPath);

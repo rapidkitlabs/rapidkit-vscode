@@ -1,4 +1,4 @@
-import { ClipboardCheck } from 'lucide-react';
+import { ChevronRight, ClipboardCheck } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { EvidenceCardActions } from '@/components/EvidenceCardActions';
 import { EvidenceCardLogDrawer } from '@/components/EvidenceCardLogDrawer';
@@ -67,6 +67,11 @@ const MODE_LABELS: Record<RepairMode, string> = {
 };
 
 const REPAIR_MODE_STORAGE_KEY = 'workspai.dashboard.repairMode';
+const DERIVED_EXPLANATION_CARD_IDS = new Set<DashboardEvidenceCardId>([
+  'workspaceExplain',
+  'workspaceWhy',
+  'workspaceTrace',
+]);
 
 function normalizeRepairMode(value: string | null | undefined): RepairMode | null {
   return value === 'guided' || value === 'inspect' || value === 'audit' ? value : null;
@@ -102,6 +107,12 @@ function isActionableCard(
   card: DashboardEvidenceCard,
   workspaceProjectCount: number | null
 ): boolean {
+  // Explain, Why, and Trace describe blockers owned by canonical producer
+  // cards. They remain available under Artifacts but must not duplicate the
+  // same root cause in the Repair queue.
+  if (DERIVED_EXPLANATION_CARD_IDS.has(card.id)) {
+    return false;
+  }
   const bucket = resolveEvidenceAttentionBucket(card, workspaceProjectCount);
   return bucket === 'blocked' || bucket === 'attention' || bucket === 'missing';
 }
@@ -126,23 +137,24 @@ export function selectRepairVisibleCards(
   mode: RepairMode,
   workspaceProjectCount: number | null
 ): DashboardEvidenceCard[] {
+  const repairCards = cards.filter((card) => isActionableCard(card, workspaceProjectCount));
   if (mode === 'audit') {
-    return cards;
+    return repairCards;
   }
 
-  const blockedCards = cards.filter(
+  const blockedCards = repairCards.filter(
     (card) => resolveEvidenceAttentionBucket(card, workspaceProjectCount) === 'blocked'
   );
   if (mode === 'inspect') {
-    return cards.slice(0, Math.max(8, blockedCards.length));
+    return repairCards.slice(0, Math.max(8, blockedCards.length));
   }
 
   const visibleIds = new Set<DashboardEvidenceCardId>([
     ...(activeCard ? [activeCard.id] : []),
     ...blockedCards.map((card) => card.id),
-    ...cards.slice(0, 3).map((card) => card.id),
+    ...repairCards.slice(0, 3).map((card) => card.id),
   ]);
-  return cards.filter((card) => visibleIds.has(card.id));
+  return repairCards.filter((card) => visibleIds.has(card.id));
 }
 
 function chooseActiveCard(
@@ -371,9 +383,28 @@ function RepairStackCard({
           className="repair-flow__card-select"
           onClick={onSelect}
           disabled={!onSelect}
-          title={onSelect ? `Focus ${card.label}` : undefined}
+          aria-pressed={selected}
+          aria-label={
+            selected ? `Active repair card: ${card.label}` : `Select repair card: ${card.label}`
+          }
+          title={
+            onSelect
+              ? selected
+                ? `${card.label} is the active repair card`
+                : `Make ${card.label} the active repair card`
+              : undefined
+          }
         >
-          {card.label}
+          <span className="repair-flow__card-select-label">{card.label}</span>
+          {onSelect ? (
+            <span
+              className={`repair-flow__card-select-cue${selected ? ' is-active' : ''}`}
+              aria-hidden="true"
+            >
+              {selected ? 'Active' : 'Open'}
+              <ChevronRight size={11} />
+            </span>
+          ) : null}
         </button>
         <span className={`repair-flow__status repair-flow__status--${tone}`}>
           {refreshPending
@@ -386,9 +417,7 @@ function RepairStackCard({
       <p className="repair-flow__card-issue">{copy.issue}</p>
       <small className="repair-flow__card-guidance">
         {copy.guidance}
-        {copy.remainingFindingCount > 0
-          ? ` ${copy.remainingFindingCount} more related finding${copy.remainingFindingCount === 1 ? '' : 's'}.`
-          : ''}
+        {copy.remainingFindingCount > 0 ? ` +${copy.remainingFindingCount} related.` : ''}
       </small>
       <div className="repair-flow__card-actions">
         <EvidenceCardActions
@@ -559,9 +588,7 @@ function RepairActiveCard({
         <p className="repair-flow__active-issue">{copy.issue}</p>
         <small className="repair-flow__active-guidance">
           {copy.guidance}
-          {copy.remainingFindingCount > 0
-            ? ` ${copy.remainingFindingCount} more related finding${copy.remainingFindingCount === 1 ? '' : 's'}.`
-            : ''}
+          {copy.remainingFindingCount > 0 ? ` +${copy.remainingFindingCount} related.` : ''}
         </small>
         <div className="repair-flow__active-meta">
           <small>
@@ -655,26 +682,40 @@ export function DashboardRepairFlow({
 }: DashboardRepairFlowProps) {
   const [mode, setMode] = useState<RepairMode>(initialRepairMode);
   const [selectedCardId, setSelectedCardId] = useState<DashboardEvidenceCardId | null>(null);
-  const cards = evidence?.cards ?? [];
+  const repairEvidence = useMemo(
+    () =>
+      evidence
+        ? {
+            ...evidence,
+            cards: evidence.cards.filter((card) => !DERIVED_EXPLANATION_CARD_IDS.has(card.id)),
+          }
+        : evidence,
+    [evidence]
+  );
+  const repairCards = repairEvidence?.cards ?? [];
   const workspaceProjectCount = resolveWorkspaceProjectCountFromEvidence(evidence);
-  const steps = buildEvidenceGuidedSteps({ evidence, hasProject });
-  const brief = buildDashboardEvidenceBrief({ evidence, hasWorkspace, hasProject });
+  const steps = buildEvidenceGuidedSteps({ evidence: repairEvidence, hasProject });
+  const brief = buildDashboardEvidenceBrief({
+    evidence: repairEvidence,
+    hasWorkspace,
+    hasProject,
+  });
   const actionableCards = useMemo(
     () =>
-      cards
+      repairCards
         .filter((card) => isActionableCard(card, workspaceProjectCount))
         .sort(
           (a, b) => cardPriority(a, workspaceProjectCount) - cardPriority(b, workspaceProjectCount)
         ),
-    [cards, workspaceProjectCount]
+    [repairCards, workspaceProjectCount]
   );
   const selectedCard = selectedCardId
     ? actionableCards.find((card) => card.id === selectedCardId)
     : undefined;
   const activeCard = chooseActiveCard(
-    cards,
+    repairCards,
     brief.currentStep,
-    evidence,
+    repairEvidence,
     selectedCard ?? brief.primaryCard,
     workspaceProjectCount
   );
@@ -783,7 +824,8 @@ export function DashboardRepairFlow({
               {mode === 'guided' ? 'Next blockers' : 'Evidence stack'}
             </span>
             <small>
-              Showing {queueCards.length} of {Math.max(actionableCards.length - 1, 0)} queued cards
+              Select a card title to make it active · Showing {queueCards.length} of{' '}
+              {Math.max(actionableCards.length - 1, 0)} queued cards
             </small>
           </div>
           {mode === 'inspect' ? (

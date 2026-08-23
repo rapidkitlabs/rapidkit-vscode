@@ -7,6 +7,7 @@ import { normalizeWebviewMessage } from '../../contracts/webviewProtocol';
 export type ActionsWebviewMessageDispatchHost = {
   runInlineAICreatePlan: (data: unknown) => Promise<void>;
   runInlineAICreateConfirm: (data: unknown) => Promise<void>;
+  cancelInlineAICreatePlan: (data: unknown) => Promise<void>;
   runSidebarManualCreate: (data: unknown) => Promise<void>;
   runSidebarCreatedWorkspaceBootstrap: (data: unknown) => Promise<void>;
   runInlineImpactQuery: (data: unknown) => Promise<void>;
@@ -19,6 +20,7 @@ export type ActionsWebviewMessageDispatchHost = {
   openWorkspaceDiff: (data: unknown) => Promise<void>;
   reviewWorkspaceChanges: (data: unknown) => Promise<void>;
   undoAgentPatch: (data: unknown) => Promise<void>;
+  openSetup: () => Promise<void>;
   sendInlineScope: () => Promise<void>;
   sendInlineModels: () => Promise<void>;
   setPreferredModel: (modelId: string) => Promise<void>;
@@ -45,6 +47,10 @@ const ACTIONS_WEBVIEW_MESSAGE_LANES: readonly ActionsWebviewMessageLane[] = [
   {
     command: 'sidebarAiCreateConfirm',
     dispatch: (host, data) => host.runInlineAICreateConfirm(data),
+  },
+  {
+    command: 'sidebarCancelCreatePlanning',
+    dispatch: (host, data) => host.cancelInlineAICreatePlan(data),
   },
   {
     command: 'sidebarManualCreate',
@@ -93,6 +99,10 @@ const ACTIONS_WEBVIEW_MESSAGE_LANES: readonly ActionsWebviewMessageLane[] = [
   {
     command: 'sidebarStudioUndoPatch',
     dispatch: (host, data) => host.undoAgentPatch(data),
+  },
+  {
+    command: 'sidebarOpenSetup',
+    dispatch: (host) => host.openSetup(),
   },
   {
     command: 'sidebarRefreshScope',

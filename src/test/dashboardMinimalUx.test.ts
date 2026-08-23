@@ -537,6 +537,7 @@ describe('dashboard minimal UX guard', () => {
   it('keeps archive evidence cards readable instead of disabled pseudo-actions', () => {
     const source = read('webview-ui/src/components/CommandActivityPanel.tsx');
     const styles = read('webview-ui/src/styles-tailwind.css');
+    const primitives = read('webview-ui/src/styles/workspai-primitives.css');
 
     expect(source).toContain('command-activity-panel--${viewMode}');
     expect(source).toContain('Generated evidence and its current posture');
@@ -545,6 +546,22 @@ describe('dashboard minimal UX guard', () => {
     expect(styles).toContain('.command-activity-panel__card-main--static');
     expect(styles).toContain('.command-activity-panel--expanded .command-activity-panel__evidence');
     expect(styles).toContain(".ws-dashboard-evidence-layout[data-evidence-view='balanced']");
+    expect(primitives).toContain('container-name: evidence-archive');
+    expect(primitives).toContain("'identity detail'");
+    expect(primitives).toContain('@container evidence-archive (max-width: 680px)');
+    expect(primitives).toContain('grid-area: actions');
+    expect(primitives).toContain('.evidence-card-actions__run-label');
+  });
+
+  it('makes queued repair-card selection explicit and keyboard-visible', () => {
+    const repairFlow = read('webview-ui/src/components/DashboardRepairFlow.tsx');
+    const primitives = read('webview-ui/src/styles/workspai-primitives.css');
+
+    expect(repairFlow).toContain('aria-pressed={selected}');
+    expect(repairFlow).toContain("selected ? 'Active' : 'Open'");
+    expect(repairFlow).toContain('Select a card title to make it active');
+    expect(primitives).toContain('.repair-flow__card-select:focus-visible');
+    expect(primitives).toContain('.repair-flow__card-select-cue.is-active');
   });
 
   it('keeps evidence cards to one Studio handoff path per card', () => {
@@ -636,7 +653,7 @@ describe('dashboard minimal UX guard', () => {
     expect(styles).toContain('.ws-dashboard-context-bar__trail');
     expect(styles).toContain('.ws-dashboard-context-bar__scope--workspace');
     expect(styles).toContain('.ws-dashboard-context-bar__scope--project');
-    expect(styles).toContain('min-height: 58px');
+    expect(styles).toContain('min-height: 42px');
   });
 
   it('shows governance chain banner only on Run workspace tab', () => {
@@ -726,7 +743,9 @@ describe('dashboard minimal UX guard', () => {
     expect(read('webview-ui/src/App.tsx')).toContain('scope={dashboardScope}');
     expect(read('src/extension.ts')).toContain('refreshStatusBarAmbientTruth(selectedWorkspace)');
     expect(read('src/extension.ts')).toContain('refreshStatusBarAmbientTruth(initialWs)');
-    expect(read('src/extension.ts')).toContain('resolveLinkedCliVersion(workspace.path)');
+    expect(read('src/extension.ts')).toContain(
+      'resolveActiveWorkspaiRuntimeVersion(workspace.path)'
+    );
     expect(read('webview-ui/src/components/DashboardRepairFlow.tsx')).toContain(
       'scope: DashboardScopeDescriptor'
     );
@@ -1094,6 +1113,15 @@ describe('dashboard minimal UX guard', () => {
     expect(subNav).toContain('templateCount');
     expect(subNav).toContain('workspace templates');
     expect(subNav).not.toContain('recentWorkspaceCount');
+    expect(subNav).not.toContain('ws-dashboard-sub-nav__scope');
+  });
+
+  it('keeps recent workspaces keyboard-safe with one primary action and an overflow menu', () => {
+    const recent = read('webview-ui/src/components/RecentWorkspaces.tsx');
+
+    expect(recent).toContain('ws-workspace-open');
+    expect(recent).toContain('ws-workspace-actions__menu');
+    expect(recent).not.toContain('role="button"');
   });
 
   it('keeps Home overview rendering extracted from the dashboard app shell', () => {

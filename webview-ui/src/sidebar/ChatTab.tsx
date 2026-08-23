@@ -32,6 +32,7 @@ interface ChatTabProps {
   toolbar?: ReactNode;
   headerChrome?: ReactNode;
   streamChrome?: ReactNode;
+  composerBanner?: ReactNode;
   footerActions?: ReactNode;
   onRunCommand?: (command: string) => void;
   onCopyCommand?: (command: string) => void;
@@ -244,6 +245,10 @@ export function ChatTab(props: ChatTabProps) {
             </button>
           </div>
         </div>
+      ) : null}
+
+      {props.composerBanner ? (
+        <div className="ws-sidebar__composer-banner">{props.composerBanner}</div>
       ) : null}
 
       <ComposerShell

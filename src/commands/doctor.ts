@@ -13,6 +13,7 @@ import { getPoetryVersion } from '../utils/poetryHelper';
 import { checkPythonEnvironment } from '../utils/pythonChecker';
 import { run } from '../utils/exec';
 import { WorkspaiCLI } from '../core/rapidkitCLI';
+import { resolveBundledCliRuntime } from '../core/bundledCliRuntime';
 import {
   formatRapidkitNpmVersionLabel,
   normalizeRapidkitNpmVersion,
@@ -305,14 +306,17 @@ async function runSystemChecks(
   // Check the Workspai npm package - distinguish global vs npx cache.
   try {
     let isGlobal = false;
-    let version: string | null = null;
+    const bundledRuntime = resolveBundledCliRuntime();
+    let version: string | null = bundledRuntime?.version ?? null;
 
-    try {
-      const direct = await run('workspai', ['--version'], { stdio: 'pipe', timeout: 5000 });
-      version = normalizeRapidkitNpmVersion(direct.stdout);
-      isGlobal = !!version;
-    } catch {
-      // Not globally available from extension host PATH.
+    if (!version) {
+      try {
+        const direct = await run('workspai', ['--version'], { stdio: 'pipe', timeout: 5000 });
+        version = normalizeRapidkitNpmVersion(direct.stdout);
+        isGlobal = !!version;
+      } catch {
+        // Not globally available from extension host PATH.
+      }
     }
 
     if (!version) {
@@ -324,36 +328,46 @@ async function runSystemChecks(
     }
 
     let npmMessage = formatRapidkitNpmVersionLabel(version);
-    if (isGlobal) {
+    if (bundledRuntime) {
+      npmMessage += ' (bundled and integrity verified)';
+    } else if (isGlobal) {
       npmMessage += ' (globally installed)';
     } else {
-      npmMessage += ' (npx cache only)';
+      npmMessage += ' (development npm fallback)';
     }
 
-    // Check for newer version
-    try {
-      const data = await fetchJson<{ version?: string }>(
-        'https://registry.npmjs.org/workspai/latest'
-      );
-      const latestVersion = data.version;
-      if (typeof latestVersion === 'string' && isNewerVersion(version, latestVersion)) {
-        npmMessage += ` → v${latestVersion} available`;
+    // A bundled runtime is versioned with the extension. A separately updated
+    // global CLI cannot replace it, so registry checks only apply to fallback
+    // development installations.
+    if (!bundledRuntime) {
+      try {
+        const data = await fetchJson<{ version?: string }>(
+          'https://registry.npmjs.org/workspai/latest'
+        );
+        const latestVersion = data.version;
+        if (typeof latestVersion === 'string' && isNewerVersion(version, latestVersion)) {
+          npmMessage += ` → v${latestVersion} available`;
+        }
+      } catch {
+        // Silently fail version check
       }
-    } catch {
-      // Silently fail version check
     }
 
     result.checks.push({
       name: 'Workspai CLI',
-      status: isGlobal ? 'pass' : 'fail',
-      message: npmMessage + (isGlobal ? '' : ' - global installation recommended'),
+      status: bundledRuntime || isGlobal ? 'pass' : 'warning',
+      message:
+        npmMessage +
+        (bundledRuntime || isGlobal
+          ? ''
+          : ' - packaged extension operations require the verified bundled runtime'),
     });
   } catch {
     result.passed = false;
     result.checks.push({
       name: 'Workspai CLI',
       status: 'fail',
-      message: 'Not found - install globally or ensure npx can resolve rapidkit',
+      message: 'Verified runtime unavailable - reinstall the Workspai extension',
     });
   }
 

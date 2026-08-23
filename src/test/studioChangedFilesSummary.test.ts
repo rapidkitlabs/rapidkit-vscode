@@ -17,6 +17,7 @@ function progress(input: {
     status: 'done',
     title: 'Applied source edit',
     summary: 'Applied source edit',
+    ...(input.transactionId && !input.transactionState ? { transactionState: 'closed' } : {}),
     ...input,
   };
 }
@@ -172,6 +173,19 @@ describe('studio changed files summary', () => {
     expect(summary.files).toEqual([]);
     expect(summary.undoTransactionId).toBeUndefined();
     expect(summary.transactionCount).toBe(0);
+  });
+
+  it('does not expose an intermediate applied transaction as reviewable or undoable', () => {
+    const summary = buildStudioChangedFilesSummary([
+      progress({
+        transactionId: 'transaction-pending',
+        transactionState: 'executing',
+        fileChanges: [{ relativePath: 'src/pending.ts', status: 'modified', addedLines: 1 }],
+      }),
+    ]);
+
+    expect(summary.files).toEqual([]);
+    expect(summary.undoTransactionId).toBeUndefined();
   });
 
   it('parses host line numbers and totals into the progress view', () => {

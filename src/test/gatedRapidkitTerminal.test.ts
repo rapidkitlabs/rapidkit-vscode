@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { executeCommandMock, showWarningMock, terminalMock, gateMock } = vi.hoisted(() => ({
-  executeCommandMock: vi.fn(),
-  showWarningMock: vi.fn(),
-  terminalMock: vi.fn(),
-  gateMock: vi.fn(),
-}));
+const { executeCommandMock, showErrorMock, showWarningMock, terminalMock, gateMock } = vi.hoisted(
+  () => ({
+    executeCommandMock: vi.fn(),
+    showErrorMock: vi.fn(),
+    showWarningMock: vi.fn(),
+    terminalMock: vi.fn(),
+    gateMock: vi.fn(),
+  })
+);
 
 vi.mock('vscode', () => ({
   commands: {
     executeCommand: executeCommandMock,
   },
   window: {
+    showErrorMessage: showErrorMock,
     showWarningMessage: showWarningMock,
   },
 }));
@@ -29,6 +33,7 @@ import { runGatedRapidkitCommandsInTerminal } from '../core/gatedRapidkitTermina
 describe('runGatedRapidkitCommandsInTerminal', () => {
   beforeEach(() => {
     executeCommandMock.mockReset();
+    showErrorMock.mockReset();
     showWarningMock.mockReset();
     terminalMock.mockReset();
     gateMock.mockReset();
@@ -72,5 +77,22 @@ describe('runGatedRapidkitCommandsInTerminal', () => {
     expect(terminalMock).not.toHaveBeenCalled();
     expect(showWarningMock).toHaveBeenCalledWith('Workspace Verify is blocked.', 'Open Setup');
     expect(executeCommandMock).toHaveBeenCalledWith('workspai.openSetup');
+  });
+
+  it('fails closed without an unhandled rejection when runtime validation throws', async () => {
+    gateMock.mockRejectedValueOnce(new Error('Bundled runtime integrity check failed.'));
+
+    const ran = await runGatedRapidkitCommandsInTerminal({
+      name: 'Workspace Doctor',
+      cwd: '/tmp/ws',
+      commands: [['doctor', 'workspace']],
+    });
+
+    expect(ran).toBe(false);
+    expect(terminalMock).not.toHaveBeenCalled();
+    expect(showErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining('active Workspai runtime could not be validated'),
+      'Open Setup'
+    );
   });
 });

@@ -167,6 +167,7 @@ export async function runRapidkitStreaming<T = unknown>(
   const execution = buildRapidkitExecutionSpec([...options.command]);
   const env: NodeJS.ProcessEnv = buildPackageRunnerSubprocessEnv({
     ...process.env,
+    ...execution.env,
     RAPIDKIT_LOG_FORMAT: 'json',
   });
 

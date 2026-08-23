@@ -2,6 +2,8 @@
  * Canonical scaffold kit surface, aligned with Workspai CLI runtime contracts.
  */
 
+import createContract from '../contracts/create-planner-capabilities.v1.json';
+
 export type BackendScaffoldFramework =
   | 'fastapi'
   | 'nestjs'
@@ -10,18 +12,6 @@ export type BackendScaffoldFramework =
   | 'dotnet'
   | 'rust'
   | 'laravel';
-
-export const BACKEND_SCAFFOLD_KIT_IDS = [
-  'fastapi.standard',
-  'fastapi.ddd',
-  'nestjs.standard',
-  'springboot.standard',
-  'gofiber.standard',
-  'gogin.standard',
-  'dotnet.webapi.clean',
-  'rust.axum',
-  'php.laravel',
-] as const;
 
 export type FrontendScaffoldFramework =
   | 'nextjs'
@@ -44,6 +34,132 @@ export type ScaffoldFramework =
   | FrontendScaffoldFramework
   | DesktopScaffoldFramework
   | ExtensionScaffoldFramework;
+
+export type ScaffoldRuntimeFamily = 'node' | 'python' | 'go' | 'java' | 'dotnet' | 'rust' | 'php';
+export type ScaffoldWorkspaceProfile =
+  | 'minimal'
+  | 'python-only'
+  | 'node-only'
+  | 'go-only'
+  | 'java-only'
+  | 'dotnet-only'
+  | 'polyglot'
+  | 'enterprise';
+
+/**
+ * Runtime ownership for every executable Create lane. This map is intentionally
+ * independent from workspace profiles: topology (one or two projects) does not
+ * imply runtime heterogeneity.
+ */
+type ContractCreateEntry = {
+  id: string;
+  category: string;
+  plannerFramework: string;
+  runtime: string;
+  runtimeCandidates?: string[];
+  canExecuteCreate?: boolean;
+  workspacePythonEngine: 'required' | 'optional' | 'none';
+};
+
+const EXECUTABLE_CREATE_ENTRIES: ContractCreateEntry[] = [
+  ...(createContract.nativeCreate as ContractCreateEntry[]),
+  ...(createContract.officialCreate as ContractCreateEntry[]).filter(
+    (entry) => entry.canExecuteCreate
+  ),
+];
+
+export const BACKEND_SCAFFOLD_KIT_IDS = EXECUTABLE_CREATE_ENTRIES.filter(
+  (entry) => entry.category === 'backend'
+).map((entry) => entry.id);
+
+export const SCAFFOLD_FRAMEWORK_RUNTIME = Object.freeze(
+  Object.fromEntries(
+    EXECUTABLE_CREATE_ENTRIES.map((entry) => [entry.plannerFramework, entry.runtime])
+  ) as Record<ScaffoldFramework, ScaffoldRuntimeFamily>
+);
+
+export function scaffoldRuntimeForFramework(framework: ScaffoldFramework): ScaffoldRuntimeFamily {
+  return SCAFFOLD_FRAMEWORK_RUNTIME[framework];
+}
+
+export function defaultWorkspaceProfileForFramework(
+  framework: ScaffoldFramework
+): ScaffoldWorkspaceProfile {
+  const runtimes = scaffoldRuntimeCandidatesForFramework(framework);
+  if (runtimes.length > 1) {
+    return 'polyglot';
+  }
+  const runtime = runtimes[0] ?? scaffoldRuntimeForFramework(framework);
+  return (
+    (
+      {
+        python: 'python-only',
+        node: 'node-only',
+        go: 'go-only',
+        java: 'java-only',
+        dotnet: 'dotnet-only',
+      } as Partial<Record<ScaffoldRuntimeFamily, ScaffoldWorkspaceProfile>>
+    )[runtime] ?? 'minimal'
+  );
+}
+
+/**
+ * Canonical executable framework-to-kit map shared by model planning,
+ * validation, and runtime execution. Consumer prompts must project this map
+ * instead of maintaining their own framework lists.
+ */
+export const SCAFFOLD_FRAMEWORK_KITS = Object.freeze(
+  EXECUTABLE_CREATE_ENTRIES.reduce<Record<string, string[]>>((entries, entry) => {
+    (entries[entry.plannerFramework] ??= []).push(entry.id);
+    return entries;
+  }, {}) as Record<ScaffoldFramework, readonly string[]>
+);
+
+const CREATE_ENTRY_BY_KIT = new Map(EXECUTABLE_CREATE_ENTRIES.map((entry) => [entry.id, entry]));
+
+export function workspacePythonEngineForKit(
+  kit: string
+): 'required' | 'optional' | 'none' | undefined {
+  return CREATE_ENTRY_BY_KIT.get(kit)?.workspacePythonEngine;
+}
+
+export function scaffoldRuntimeCandidatesForFramework(
+  framework: ScaffoldFramework
+): ScaffoldRuntimeFamily[] {
+  const entry = EXECUTABLE_CREATE_ENTRIES.find(
+    (candidate) => candidate.plannerFramework === framework
+  );
+  return [...new Set(entry?.runtimeCandidates ?? (entry ? [entry.runtime] : []))].filter(
+    (runtime): runtime is ScaffoldRuntimeFamily =>
+      runtime === 'node' ||
+      runtime === 'python' ||
+      runtime === 'go' ||
+      runtime === 'java' ||
+      runtime === 'dotnet' ||
+      runtime === 'rust' ||
+      runtime === 'php'
+  );
+}
+
+export function listExecutableScaffoldFrameworks(): ScaffoldFramework[] {
+  return Object.keys(SCAFFOLD_FRAMEWORK_KITS) as ScaffoldFramework[];
+}
+
+export function listExecutableScaffoldKits(): string[] {
+  return [...new Set(Object.values(SCAFFOLD_FRAMEWORK_KITS).flatMap((kits) => [...kits]))];
+}
+
+export function scaffoldKitsForFramework(framework: ScaffoldFramework): readonly string[] {
+  return SCAFFOLD_FRAMEWORK_KITS[framework];
+}
+
+export function defaultScaffoldKitForFramework(framework: ScaffoldFramework): string {
+  const kit = scaffoldKitsForFramework(framework)[0];
+  if (!kit) {
+    throw new Error(`No executable Workspai Create kit is contracted for ${framework}.`);
+  }
+  return kit;
+}
 
 export interface OfficialScaffoldKitDefinition<TFramework extends ScaffoldFramework> {
   kitId: string;
@@ -171,13 +287,7 @@ export const FRONTEND_SCAFFOLD_KITS: FrontendScaffoldKitDefinition[] = [
   },
 ];
 
-export const SCAFFOLD_KIT_IDS = [
-  ...BACKEND_SCAFFOLD_KIT_IDS.filter((kitId) => kitId !== 'php.laravel'),
-  ...FRONTEND_SCAFFOLD_KITS.map((kit) => kit.kitId),
-  ...DESKTOP_SCAFFOLD_KITS.map((kit) => kit.kitId),
-  ...EXTENSION_SCAFFOLD_KITS.map((kit) => kit.kitId),
-  'php.laravel',
-] as const;
+export const SCAFFOLD_KIT_IDS = EXECUTABLE_CREATE_ENTRIES.map((entry) => entry.id);
 
 export type ScaffoldKitId = (typeof SCAFFOLD_KIT_IDS)[number];
 

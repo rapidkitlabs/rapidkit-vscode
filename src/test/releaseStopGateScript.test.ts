@@ -218,14 +218,16 @@ describe('extension package build contract', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     const scripts = packageJson.scripts ?? {};
 
-    expect(scripts['vscode:prepublish']).toBe(
-      'corepack npm run check:english-text && corepack npm run check:local-paths && corepack npm run build'
-    );
+    expect(scripts['vscode:prepublish']).toBe('node scripts/vscode-prepublish.mjs');
     expect(scripts['check:english-text']).toBe('node scripts/english-text-guard.mjs --all');
     expect(scripts['check:english-text:staged']).toBe(
       'node scripts/english-text-guard.mjs --staged'
     );
-    expect(scripts.prepackage).toBe('corepack npm run build');
+    expect(scripts.prepackage).toBeUndefined();
+    expect(scripts['build:release']).toContain(
+      'corepack npm run esbuild-base:release -- --production'
+    );
+    expect(scripts['build:release']).toContain('corepack npm run check:cli-release-contracts');
     expect(scripts.build).toContain('corepack npm run esbuild-base -- --production');
     expect(scripts.build).toContain('corepack npm run webview:build:production');
     expect(scripts['webview:build:production']).toContain('corepack npm run build -- --production');

@@ -112,6 +112,7 @@ describe('actionsWebviewProvider — sidebar protocol handlers', () => {
       'sidebarAiModelsList',
       'sidebarAiScope',
       'sidebarAiCreateThinking',
+      'sidebarAiCreateGuidance',
       'sidebarAiCreatePlan',
       'sidebarAiCreateProgress',
       'sidebarAiCreateDone',

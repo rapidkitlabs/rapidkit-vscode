@@ -32,11 +32,15 @@ import {
   selectModelWithPreference as selectModelWithPreferenceInternal,
 } from './aiModelSelection';
 import {
-  frontendKitIdForFramework,
+  defaultScaffoldKitForFramework,
+  defaultWorkspaceProfileForFramework,
   isScaffoldFramework,
+  isBackendScaffoldFramework,
   isDesktopScaffoldFramework,
   isExtensionScaffoldFramework,
   isFrontendScaffoldFramework,
+  scaffoldKitsForFramework,
+  scaffoldRuntimeForFramework,
   type ScaffoldKitId,
   type ScaffoldFramework,
 } from './scaffoldKits';
@@ -49,6 +53,7 @@ import {
   inferExplicitCreationFrameworks,
   inferPolyglotCompanionProject,
   inferStackIntentFromPrompt,
+  inferWorkspaceProfileFromCreationPrompt,
 } from './creationStackIntent';
 import { getCanonicalWorkspacesDirectory } from './workspacePaths';
 import { readLanguageModelResponseText } from './languageModelResponse';
@@ -1537,37 +1542,6 @@ const VALID_PROFILES = new Set<AICreateProfile>([
   'enterprise',
 ]);
 
-const VALID_INSTALL_METHODS = new Set<AICreationPlan['installMethod']>([
-  'auto',
-  'poetry',
-  'venv',
-  'pipx',
-]);
-
-const FRAMEWORK_TO_KITS: Record<ScaffoldFramework, string[]> = {
-  fastapi: ['fastapi.standard', 'fastapi.ddd'],
-  nestjs: ['nestjs.standard'],
-  go: ['gofiber.standard', 'gogin.standard'],
-  springboot: ['springboot.standard'],
-  dotnet: ['dotnet.webapi.clean'],
-  rust: ['rust.axum'],
-  laravel: ['php.laravel'],
-  tauri: ['desktop.tauri'],
-  electron: ['desktop.electron'],
-  'vscode-extension': ['extension.vscode'],
-  nextjs: ['frontend.nextjs'],
-  remix: ['frontend.remix'],
-  'vite-react': ['frontend.vite-react'],
-  'vite-vue': ['frontend.vite-vue'],
-  'vite-svelte': ['frontend.vite-svelte'],
-  'vite-solid': ['frontend.vite-solid'],
-  'vite-vanilla': ['frontend.vite-vanilla'],
-  nuxt: ['frontend.nuxt'],
-  angular: ['frontend.angular'],
-  astro: ['frontend.astro'],
-  sveltekit: ['frontend.sveltekit'],
-};
-
 const STATIC_MODULE_SLUGS = new Set<string>([
   'free/essentials/settings',
   'free/essentials/logging',
@@ -1620,27 +1594,7 @@ function extractJSON(text: string): string {
  * Map a framework string to the default profile.
  */
 function defaultProfile(fw: ScaffoldFramework): AICreateProfile {
-  if (
-    isFrontendScaffoldFramework(fw) ||
-    fw === 'nestjs' ||
-    fw === 'electron' ||
-    fw === 'vscode-extension'
-  ) {
-    return 'node-only';
-  }
-  if (fw === 'go') {
-    return 'go-only';
-  }
-  if (fw === 'springboot') {
-    return 'java-only';
-  }
-  if (fw === 'dotnet') {
-    return 'dotnet-only';
-  }
-  if (fw === 'rust' || fw === 'tauri' || fw === 'laravel') {
-    return 'minimal';
-  }
-  return 'python-only';
+  return defaultWorkspaceProfileForFramework(fw);
 }
 
 function isCreateFramework(value: unknown): value is ScaffoldFramework {
@@ -1658,37 +1612,7 @@ function normalizeCreationFramework(value: unknown, frameworkHint?: string): Sca
 }
 
 function defaultKitForFramework(framework: ScaffoldFramework): string {
-  if (isFrontendScaffoldFramework(framework)) {
-    return frontendKitIdForFramework(framework);
-  }
-  if (framework === 'nestjs') {
-    return 'nestjs.standard';
-  }
-  if (framework === 'go') {
-    return 'gofiber.standard';
-  }
-  if (framework === 'springboot') {
-    return 'springboot.standard';
-  }
-  if (framework === 'dotnet') {
-    return 'dotnet.webapi.clean';
-  }
-  if (framework === 'rust') {
-    return 'rust.axum';
-  }
-  if (framework === 'laravel') {
-    return 'php.laravel';
-  }
-  if (framework === 'tauri') {
-    return 'desktop.tauri';
-  }
-  if (framework === 'electron') {
-    return 'desktop.electron';
-  }
-  if (framework === 'vscode-extension') {
-    return 'extension.vscode';
-  }
-  return 'fastapi.standard';
+  return defaultScaffoldKitForFramework(framework);
 }
 
 function labelCreatePlannerCapability(capability: CreatePlannerCapability): string {
@@ -1724,7 +1648,7 @@ function detectUnsupportedCreationStack(
 }
 
 function normalizeCreationKit(kit: unknown, framework: ScaffoldFramework): string {
-  if (typeof kit === 'string' && FRAMEWORK_TO_KITS[framework].includes(kit)) {
+  if (typeof kit === 'string' && scaffoldKitsForFramework(framework).includes(kit)) {
     return kit;
   }
   return defaultKitForFramework(framework);
@@ -1741,13 +1665,9 @@ export function resolveCreationProfile(profile: unknown, framework: unknown): AI
   return normalizeCreationProfile(profile, normalizeCreationFramework(framework));
 }
 
-function normalizeInstallMethod(value: unknown): AICreationPlan['installMethod'] {
-  if (
-    typeof value === 'string' &&
-    VALID_INSTALL_METHODS.has(value as AICreationPlan['installMethod'])
-  ) {
-    return value as AICreationPlan['installMethod'];
-  }
+function normalizeInstallMethod(): AICreationPlan['installMethod'] {
+  // AI Create never selects machine-specific package installation policy.
+  // Manual Create retains explicit advanced controls.
   return 'auto';
 }
 
@@ -1800,11 +1720,58 @@ function normalizeSecondaryProject(
   return reconcileWithExplicitIntent({ framework, kit, projectName });
 }
 
+function reconcileDelegatedCreationRuntimes(input: {
+  prompt: string;
+  primary: ScaffoldFramework;
+  secondary?: AICreationPlan['secondaryProject'];
+  frameworkWasExplicit?: boolean;
+}): {
+  primary: ScaffoldFramework;
+  secondary?: AICreationPlan['secondaryProject'];
+} {
+  // If the user named a framework, runtime ownership belongs to that request.
+  // When technical choices are fully delegated, prefer the Node runtime that
+  // already hosts the extension instead of introducing an unverified Python,
+  // Go, Java, .NET, Rust, or PHP prerequisite.
+  if (input.frameworkWasExplicit || inferExplicitCreationFrameworks(input.prompt).length > 0) {
+    return { primary: input.primary, secondary: input.secondary };
+  }
+
+  const primary =
+    isBackendScaffoldFramework(input.primary) &&
+    scaffoldRuntimeForFramework(input.primary) !== 'node'
+      ? 'nestjs'
+      : input.primary;
+  const secondary = input.secondary
+    ? {
+        ...input.secondary,
+        framework:
+          isBackendScaffoldFramework(input.secondary.framework) &&
+          scaffoldRuntimeForFramework(input.secondary.framework) !== 'node'
+            ? ('nestjs' as const)
+            : input.secondary.framework,
+      }
+    : undefined;
+
+  if (secondary && secondary.framework === primary) {
+    return { primary, secondary: undefined };
+  }
+  return {
+    primary,
+    secondary: secondary
+      ? {
+          ...secondary,
+          kit: normalizeCreationKit(undefined, secondary.framework),
+        }
+      : undefined,
+  };
+}
+
 export function validateCreationPlanForExecution(plan: AICreationPlan): AICreationPlan {
   if (!isCreateFramework(plan.framework)) {
     throw new Error(`Unsupported project framework in creation plan: ${String(plan.framework)}`);
   }
-  if (!FRAMEWORK_TO_KITS[plan.framework].includes(plan.kit)) {
+  if (!scaffoldKitsForFramework(plan.framework).includes(plan.kit)) {
     throw new Error(
       `Creation plan kit ${plan.kit} does not belong to framework ${plan.framework}.`
     );
@@ -1816,7 +1783,7 @@ export function validateCreationPlanForExecution(plan: AICreationPlan): AICreati
         `Unsupported companion framework in creation plan: ${String(secondary.framework)}`
       );
     }
-    if (!FRAMEWORK_TO_KITS[secondary.framework].includes(secondary.kit)) {
+    if (!scaffoldKitsForFramework(secondary.framework).includes(secondary.kit)) {
       throw new Error(
         `Companion kit ${secondary.kit} does not belong to framework ${secondary.framework}.`
       );
@@ -1963,7 +1930,7 @@ Available workspace profiles:
   "go-only"      — Go backend
   "java-only"    — Java backend (Spring Boot)
   "dotnet-only"  — .NET backend
-  "polyglot"     — mixed Python + Node + Go + Java
+  "polyglot"     — projects from two or more runtime families
   "enterprise"   — multi-team governance
 
 Available frameworks:
@@ -2019,12 +1986,13 @@ Rules:
 - For fastapi/nestjs, ALWAYS include "free/essentials/settings" in suggestedModules
 - For go/springboot/dotnet/rust/laravel/frontend/desktop/extension frameworks, set suggestedModules to []
 - Use fastapi.ddd kit when: DDD / clean-arch / domain / layered / complex mentioned
-- Use polyglot profile when: full-stack / polyglot / frontend+backend / multiple runtimes mentioned
+- Full-stack topology does not automatically mean polyglot; Next.js + NestJS uses node-only
+- Use polyglot profile only when selected projects use different runtime families or the user explicitly requests multiple runtimes
 - Choose the smallest accurate stack from the user's wording; do not blindly convert product-domain requests into full-stack
 - Use frontend-only when the user asks for UI, dashboard, website, frontend, landing pages, or client app without backend/API needs
 - Use backend-only when the user asks for API, backend, service, database, integration service, or automation without UI/client needs
-- Use polyglot profile when both a user-facing app and backend/API/data workflow are requested or clearly implied
-- For polyglot / full-stack workspace mode, include secondaryProject with the companion stack (frontend + API)
+- When both a user-facing app and backend/API/data workflow are requested, include secondaryProject with the companion stack (frontend + API)
+- When technical choices are delegated, prefer the portable same-runtime Next.js + NestJS pairing
 - Omit secondaryProject when only one runtime is needed
 - Use enterprise profile when: enterprise / compliance / multi-team / audit mentioned WITHOUT full-stack intent
 - Frontend frameworks (nextjs, vite-*, nuxt, angular, astro, sveltekit, remix) → profile node-only, kit frontend.*, projectName ends with -app
@@ -2099,25 +2067,44 @@ Rules:
   const heuristicDraft = buildHeuristicCreationDraft(prompt, mode, frameworkHint, stackIntent);
   const explicitFrameworks = inferExplicitCreationFrameworks(prompt);
   const parsedFramework = normalizeCreationFramework(parsed.framework, frameworkHint);
-  const fw =
+  const proposedFramework =
     explicitFrameworks.length > 0 && !explicitFrameworks.includes(parsedFramework)
       ? heuristicDraft.framework
       : parsedFramework;
   const rawName = addWspSuffix(sanitizeKebab(parsed.workspaceName ?? 'my-workspace'));
   const uniqueName = await resolveUniqueWorkspaceName(rawName);
-  const heuristicProfile = heuristicDraft.profile;
   const inferredStackIntent = inferStackIntentFromPrompt(prompt.toLowerCase(), stackIntent);
   const companionStackIntent = stackIntent;
+  const proposedSecondary =
+    mode === 'workspace'
+      ? normalizeSecondaryProject(
+          parsed.secondaryProject,
+          prompt,
+          proposedFramework,
+          companionStackIntent
+        )
+      : undefined;
+  const reconciled = reconcileDelegatedCreationRuntimes({
+    prompt,
+    primary: proposedFramework,
+    secondary: proposedSecondary,
+    frameworkWasExplicit: isScaffoldFramework(frameworkHint),
+  });
+  const fw = reconciled.primary;
+  const secondaryProject = reconciled.secondary;
   const plan: AICreationPlan = {
     type: mode,
     workspaceName: uniqueName,
     profile:
       mode === 'workspace'
-        ? inferredStackIntent === 'polyglot'
-          ? 'polyglot'
-          : normalizeCreationProfile(parsed.profile ?? heuristicProfile, fw)
+        ? inferWorkspaceProfileFromCreationPrompt(
+            fw,
+            prompt.toLowerCase(),
+            inferredStackIntent,
+            secondaryProject?.framework
+          )
         : normalizeCreationProfile(parsed.profile, fw),
-    installMethod: normalizeInstallMethod(parsed.installMethod),
+    installMethod: normalizeInstallMethod(),
     framework: fw,
     kit: normalizeCreationKit(parsed.kit, fw),
     projectName: sanitizeKebab(parsed.projectName ?? 'api'),
@@ -2126,10 +2113,7 @@ Rules:
       typeof parsed.description === 'string' && parsed.description.trim()
         ? parsed.description.trim().slice(0, 240)
         : prompt.trim().slice(0, 240),
-    secondaryProject:
-      mode === 'workspace'
-        ? normalizeSecondaryProject(parsed.secondaryProject, prompt, fw, companionStackIntent)
-        : undefined,
+    secondaryProject,
   };
 
   return { plan: validateCreationPlanForExecution(plan), modelId, planSource };

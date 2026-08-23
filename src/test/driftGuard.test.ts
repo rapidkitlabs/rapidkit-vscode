@@ -117,16 +117,10 @@ describe('contract drift guard', () => {
   });
 
   it('keeps profile enum values aligned across type, completion, hover, and wizard', () => {
-    const expectedProfiles = [
-      'minimal',
-      'python-only',
-      'node-only',
-      'go-only',
-      'java-only',
-      'dotnet-only',
-      'polyglot',
-      'enterprise',
-    ];
+    const createContract = JSON.parse(read('contracts/create-planner-capabilities.v1.json')) as {
+      workspaceProfiles: Array<{ id: string }>;
+    };
+    const expectedProfiles = createContract.workspaceProfiles.map((profile) => profile.id);
 
     const extensionSource = read('src/extension.ts');
     const workspaceOpsSource = read('src/commands/workspaceOperations.ts');
@@ -142,8 +136,8 @@ describe('contract drift guard', () => {
     const projectSchemaSource = read('schemas/rapidkit.schema.json');
     const workspaceSchemaSource = read('schemas/rapidkitrc.schema.json');
 
+    expect(commandSource).toContain('listWorkspaceCreateProfiles');
     for (const profile of expectedProfiles) {
-      expect(commandSource).toContain(`'${profile}'`);
       expect(typesSource).toContain(`'${profile}'`);
       expect(completionSource).toContain(profile);
       expect(hoverSource).toContain(`\`${profile}\``);
@@ -189,8 +183,15 @@ describe('contract drift guard', () => {
     const setupExperienceSource = read('webview-ui/src/components/SetupExperience.tsx');
     const commandCenterSource = read('src/commands/aiFreeFeatures.ts');
 
-    expect(workspaceOpsSource).toContain("value: 'dotnet'");
-    expect(workspaceOpsSource).toContain("value: 'dotnet-only'");
+    const createContract = JSON.parse(read('contracts/create-planner-capabilities.v1.json')) as {
+      workspaceProfiles: Array<{ id: string; setupRuntimeFamilies: string[] }>;
+    };
+    const dotnetProfile = createContract.workspaceProfiles.find(
+      (profile) => profile.id === 'dotnet-only'
+    );
+    expect(dotnetProfile?.setupRuntimeFamilies).toContain('dotnet');
+    expect(workspaceOpsSource).toContain('listWorkspaceCreateProfiles');
+    expect(workspaceOpsSource).toContain('setupRuntimeFamilies');
     expect(setupPanelSource).toContain("'dotnet'");
     expect(setupPanelSource).toContain("case 'verifyDotnet'");
     expect(setupPanelSource).toContain("case 'installDotnet'");

@@ -24,6 +24,7 @@ import {
 } from '../../utils/platformCapabilities';
 import { resolveCoreUpgradePlan } from '../../core/coreUpgradePlan';
 import { findWorkspaceRootUp } from '../../core/workspacePaths';
+import { resolveBundledCliRuntime } from '../../core/bundledCliRuntime';
 
 const SETUP_PREFERENCES_KEY = 'workspai.setup.preferences';
 
@@ -44,6 +45,7 @@ type DetectionSource =
   | 'fallback'
   | 'workspace'
   | 'package-manager'
+  | 'bundled'
   | 'python';
 type PathDoctorSuggestion = {
   id: string;
@@ -749,6 +751,22 @@ export class SetupPanel {
         });
         break;
       }
+      case 'verifyBundledCli': {
+        try {
+          const runtime = resolveBundledCliRuntime();
+          if (!runtime) {
+            throw new Error('The bundled runtime is unavailable in this development build.');
+          }
+          vscode.window.showInformationMessage(
+            `Verified Workspai CLI ${runtime.version} bundled with this extension.`
+          );
+        } catch (error) {
+          vscode.window.showErrorMessage(
+            error instanceof Error ? error.message : 'Bundled Workspai CLI verification failed.'
+          );
+        }
+        break;
+      }
       case 'verifyPoetry': {
         const path = await import('path');
         const fs = await import('fs-extra');
@@ -1073,6 +1091,8 @@ export class SetupPanel {
       npmVersion: null as string | null,
       npmLocation: null as string | null,
       npmAvailableViaNpx: false,
+      bundledCliAvailable: false,
+      bundledCliVersion: null as string | null,
       latestNpmVersion: null as string | null,
 
       pythonInstalled: false,
@@ -1107,6 +1127,25 @@ export class SetupPanel {
       installMethods: preferences.installMethods,
       detections: {} as Partial<Record<SetupToolKey | 'core' | 'cli', SetupDetection>>,
     };
+
+    try {
+      const bundledRuntime = resolveBundledCliRuntime();
+      if (bundledRuntime) {
+        status.bundledCliAvailable = true;
+        status.bundledCliVersion = bundledRuntime.version;
+        status.detections.cli = {
+          source: 'bundled',
+          command: 'extension runtime',
+          note: 'Integrity-checked CLI bundled with this extension; global installation is optional.',
+        };
+      }
+    } catch (error) {
+      status.detections.cli = {
+        source: 'bundled',
+        command: 'extension runtime',
+        note: error instanceof Error ? error.message : 'Bundled CLI verification failed.',
+      };
+    }
 
     try {
       const result = await execa('node', ['--version'], {
@@ -1306,11 +1345,13 @@ export class SetupPanel {
           status.npmVersion = version;
           status.npmInstalled = true;
           status.npmLocation = npmInvocation.command;
-          status.detections.cli = {
-            source: 'package-manager',
-            command: `${npmInvocation.command} list -g workspai --depth=0`,
-            note: 'Detected as a global npm package, including Node version-manager installs.',
-          };
+          if (!status.bundledCliAvailable) {
+            status.detections.cli = {
+              source: 'package-manager',
+              command: `${npmInvocation.command} list -g workspai --depth=0`,
+              note: 'Detected as a global npm package, including Node version-manager installs.',
+            };
+          }
           break;
         }
       } catch {
@@ -1319,7 +1360,7 @@ export class SetupPanel {
     }
 
     // Check if Workspai is available via npx (even if not globally installed).
-    if (!status.npmInstalled) {
+    if (!status.npmInstalled && !status.bundledCliAvailable) {
       for (const npxInvocation of discoverPackageRunnerInvocations(
         'npx',
         process.platform,
@@ -1944,20 +1985,26 @@ export class SetupPanel {
 
     try {
       try {
-        // Force npm to fetch latest version without cache
-        const npmResult = await execa(
-          'npm',
-          ['view', 'workspai', 'version', '--registry=https://registry.npmjs.org/'],
-          { timeout: 8000 }
-        );
-        status.latestNpmVersion = npmResult.stdout.trim();
+        if (status.bundledCliAvailable) {
+          status.latestNpmVersion = status.bundledCliVersion;
+        } else {
+          // Force npm to fetch latest version without cache
+          const npmResult = await execa(
+            'npm',
+            ['view', 'workspai', 'version', '--registry=https://registry.npmjs.org/'],
+            { timeout: 8000 }
+          );
+          status.latestNpmVersion = npmResult.stdout.trim();
+        }
       } catch {
-        try {
-          const data = await fetchJson('https://registry.npmjs.org/workspai/latest');
-          status.latestNpmVersion =
-            typeof data.version === 'string' ? data.version : status.latestNpmVersion;
-        } catch {
-          // ignore
+        if (!status.bundledCliAvailable) {
+          try {
+            const data = await fetchJson('https://registry.npmjs.org/workspai/latest');
+            status.latestNpmVersion =
+              typeof data.version === 'string' ? data.version : status.latestNpmVersion;
+          } catch {
+            // ignore
+          }
         }
       }
 

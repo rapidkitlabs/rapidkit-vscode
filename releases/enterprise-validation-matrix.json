@@ -1,7 +1,6 @@
 {
   "schemaVersion": "workspai-enterprise-validation-matrix.v1",
   "generatedFor": "rapidkit-vscode",
-  "npmTruthBaseline": "0.63.0",
   "scenarios": [
     {
       "id": "cli.version.below_minimum",
@@ -220,7 +219,7 @@
     },
     {
       "id": "performance.evidence_refresh_coalesced",
-      "label": "Rapid evidence writes coalesce before refreshing the dashboard",
+      "label": "Rapid evidence writes coalesce into one dependency-aware dashboard truth patch",
       "category": "performance",
       "priority": "P2",
       "evidence": [
@@ -228,7 +227,7 @@
         "src/ui/panels/doctorTelemetryRefresh.ts"
       ],
       "requiredSnippets": [
-        "coalesces rapid report writes in the same workspace into one patch refresh",
+        "coalesces rapid report writes into one dependency-aware card patch",
         "does not merge report bursts across different workspaces",
         "mergeDashboardEvidenceRefreshContexts"
       ]
@@ -322,7 +321,8 @@
       "requiredSnippets": [
         "vsix-package-smoke:",
         "npm run smoke:vsix-artifact",
-        "npm view workspai@${{ inputs.workspai_cli_version }} version"
+        "extension-cli-release-policy.v1.json",
+        "npm view \"workspai@${CLI_VERSION}\" version"
       ]
     },
     {

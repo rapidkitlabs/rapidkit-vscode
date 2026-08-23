@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  listExecutableCreateTargets,
   resolveCreateCapabilityFromPrompt,
   resolveCreatePlannerCapability,
 } from '../contracts/createPlannerCapabilities';
@@ -61,5 +62,20 @@ describe('create planner capabilities contract', () => {
       status: 'available',
       canExecuteCreate: false,
     });
+  });
+
+  it('projects only executable targets for model-driven Create routing', () => {
+    const targets = listExecutableCreateTargets();
+
+    expect(targets).toContain('fastapi');
+    expect(targets).toContain('go');
+    expect(targets).toContain('rust');
+    expect(targets).toContain('nextjs');
+    expect(targets).toContain('vscode-extension');
+    expect(targets).not.toContain('gofiber');
+    expect(targets).not.toContain('axum');
+    expect(targets).not.toContain('wordpress');
+    expect(targets).not.toContain('symfony');
+    expect(new Set(targets).size).toBe(targets.length);
   });
 });

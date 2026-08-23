@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import releasePolicy from '../../contracts/extension-cli-release-policy.v1.json';
+
+const verifiedWorkspaiPackage = `workspai@${releasePolicy.verifiedCliVersion}`;
 
 const {
   mockConfigGet,
@@ -94,7 +97,7 @@ describe('service timeout config', () => {
 
     expect(mockRun).toHaveBeenCalledWith(
       'npx',
-      ['--yes', '--package', 'workspai', 'workspai', 'list', '--json'],
+      ['--yes', '--package', verifiedWorkspaiPackage, 'workspai', 'list', '--json'],
       expect.objectContaining({ timeout: 60000 })
     );
   });
@@ -123,7 +126,7 @@ describe('service timeout config', () => {
 
     expect(mockRun).toHaveBeenCalledWith(
       'npx',
-      ['--yes', '--package', 'workspai', 'workspai', 'list', '--json'],
+      ['--yes', '--package', verifiedWorkspaiPackage, 'workspai', 'list', '--json'],
       expect.objectContaining({ timeout: 15000 })
     );
   });

@@ -20,12 +20,13 @@ import { updateWorkspaceMetadata } from '../utils/workspaceMarker';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { isPoetryInstalledCached } from '../utils/poetryHelper';
 import { checkPythonEnvironmentCached } from '../utils/pythonChecker';
-import { runCommandsInTerminal, runShellCommandInTerminal } from '../utils/terminalExecutor';
+import { runCommandsInTerminal } from '../utils/terminalExecutor';
 import {
   isDefaultWorkspaceCreationPath,
   hasWorkspaceRootMarkers,
   resolveNewWorkspacePath,
 } from '../core/workspacePaths';
+import { profileInstallsPythonEngineAtCreate } from '../contracts/createPlannerCapabilities';
 
 type InstallMethod = 'poetry' | 'venv' | 'pipx' | 'auto';
 type BootstrapProfile = NonNullable<CreateWorkspaceOptions['profile']>;
@@ -76,14 +77,8 @@ function isWorkspaceModalConfig(value: unknown): value is WorkspaceModalConfig {
   return typeof candidate.name === 'string' && candidate.name.trim().length > 0;
 }
 
-const PYTHON_ENGINE_REQUIRED_PROFILES = new Set<BootstrapProfile>([
-  'python-only',
-  'polyglot',
-  'enterprise',
-]);
-
 function defaultSkipPythonEngine(profile?: BootstrapProfile): boolean {
-  return !PYTHON_ENGINE_REQUIRED_PROFILES.has(profile ?? 'minimal');
+  return !profileInstallsPythonEngineAtCreate(profile ?? 'minimal');
 }
 
 export async function createWorkspaceCommand(workspaceName?: string | Record<string, unknown>) {
@@ -379,7 +374,7 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
     // Profile-aware Python enforcement: only gate Python-required profiles.
     const selectedProfile = (config.profile || 'minimal') as BootstrapProfile;
     const requiresPython =
-      !config.skipPythonEngine && PYTHON_ENGINE_REQUIRED_PROFILES.has(selectedProfile);
+      !config.skipPythonEngine && profileInstallsPythonEngineAtCreate(selectedProfile);
     const pythonReady =
       !!pythonCheck?.available && !!pythonCheck?.meetsMinimumVersion && !!pythonCheck?.venvSupport;
 
@@ -389,6 +384,26 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
         : !pythonCheck?.meetsMinimumVersion
           ? `Python ${pythonCheck?.version ?? 'unknown'} detected, but 3.10+ is required.`
           : pythonCheck?.error || 'Python venv support is missing.';
+
+      // Chat/Create flows must fail before any workspace mutation and return
+      // one actionable prerequisite result to their owning controller. A
+      // nested modal would desynchronize the chat timeline and make a retry
+      // look like a stalled creation.
+      if (config.silent) {
+        const prerequisite = new Error(
+          !pythonCheck?.available
+            ? 'Python 3.10+ is required for this workspace profile. Install Python, restart VS Code, and create a fresh plan.'
+            : !pythonCheck?.meetsMinimumVersion
+              ? `Python ${pythonCheck?.version ?? 'unknown'} is installed, but this workspace profile requires Python 3.10 or newer.`
+              : `${issueDetails} Install the Python venv package for this interpreter, then create a fresh plan.`
+        ) as Error & { code?: string };
+        prerequisite.code = !pythonCheck?.available
+          ? 'python-runtime-unavailable'
+          : !pythonCheck?.meetsMinimumVersion
+            ? 'python-version-unsupported'
+            : 'python-venv-unavailable';
+        throw prerequisite;
+      }
 
       const choice = await vscode.window.showWarningMessage(
         `⚠️ Profile "${selectedProfile}" typically needs Python tooling.\n\n` +
@@ -428,8 +443,8 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
 
         progress.report({ increment: 10, message: 'Preparing workspace directory...' });
 
-        // Don't create the workspace directory here - let npm package handle it
-        // Only ensure parent directory exists so npm package can create the workspace
+        // The verified CLI runtime owns workspace creation. Only its parent is
+        // prepared here so a failed run cannot be mistaken for a workspace.
         const parentDir = path.dirname(config.path);
         await fs.ensureDir(parentDir);
         logger.info('Parent directory ensured:', parentDir);
@@ -460,10 +475,10 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
         const isDefaultLocation = isDefaultWorkspaceCreationPath(config.path, config.name);
 
         if (isDefaultLocation) {
-          // Use npm package directly for default location
+          // Use the extension's verified Workspai runtime for the default location.
           progress.report({
             increment: 20,
-            message: 'Setting up Workspai CLI (downloading if needed)...',
+            message: 'Starting verified Workspai runtime...',
           });
 
           // Idempotency: if the workspace marker already exists (prior run or
@@ -501,71 +516,33 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
               createResult.stdout || ''
             );
 
-            if (parsedError.canFallback) {
-              logger.warn(`Workspace creation failed: ${parsedError.type} - offering fallback`);
+            // Chat and AI flows own their recovery UI. Never open a nested
+            // modal or synthesize a fallback workspace behind that controller.
+            if (config.silent) {
+              throw new Error(formatErrorMessage(parsedError));
+            }
 
-              // Show informative message with fallback options
-              const actions = ['View Details'];
-              if (parsedError.type === 'core_missing') {
-                actions.unshift('Create Basic Workspace', 'Use Demo Mode');
-              } else if (parsedError.canRetry) {
+            if (parsedError.canFallback) {
+              logger.warn(`Workspace creation failed: ${parsedError.type}`);
+
+              const actions = ['Run System Check', 'View Details'];
+              if (parsedError.canRetry) {
                 actions.unshift('Retry');
               }
               actions.push('Cancel');
 
               const choice = await vscode.window.showWarningMessage(
                 `⚠️ ${parsedError.title}\n\n${parsedError.message}\n\n` +
-                  `⚠️ Fallback Option Available:\n` +
-                  `• Creates basic workspace structure (marker + README)\n` +
-                  `• Does NOT include Poetry setup or CLI tools\n` +
-                  `• You'll need to install the workspai npm package to create projects`,
+                  'No partial workspace will be accepted as successful.',
                 { modal: true },
                 ...actions
               );
 
-              if (choice === 'Create Basic Workspace') {
-                // Create basic workspace structure manually
-                await createBasicWorkspace(config.path, config.name, config.initGit);
-                logger.info('Basic workspace created as fallback');
-
-                // Show post-creation notification with action items
-                const installAction = 'Install npm Package';
-                const openReadme = 'Open README';
-                const selected = await vscode.window.showWarningMessage(
-                  `⚠️ Basic Workspace Created\n\n` +
-                    `This is a minimal workspace. To create projects:\n\n` +
-                    `1️⃣ Install: npm install -g workspai\n` +
-                    `2️⃣ Create projects with Extension commands\n\n` +
-                    `ℹ️ Python-backed kits and modules can add the optional RapidKit Core engine later.`,
-                  installAction,
-                  openReadme,
-                  'OK'
-                );
-
-                if (selected === installAction) {
-                  // Open terminal with install command
-                  runShellCommandInTerminal({
-                    name: 'Install Workspai CLI',
-                    command: 'npm',
-                    args: ['install', '-g', 'workspai'],
-                  });
-                } else if (selected === openReadme) {
-                  const readmePath = path.join(config.path, 'README.md');
-                  const doc = await vscode.workspace.openTextDocument(readmePath);
-                  await vscode.window.showTextDocument(doc);
-                }
-
-                // Don't throw, continue to finalization
-              } else if (choice === 'Use Demo Mode') {
-                vscode.window.showInformationMessage(
-                  '💡 Demo Mode\n\n' +
-                    'You can create standalone projects without a workspace using the npm package.\n\n' +
-                    'Use "Workspai: Create Project" from the command palette to get started.'
-                );
+              if (choice === 'Retry') {
+                return createWorkspaceCommand(workspaceName);
+              } else if (choice === 'Run System Check') {
+                await vscode.commands.executeCommand('workspai.checkSystem');
                 return;
-              } else if (choice === 'Retry') {
-                // Retry the same operation
-                return createWorkspaceCommand();
               } else if (choice === 'View Details') {
                 // Show detailed error in output panel
                 const output = vscode.window.createOutputChannel('Workspai Error');
@@ -596,7 +573,7 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
           // IMPORTANT: Don't create in default location and move - this breaks virtualenv shebangs!
           progress.report({
             increment: 20,
-            message: 'Setting up Workspai CLI (downloading if needed)...',
+            message: 'Starting verified Workspai runtime...',
           });
 
           const createResult = await cli.createWorkspace({
@@ -629,12 +606,12 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
           logger.info('Workspace created directly at custom path (no move needed)');
         }
 
-        logger.info('Workspace creation via npm package completed');
+        logger.info('Workspace creation via verified CLI runtime completed');
 
         progress.report({ increment: 50, message: 'Finalizing workspace...' });
 
         // Note: We skip detailed validation here because:
-        // 1. npm package already validates during creation
+        // 1. the verified CLI runtime validates during creation
         // 2. Poetry venvs may not be immediately ready for inspection
         // 3. The marker file existence is sufficient proof of successful creation
 
@@ -719,9 +696,9 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
           }
         }
 
-        // Verify workspace marker exists (created by npm package)
+        // Verify workspace marker exists (created by the verified CLI runtime)
         if (!hasWorkspaceRootMarkers(config.path)) {
-          logger.warn('Workspace marker not found - npm package should have created it');
+          throw new Error('Workspace creation completed without canonical workspace markers.');
         } else {
           // Add VS Code metadata to the marker
           const { getExtensionVersion } = await import('../utils/constants.js');
@@ -752,62 +729,19 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
 
         progress.report({ increment: 100, message: 'Complete!' });
 
-        // Check if this was a fallback workspace
-        const fallbackMarkerPaths = [
-          path.join(config.path, '.workspai-workspace'),
-          path.join(config.path, '.rapidkit-workspace'),
-        ];
-        let isFallback = false;
-        for (const fallbackMarkerPath of fallbackMarkerPaths) {
-          try {
-            const markerData = await fs.readJSON(fallbackMarkerPath);
-            isFallback = markerData.fallbackMode === true;
-            if (isFallback) {
-              break;
-            }
-          } catch {
-            // Try the next canonical or legacy marker.
-          }
-        }
-
-        // Show success message with appropriate actions
+        // Show success message with appropriate actions.
         const openAction = 'Open Workspace';
         const docsAction = 'View Docs';
-        const installNpmAction = isFallback ? 'Install npm Package' : null;
-
         const actions = [openAction, docsAction];
-        if (installNpmAction) {
-          actions.unshift(installNpmAction);
-        }
         actions.push('Close');
 
-        let message =
+        const message =
           `✅ Workspace "${config.name}" created successfully!\n\n` +
-          `📁 Location: ${config.path}\n`;
-
-        if (isFallback) {
-          message +=
-            `\n⚠️ Note: This is a basic workspace (fallback mode)\n` +
-            `To create projects, install: npm install -g workspai\n` +
-            `See README.md for full setup instructions`;
-        } else {
-          message += `💡 Tip: Add projects with \`workspai create\` or use Extension commands`;
-        }
+          `📁 Location: ${config.path}\n` +
+          '💡 Tip: Add projects with `workspai create` or use Extension commands';
 
         const handlePostCreateSelection = async (selected: string | undefined) => {
-          if (selected === 'Install npm Package') {
-            runShellCommandInTerminal({
-              name: 'Install Workspai CLI',
-              command: 'npm',
-              args: ['install', '-g', 'workspai'],
-            });
-
-            const readmePath = path.join(config.path, 'README.md');
-            if (await fs.pathExists(readmePath)) {
-              const doc = await vscode.workspace.openTextDocument(readmePath);
-              await vscode.window.showTextDocument(doc, { preview: false });
-            }
-          } else if (selected === openAction) {
+          if (selected === openAction) {
             const workspaceUri = vscode.Uri.file(config.path);
             await vscode.commands.executeCommand('vscode.openFolder', workspaceUri, {
               forceNewWindow: false,
@@ -893,216 +827,5 @@ export async function createWorkspaceCommand(workspaceName?: string | Record<str
     vscode.window.showErrorMessage(
       `Error: ${error instanceof Error ? error.message : String(error)}`
     );
-  }
-}
-
-/**
- * Create a recovery-mode workspace when the Workspai CLI creation path is unavailable.
- * The marker is canonical, while the README makes it explicit that intelligence
- * artifacts must be synchronized once the CLI becomes available.
- */
-async function createBasicWorkspace(workspacePath: string, name: string, initGit: boolean) {
-  const logger = Logger.getInstance();
-
-  try {
-    // Ensure workspace directory exists
-    await fs.ensureDir(workspacePath);
-
-    // 1. Create canonical Workspai metadata directory.
-    const workspaiDir = path.join(workspacePath, '.workspai');
-    await fs.ensureDir(workspaiDir);
-    logger.info('Created .workspai directory');
-
-    // 2. Create .workspai/config.json.
-    const { getExtensionVersion } = await import('../utils/constants.js');
-    const config = {
-      workspace_name: name,
-      author: 'user',
-      rapidkit_version: getExtensionVersion(),
-      created_at: new Date().toISOString(),
-      type: 'workspace',
-      fallbackMode: true, // Indicates fallback creation
-    };
-    await fs.writeJSON(path.join(workspaiDir, 'config.json'), config, { spaces: 2 });
-    logger.info('Created .workspai/config.json');
-
-    // 3. Create canonical workspace marker.
-    const markerPath = path.join(workspacePath, '.workspai-workspace');
-    const { MARKERS } = await import('../utils/constants.js');
-
-    await fs.writeJSON(
-      markerPath,
-      {
-        signature: MARKERS.WORKSPACE_SIGNATURE,
-        createdBy: MARKERS.CREATED_BY_VSCODE,
-        version: getExtensionVersion(),
-        createdAt: new Date().toISOString(),
-        name,
-        engine: 'npm-fallback', // Indicates fallback mode but npm-compatible structure
-        fallbackMode: true,
-      },
-      { spaces: 2 }
-    );
-    logger.info('Created .workspai-workspace marker');
-
-    // 4. Create a Workspai CLI guidance wrapper (shell script for Unix).
-    const cliScriptPath = path.join(workspacePath, 'workspai');
-    const cliScript = `#!/usr/bin/env bash
-#
-# Workspai CLI - Fallback workspace wrapper
-# This recovery workspace was created because Workspai CLI creation was unavailable
-#
-# To use Workspai features:
-#   1. Install: npm install -g workspai
-#   2. Run: npx workspai <command>
-#
-
-set -e
-
-echo "⚠️  This is a Workspai recovery-mode workspace"
-echo ""
-echo "To create projects:"
-echo "  1. Install npm package: npm install -g workspai"
-echo "  2. Create project: npx workspai create project fastapi.standard my-api --yes --skip-install"
-echo ""
-echo "Or use VS Code Extension: 'Workspai: Create Project'"
-echo ""
-`;
-    await fs.writeFile(cliScriptPath, cliScript, { mode: 0o755 });
-    logger.info('Created workspai CLI script');
-
-    // 4b. Create Windows launcher for parity on win32 environments
-    const cliScriptCmdPath = path.join(workspacePath, 'workspai.cmd');
-    const cliScriptCmd = `@echo off
-  echo ⚠️  This is a Workspai recovery-mode workspace
-  echo.
-  echo To create projects:
-  echo   1. Install npm package: npm install -g workspai
-  echo   2. Create project: npx workspai create project fastapi.standard my-api --yes --skip-install
-  echo.
-  echo Or use VS Code Extension: "Workspai: Create Project"
-  echo.
-  `;
-    await fs.writeFile(cliScriptCmdPath, cliScriptCmd, 'utf-8');
-    logger.info('Created workspai.cmd launcher');
-
-    // 5. Create a concise recovery guide.
-    const readmePath = path.join(workspacePath, 'README.md');
-    const readmeContent = `# ${name}
-
-This is a Workspai recovery-mode workspace. The VS Code extension created its
-canonical boundary because the Workspai CLI creation path was not available.
-
-## What exists
-
-\`\`\`
-${name}/
-├── .workspai/            # Workspai metadata
-├── .workspai-workspace   # Canonical workspace marker
-├── workspai              # Recovery guidance (Unix)
-├── workspai.cmd          # Recovery guidance (Windows)
-└── README.md
-\`\`\`
-
-The marker lets the extension discover the workspace. Model, graph, Doctor,
-agent context, and other governed artifacts are not considered current until
-the CLI synchronizes them.
-
-## Finish setup
-
-\`\`\`bash
-npm install -g workspai
-workspai --version
-cd ${JSON.stringify(workspacePath)}
-workspai workspace intelligence run --for-agent generic --strict --json
-\`\`\`
-
-Then use \`workspai create\` to create or add software through the interactive
-flow. RapidKit Core is optional and is only needed for Python-backed kits or
-modules; do not install it for a non-Python workspace unless you need it.
-
-## Help
-
-- Documentation: https://www.workspai.dev/learn
-- CLI: \`workspai --help\`
-- Extension: run \`Workspai: Open Setup & Recovery\`
-- Issues: https://github.com/chistiq/rapidkit-vscode/issues
-
----
-
-**Created:** ${new Date().toISOString()}
-**Mode:** Recovery (canonical boundary; intelligence sync pending)
-**Created By:** VS Code Workspai Extension
-`;
-    await fs.writeFile(readmePath, readmeContent);
-    logger.info('Created README.md');
-
-    // 6. Create .gitignore.
-    const gitignorePath = path.join(workspacePath, '.gitignore');
-    const gitignoreContent = `# Workspai workspace
-.env
-.env.*
-!.env.example
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.venv/
-ENV/
-build/
-dist/
-*.egg-info/
-
-# Node
-node_modules/
-npm-debug.log
-yarn-error.log
-.npm/
-.yarn/
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Workspai compatibility cache
-.rapidkit/templates/
-`;
-    await fs.writeFile(gitignorePath, gitignoreContent);
-    logger.info('Created .gitignore');
-
-    // 7. Initialize git if requested (same as npm package)
-    if (initGit) {
-      try {
-        const { execa } = await import('execa');
-        await execa('git', ['init'], { cwd: workspacePath });
-        await execa('git', ['add', '.'], { cwd: workspacePath });
-        await execa('git', ['commit', '-m', 'Initial commit: Workspai workspace (fallback mode)'], {
-          cwd: workspacePath,
-        });
-        logger.info('Initialized git repository');
-      } catch (gitError) {
-        logger.warn('Failed to initialize git:', gitError);
-      }
-    }
-
-    logger.info('Basic workspace created successfully with npm-compatible structure');
-  } catch (error) {
-    logger.error('Failed to create basic workspace:', error);
-    throw error;
   }
 }

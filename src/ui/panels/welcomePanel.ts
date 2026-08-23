@@ -1011,6 +1011,20 @@ export class WelcomePanel {
       },
     });
     await dashboardPanel._refreshModulesCatalog();
+    await WelcomePanel.refreshDashboardEvidenceSnapshotForWorkspacePath(workspacePath);
+  }
+
+  /**
+   * Refresh only the canonical evidence snapshot. Artifact watchers and Studio
+   * transactions use this path so a burst of report writes does not also
+   * rescan catalogs or workspace navigation state on every generation.
+   */
+  public static async refreshDashboardEvidenceSnapshotForWorkspacePath(workspacePath: string) {
+    const dashboardPanel = WelcomePanel._dashboardPanel;
+    if (!dashboardPanel) {
+      WelcomePanel._pendingDashboardFullRefreshPath = workspacePath;
+      return;
+    }
     await dashboardPanel._sendDashboardEvidence({ workspacePath, refreshMode: 'full' });
   }
 
@@ -1365,8 +1379,8 @@ export class WelcomePanel {
 
     this._dashboardEvidenceWatcher = registerWelcomePanelDoctorEvidenceWatcher(
       this._disposables,
-      (filePath) => {
-        this._doctorTelemetryRefreshController.schedule(filePath);
+      (filePath, workspacePathHint) => {
+        this._doctorTelemetryRefreshController.schedule(filePath, workspacePathHint);
       }
     );
 
@@ -1775,7 +1789,10 @@ export class WelcomePanel {
       selectedWorkspace?.path ||
       selectedProject?.workspacePath ||
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    this._dashboardEvidenceWatcher?.watchWorkspace(watchedWorkspacePath);
+    this._dashboardEvidenceWatcher?.watchWorkspace(
+      watchedWorkspacePath,
+      selectedProject?.path ? [selectedProject.path] : []
+    );
     await sendDashboardEvidence(this._dashboardEvidenceHost(), context);
   }
 

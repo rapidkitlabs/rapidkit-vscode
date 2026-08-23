@@ -929,7 +929,7 @@ describe('aiService', () => {
     expect(result.plan).toMatchObject({
       framework: 'laravel',
       kit: 'php.laravel',
-      profile: 'minimal',
+      profile: 'polyglot',
       suggestedModules: [],
     });
     expect(result.plan.framework).not.toBe('nestjs');
@@ -973,7 +973,7 @@ describe('aiService', () => {
     expect(mockSelectChatModels).not.toHaveBeenCalled();
   });
 
-  it('does not override an ambiguous product-domain model plan without stack evidence', async () => {
+  it('normalizes a delegated product-domain backend to the portable Node runtime', async () => {
     const { plan, planSource } = await parseCreationIntent(
       'Build a workspace for a clothing store',
       'workspace',
@@ -996,8 +996,9 @@ describe('aiService', () => {
     );
 
     expect(planSource).toBe('llm');
-    expect(plan.profile).toBe('python-only');
-    expect(plan.framework).toBe('fastapi');
+    expect(plan.profile).toBe('node-only');
+    expect(plan.framework).toBe('nestjs');
+    expect(plan.kit).toBe('nestjs.standard');
     expect(plan.secondaryProject).toBeUndefined();
   });
 
@@ -1025,11 +1026,44 @@ describe('aiService', () => {
     );
 
     expect(planSource).toBe('llm');
-    expect(plan.profile).toBe('polyglot');
-    expect(plan.framework).toBe('fastapi');
+    expect(plan.profile).toBe('node-only');
+    expect(plan.framework).toBe('nestjs');
+    expect(plan.kit).toBe('nestjs.standard');
     expect(plan.secondaryProject?.framework).toBe('nextjs');
     expect(plan.secondaryProject?.kit).toBe('frontend.nextjs');
     expect(plan.secondaryProject?.projectName).toMatch(/-app$/);
+  });
+
+  it('preserves an explicitly requested Python runtime and derives a polyglot profile', async () => {
+    const { plan } = await parseCreationIntent(
+      'Build a FastAPI shop API with a Next.js storefront',
+      'workspace',
+      undefined,
+      tempProjectPath,
+      undefined,
+      async () => ({
+        modelId: 'test-model',
+        text: JSON.stringify({
+          workspaceName: 'python-shop',
+          profile: 'node-only',
+          installMethod: 'auto',
+          framework: 'fastapi',
+          kit: 'fastapi.standard',
+          projectName: 'shop-api',
+          suggestedModules: ['free/essentials/settings'],
+          description: 'A Python API with a web storefront.',
+          secondaryProject: {
+            framework: 'nextjs',
+            kit: 'frontend.nextjs',
+            projectName: 'shop-app',
+          },
+        }),
+      })
+    );
+
+    expect(plan.framework).toBe('fastapi');
+    expect(plan.secondaryProject?.framework).toBe('nextjs');
+    expect(plan.profile).toBe('polyglot');
   });
 
   it('locks explicitly requested Next.js and NestJS lanes when the model invents FastAPI', async () => {

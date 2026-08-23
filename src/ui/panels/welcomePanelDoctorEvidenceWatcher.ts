@@ -1,26 +1,41 @@
 import * as vscode from 'vscode';
+import path from 'path';
 
-const REPORT_GLOB = '{.workspai,.rapidkit}/reports/**/*.json';
-const FOUNDATION_GLOB =
-  '{.workspai,.rapidkit}/{archive-manifest.json,workspace.json,workspace.contract.json,toolchain.lock,policies.yml,policies.yaml}';
+const GOVERNED_EVIDENCE_GLOB = '{.workspai,.rapidkit}/**/*';
 
 export type WelcomePanelEvidenceWatcher = vscode.Disposable & {
-  watchWorkspace: (workspacePath?: string) => void;
+  watchWorkspace: (workspacePath?: string, projectPaths?: readonly string[]) => void;
 };
 
 export function registerWelcomePanelDoctorEvidenceWatcher(
   disposables: vscode.Disposable[],
-  scheduleRefresh: (filePath?: string) => void
+  scheduleRefresh: (filePath?: string, workspacePathHint?: string) => void
 ): WelcomePanelEvidenceWatcher {
   const ownedDisposables: vscode.Disposable[] = [];
   const scopedDisposables: vscode.Disposable[] = [];
-  let watchedWorkspacePath: string | undefined;
+  let watchedScopeKey: string | undefined;
 
-  const onFileSystemEvent = (uri?: vscode.Uri) => {
-    scheduleRefresh(uri?.fsPath);
+  const isTransientEvidencePath = (filePath: string): boolean => {
+    const normalized = filePath.replace(/\\/g, '/');
+    return (
+      /(?:^|\/)\.[^/]+\.tmp$/i.test(normalized) ||
+      /\.json\.\d+\.[0-9a-f-]+\.tmp$/i.test(normalized) ||
+      /(?:^|\/)repair\/inbox(?:\/|$)/i.test(normalized) ||
+      /(?:^|\/)repair\/engine\.lock$/i.test(normalized)
+    );
   };
 
-  const bindWatcher = (watcher: vscode.FileSystemWatcher, target: vscode.Disposable[]) => {
+  const bindWatcher = (
+    watcher: vscode.FileSystemWatcher,
+    target: vscode.Disposable[],
+    workspacePathHint?: string
+  ) => {
+    const onFileSystemEvent = (uri?: vscode.Uri) => {
+      if (!uri || isTransientEvidencePath(uri.fsPath)) {
+        return;
+      }
+      scheduleRefresh(uri.fsPath, workspacePathHint);
+    };
     target.push(watcher);
     target.push(watcher.onDidCreate(onFileSystemEvent));
     target.push(watcher.onDidChange(onFileSystemEvent));
@@ -28,45 +43,50 @@ export function registerWelcomePanelDoctorEvidenceWatcher(
   };
 
   bindWatcher(
-    vscode.workspace.createFileSystemWatcher(`**/${REPORT_GLOB}`, false, false, false),
-    ownedDisposables
-  );
-  bindWatcher(
-    vscode.workspace.createFileSystemWatcher(`**/${FOUNDATION_GLOB}`, false, false, false),
+    vscode.workspace.createFileSystemWatcher(`**/${GOVERNED_EVIDENCE_GLOB}`, false, false, false),
     ownedDisposables
   );
 
   const controller: WelcomePanelEvidenceWatcher = {
-    watchWorkspace(workspacePath?: string) {
+    watchWorkspace(workspacePath?: string, projectPaths: readonly string[] = []) {
       const normalized = workspacePath?.trim();
-      if (normalized === watchedWorkspacePath) {
+      const roots = [normalized, ...projectPaths.map((item) => item.trim())]
+        .filter((item): item is string => Boolean(item))
+        .map((item) => path.resolve(item))
+        .filter(
+          (item, index, values) =>
+            values.findIndex((candidate) => candidate === item) === index &&
+            !values.some((candidate) => {
+              if (candidate === item) {
+                return false;
+              }
+              const relative = path.relative(candidate, item);
+              return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+            })
+        );
+      const scopeKey = roots.slice().sort().join('\n');
+      if (scopeKey === watchedScopeKey) {
         return;
       }
       for (const disposable of scopedDisposables.splice(0)) {
         disposable.dispose();
       }
-      watchedWorkspacePath = normalized;
+      watchedScopeKey = scopeKey;
       if (!normalized) {
         return;
       }
-      bindWatcher(
-        vscode.workspace.createFileSystemWatcher(
-          new vscode.RelativePattern(vscode.Uri.file(normalized), REPORT_GLOB),
-          false,
-          false,
-          false
-        ),
-        scopedDisposables
-      );
-      bindWatcher(
-        vscode.workspace.createFileSystemWatcher(
-          new vscode.RelativePattern(vscode.Uri.file(normalized), FOUNDATION_GLOB),
-          false,
-          false,
-          false
-        ),
-        scopedDisposables
-      );
+      for (const root of roots) {
+        bindWatcher(
+          vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(vscode.Uri.file(root), GOVERNED_EVIDENCE_GLOB),
+            false,
+            false,
+            false
+          ),
+          scopedDisposables,
+          normalized
+        );
+      }
     },
     dispose() {
       for (const disposable of scopedDisposables.splice(0)) {
@@ -75,7 +95,7 @@ export function registerWelcomePanelDoctorEvidenceWatcher(
       for (const disposable of ownedDisposables.splice(0)) {
         disposable.dispose();
       }
-      watchedWorkspacePath = undefined;
+      watchedScopeKey = undefined;
     },
   };
 

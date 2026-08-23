@@ -301,11 +301,28 @@
 
 .evidence-card-actions {
   position: relative;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+}
+
+.evidence-card-actions > .ws-btn,
+.evidence-card-actions > .evidence-card-actions__overflow {
+  max-width: 100%;
+}
+
+.evidence-card-actions__run {
+  min-width: 0;
 }
 
 .evidence-card-actions__run-label {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .evidence-card-actions__overflow {
@@ -316,6 +333,94 @@
 .evidence-card-actions__overflow-trigger {
   list-style: none;
   min-width: 54px;
+}
+
+/*
+ * Expanded artifact cards contain three independently sized surfaces: identity,
+ * actions, and evidence detail. Keep identity/actions together and give the
+ * detail surface its own bounded column; auto-sized columns allowed graph
+ * previews to push action buttons over the card title at intermediate widths.
+ */
+.command-activity-panel {
+  container-type: inline-size;
+  container-name: evidence-archive;
+}
+
+.command-activity-panel--expanded .command-activity-panel__card {
+  grid-template-columns: minmax(190px, 0.7fr) minmax(320px, 1.3fr);
+  grid-template-areas:
+    'identity detail'
+    'actions detail';
+  align-items: start;
+  min-width: 0;
+}
+
+.command-activity-panel--expanded .command-activity-panel__card-main {
+  grid-area: identity;
+  min-width: 0;
+}
+
+.command-activity-panel--expanded .command-activity-panel__card > .evidence-card-actions {
+  grid-area: actions;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.command-activity-panel--expanded .command-activity-panel__card > .evidence-card-log-drawer {
+  grid-area: detail;
+  width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+}
+
+@container evidence-archive (max-width: 680px) {
+  .command-activity-panel--expanded .command-activity-panel__card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'identity'
+      'actions'
+      'detail';
+  }
+}
+
+@container evidence-archive (max-width: 380px) {
+  .command-activity-panel__card-main {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .command-activity-panel__card-main > .ws-chip {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .evidence-card-actions > .ws-btn:not(.evidence-card-actions__overflow-trigger) {
+    flex: 1 1 auto;
+  }
+}
+
+.command-activity-panel__card,
+.evidence-outcome-panel__item,
+.evidence-attention-inbox__item,
+.repair-flow__card {
+  min-width: 0;
+}
+
+.evidence-attention-inbox__actions,
+.evidence-outcome-panel__actions {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+@container ws-dashboard (max-width: 560px) {
+  .evidence-attention-inbox__item {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .evidence-attention-inbox__actions {
+    justify-content: flex-start;
+    padding: 0 8px 8px;
+  }
 }
 
 .evidence-card-actions__overflow-trigger::-webkit-details-marker {
@@ -1691,7 +1796,8 @@
 .workspace-intelligence-detail-card {
   grid-column: 1 / -1;
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 70%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 70%, transparent);
   border-radius: var(--ws-radius-md, 7px);
   background: transparent;
   overflow: hidden;
@@ -1727,7 +1833,8 @@
 }
 
 .workspace-intelligence-detail-card[open] > .workspace-intelligence-detail-card__summary {
-  border-bottom: 1px solid color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 50%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 50%, transparent);
   background: transparent;
 }
 
@@ -1807,7 +1914,8 @@
   flex-direction: column;
   gap: 6px;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 50%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 50%, transparent);
   border-radius: var(--ws-radius-sm, 6px);
   background: transparent;
 }
@@ -1837,7 +1945,8 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--ws-space-sm, 8px);
-  border: 1px solid color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 60%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 60%, transparent);
   border-radius: var(--ws-radius-md, 7px);
   padding: 12px;
   background: transparent;
@@ -1886,7 +1995,8 @@
   min-width: 0;
   flex-direction: column;
   gap: 7px;
-  border: 1px solid color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 50%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 50%, transparent);
   border-radius: var(--ws-radius-sm, 6px);
   padding: 8px 10px;
   background: transparent;
@@ -2045,7 +2155,8 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 60%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 60%, transparent);
   border-radius: var(--ws-radius-md, 7px);
   background: transparent;
 }
@@ -2062,11 +2173,7 @@
     var(--ws-warning, #d9a441) 30%,
     color-mix(in srgb, var(--ws-border-subtle, var(--vscode-panel-border)) 60%, transparent)
   );
-  background: color-mix(
-    in srgb,
-    var(--ws-warning, #d9a441) 5%,
-    transparent
-  );
+  background: color-mix(in srgb, var(--ws-warning, #d9a441) 5%, transparent);
 }
 
 .workspace-graph-preview--empty p {
@@ -3223,8 +3330,8 @@
 
 .ws-dashboard-context-bar {
   display: block;
-  margin: 10px 0 12px;
-  padding: 8px 10px;
+  margin: 6px 0 8px;
+  padding: 5px 7px;
   border: 1px solid var(--ws-border-subtle);
   border-radius: var(--ws-radius-md);
   background: color-mix(in srgb, var(--ws-surface-raised) 55%, var(--ws-surface));
@@ -3254,8 +3361,8 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 58px;
-  padding: 5px 6px;
+  min-height: 42px;
+  padding: 4px 5px;
   border-radius: var(--ws-radius-sm);
   border: 1px solid var(--ws-border-subtle);
   background: color-mix(in srgb, var(--ws-surface) 54%, transparent);
@@ -3286,7 +3393,7 @@
 
 .ws-dashboard-context-bar__body {
   min-width: 0;
-  min-height: 38px;
+  min-height: 30px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -3436,9 +3543,9 @@
 .dashboard-operate-sub-nav {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
-  margin: 0 0 12px;
-  padding: 8px;
+  gap: 3px;
+  margin: 0 0 8px;
+  padding: 4px;
   position: sticky;
   top: 0;
   z-index: 7;
@@ -3463,12 +3570,12 @@
 .dashboard-operate-sub-nav__tab {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   gap: 2px;
   min-width: 0;
-  min-height: 52px;
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 6px 8px;
   border: 1px solid var(--ws-border-subtle);
   border-radius: var(--ws-radius-sm);
   background: color-mix(in srgb, var(--ws-surface) 80%, transparent);
@@ -4846,13 +4953,15 @@
 
 .repair-flow__card.is-selected {
   border-color: color-mix(in srgb, var(--ws-accent) 45%, var(--ws-border-subtle));
+  background: color-mix(in srgb, var(--ws-accent) 7%, var(--ws-surface));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--ws-accent) 25%, transparent);
 }
 
 .repair-flow__card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -4863,10 +4972,16 @@
 }
 
 .repair-flow__card-select {
-  flex: 1;
+  display: inline-flex;
+  flex: 1 1 150px;
   min-width: 0;
-  padding: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -4px 0 -4px -4px;
+  padding: 4px;
   border: 0;
+  border-radius: var(--ws-radius-sm);
   background: transparent;
   color: var(--ws-text);
   font-size: 11.5px;
@@ -4874,6 +4989,42 @@
   line-height: 1.25;
   text-align: left;
   cursor: pointer;
+}
+
+.repair-flow__card-select:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ws-accent) 9%, transparent);
+}
+
+.repair-flow__card-select:focus-visible {
+  outline: 1px solid var(--ws-focus);
+  outline-offset: 2px;
+}
+
+.repair-flow__card-select-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repair-flow__card-select-cue {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  min-height: 20px;
+  padding: 1px 5px 1px 7px;
+  border: 1px solid var(--ws-border-subtle);
+  border-radius: 999px;
+  color: var(--ws-text-muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.repair-flow__card-select-cue.is-active {
+  border-color: color-mix(in srgb, var(--ws-accent) 44%, var(--ws-border-subtle));
+  background: color-mix(in srgb, var(--ws-accent) 13%, transparent);
+  color: var(--ws-accent);
 }
 
 .repair-flow__card-select:disabled {
@@ -4903,6 +5054,8 @@
 
 .repair-flow__card-actions .evidence-card-actions {
   display: flex;
+  width: 100%;
+  min-width: 0;
   flex-wrap: wrap;
   gap: 4px;
 }

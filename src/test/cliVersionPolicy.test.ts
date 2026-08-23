@@ -79,7 +79,7 @@ describe('cliVersionPolicy', () => {
       expect(formatCliVersionMismatchMessage(assessCliVersion('0.1.0'))).toContain(
         MIN_RAPIDKIT_CLI_VERSION
       );
-      expect(formatCliVersionMismatchMessage(assessCliVersion(null))).toContain('detect');
+      expect(formatCliVersionMismatchMessage(assessCliVersion(null))).toContain('Open Setup');
       expect(formatCliVersionMismatchMessage(assessCliVersion('2.0.0'))).toBe('');
     });
   });

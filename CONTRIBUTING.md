@@ -28,6 +28,51 @@ code .
 Press `F5` to open an Extension Development Host. Use a disposable Workspai
 workspace when testing create, adopt, import, repair, or mutation flows.
 
+### Develop against an unpublished CLI
+
+When the sibling Workspai CLI contains changes that are not on npm yet, activate
+the explicit local candidate channel:
+
+```bash
+corepack npm run sync:cli-local -- --cli ../workspai/packages/cli
+```
+
+This command builds the CLI checkout, synchronizes its canonical contracts, and
+creates an integrity-bound embedded runtime for the Extension Development Host.
+Its machine-local receipt is git-ignored, and no local path is written to the
+runtime manifest. Re-run the command after CLI source or contract changes.
+
+```bash
+corepack npm run check:cli-local -- --cli ../workspai/packages/cli
+corepack npm run clear:cli-local
+```
+
+`clear:cli-local` restores the npm-pinned verified runtime. Release and VSIX
+builds always ignore the local receipt, rebuild from the exact release-policy
+version, require every mirrored contract to match that installed npm package,
+and reject a `local-candidate` runtime during artifact inspection.
+After the CLI is published, update the single release policy and run
+`sync:cli-release-policy`; do not commit the local candidate receipt.
+
+VSIX packaging has two explicit outputs:
+
+```bash
+corepack npm run package:release
+corepack npm run package:local -- --cli ../workspai/packages/cli
+corepack npm run package
+```
+
+`package:release` preserves the Marketplace filename and embeds only the
+published CLI selected by release policy. `package:local` always rebuilds the
+latest local checkout and writes a `-local-cli-<version>.vsix` artifact.
+`package` always attempts both variants, release first and local second. Release
+packaging temporarily projects contracts from the exact npm-pinned CLI and then
+restores the development mirrors byte-for-byte before local packaging. A
+failure in either channel does not prevent the other channel from being
+attempted, but the command exits non-zero unless both artifacts pass. The local
+artifact remains fully integrity-checked and path-clean, but the Marketplace
+publish guard rejects it.
+
 ## Architecture boundaries
 
 ```text

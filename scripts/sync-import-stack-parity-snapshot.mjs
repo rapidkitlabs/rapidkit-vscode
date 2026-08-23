@@ -25,6 +25,7 @@ const SRC_CONTRACT_MIRROR_FILES = [
 
 const args = new Set(process.argv.slice(2));
 const checkOnly = args.has('--check');
+const releasePackage = args.has('--release-package');
 // CI gate flag: fail (instead of skip) when the canonical Workspai CLI repo is
 // not present. Use this in a dedicated job that checks out both repos so cross-
 // repo contract drift fails the build. The default (resilient) behavior lets the
@@ -33,9 +34,11 @@ const checkOnly = args.has('--check');
 const requireCanonical = args.has('--require-canonical');
 
 const extensionRoot = path.resolve(process.cwd());
-const workspaiCliRoot = process.env.WORKSPAI_CLI_REPO_PATH
-  ? path.resolve(process.env.WORKSPAI_CLI_REPO_PATH)
-  : path.resolve(extensionRoot, '..', 'workspai', 'packages', 'cli');
+const workspaiCliRoot = releasePackage
+  ? path.resolve(extensionRoot, 'node_modules', 'workspai')
+  : process.env.WORKSPAI_CLI_REPO_PATH
+    ? path.resolve(process.env.WORKSPAI_CLI_REPO_PATH)
+    : path.resolve(extensionRoot, '..', 'workspai', 'packages', 'cli');
 
 function readCanonical(fileName) {
   const canonicalPath = path.resolve(workspaiCliRoot, 'contracts', fileName);

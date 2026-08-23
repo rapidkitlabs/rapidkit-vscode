@@ -99,14 +99,14 @@ describe('shared runtime command surface contract (extension)', () => {
         .map((entry) => entry.id),
     ];
     expect(defaultKitEnum).toEqual(executableCreateIds);
-    for (const kit of contract.scaffoldKits) {
-      expect(scaffoldKits, kit).toContain(kit);
-    }
+    expect(executableCreateIds).toEqual(expect.arrayContaining(contract.scaffoldKits));
+    expect(scaffoldKits).toContain('createContract');
+    expect(scaffoldKits).toContain('EXECUTABLE_CREATE_ENTRIES');
+    expect(scaffoldKits).toContain('SCAFFOLD_KIT_IDS = EXECUTABLE_CREATE_ENTRIES.map');
     expect(rapidkitCli).toContain('SCAFFOLD_KIT_IDS');
     expect(rapidkitCli).toContain('./scaffoldKits');
     expect(kitsService).toContain("from './scaffoldKits'");
     expect(kitsService).toContain('FRONTEND_SCAFFOLD_KITS');
-    expect(executableCreateIds).toEqual(expect.arrayContaining(contract.scaffoldKits));
     for (const kitId of executableCreateIds.filter(
       (kitId) => !contract.scaffoldKits.includes(kitId)
     )) {

@@ -291,9 +291,14 @@ describe('dashboardCommandRegistry', () => {
       const binding = resolveReportBinding(path.join('/tmp/ws/.rapidkit/reports', artifact));
       expect(binding?.command, artifact).toBe(command);
       expect(resolveDashboardCommandContract(command), artifact).toBeDefined();
-      expect(resolveEvidenceCardIdsForDashboardCommand(command), command).toContain(
-        binding?.cardId
-      );
+      if (binding?.cardId) {
+        expect(resolveEvidenceCardIdsForDashboardCommand(command), command).toContain(
+          binding.cardId
+        );
+      } else {
+        expect(artifact).toBe('artifact-remediation-plan-last-run.json');
+        expect(resolveEvidenceCardIdsForDashboardCommand(command), command).toEqual([]);
+      }
     }
   });
 
@@ -822,9 +827,12 @@ describe('dashboardCommandRegistry', () => {
     ).toMatchObject({
       kind: 'artifact-remediation-plan',
       command: 'workspaceRemediationPlan',
-      cardId: 'remediationPlan',
       scope: 'workspace',
     });
+    expect(
+      resolveReportBinding('/workspace/.rapidkit/reports/artifact-remediation-plan-last-run.json')
+        ?.cardId
+    ).toBeUndefined();
     expect(
       resolveReportBinding('/workspace/.rapidkit/reports/doctor-remediation-plan-last-run.json')
     ).toMatchObject({
@@ -841,9 +849,7 @@ describe('dashboardCommandRegistry', () => {
       cardId: 'doctor',
       scope: 'workspace',
     });
-    expect(resolveEvidenceCardIdsForDashboardCommand('workspaceRemediationPlan')).toContain(
-      'remediationPlan'
-    );
+    expect(resolveEvidenceCardIdsForDashboardCommand('workspaceRemediationPlan')).toEqual([]);
     expect(resolveDashboardCommandForEvidenceCard('workspaceExplain')).toBe('workspaceExplain');
   });
 

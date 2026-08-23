@@ -7,6 +7,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-08-22
+
+### Added
+
+- Added a model-driven Create intent router that understands the active Create
+  surface, canonical workspace ownership, current target, selected scope, and
+  the executable kit capability contract before any plan or mutation begins.
+  Greetings, product questions, ambiguous requests, adopt/import requests, and
+  existing-source work now follow distinct, bounded paths instead of becoming
+  an arbitrary scaffold plan.
+- Added conversational Create guidance with one explicit next action. The user
+  can clarify in the same session, switch the authoritative workspace/project
+  target, open adopt/import, or hand an existing-source request to governed
+  Agent without losing the original request.
+- Added a bounded Create capability host. Before proposing a plan, the model
+  must inspect the portable Create context and canonical executable capability
+  contract; it can request architecture guidance and then submit exactly one
+  non-mutating plan proposal.
+- Added controller-owned `execute-approved-create-plan` orchestration for new
+  workspaces, projects in the active user-selected workspace, optional
+  companion projects, Workspace Intelligence synchronization, and project-view
+  refresh. Raw workspace, project, package-manager, and sync mutations are not
+  exposed to the model.
+- Added an integrity-checked Workspai CLI runtime to the VSIX. First-run Create,
+  adopt, intelligence, Doctor, Graph, Agent, and Goal operations no longer
+  depend on a global CLI or the shared mutable `npx` cache.
+- Added one typed, single-flight workspace-creation operation for AI Create and
+  manual sidebar Create. Retry remains bound to the same validated creation
+  plan, while technical diagnostics stay in the Workspai Output channel.
+
+### Fixed
+
+- Made Dashboard evidence generation-atomic and dependency-aware. A governed
+  artifact write patches its owning card plus cards whose freshness depends on
+  it; unknown orchestration or transaction state falls back to a complete
+  snapshot. Studio rebinds its card after every producer, CLI transaction, or
+  verification result, so Dashboard and chat cannot retain different blocker
+  generations.
+- Bound stale-evidence repair to the exact upstream producer. Doctor, Analyze,
+  Readiness, Pipeline, Contract, Model, Impact, Context, and related producer
+  failures refresh their canonical artifact before verification; real source
+  and runtime findings continue through the causal remediation queue instead of
+  looping on aggregate Verify.
+- Rebound Sidebar and native Chat handoffs to current Dashboard evidence before
+  constructing a model session. Persisted sessions whose blocker signature no
+  longer matches are not resumed against obsolete evidence.
+- Completed the dependency-security capability plane for card-bound Agent
+  sessions while hiding unsupported tools from free-form hosts. The model now
+  sees only executable tools and can inspect, repair, upgrade, close, and verify
+  a CLI-owned dependency transaction without dead-tool retries.
+- Made Review and Undo transaction-safe. Review failures are visible, Undo is
+  bound to the exact workspace and session, controls are disabled while a
+  repair owns source, historical steps cannot be undone, and hydrated rollback
+  state removes reverted files and invalidates prior completion.
+- Kept explicit Agent authority intact for question-shaped input. Informational
+  questions remain read-only by policy, while explicit fix, change, create,
+  implement, remove, and repair requests retain the full governed Agent loop.
+- Fixed stale or missing evidence cards entering a source-mutation loop. Sidebar
+  Studio and native Chat now rebuild and consume the CLI-authored causal
+  remediation queue before involving the model; only a genuine unresolved
+  source cause widens into governed source repair. Resume continues from the
+  refreshed queue instead of repeating a no-op card-wide transaction.
+- Removed duplicate Explain, Why, and Trace entries from the Repair queue. These
+  derived artifacts remain available for inspection, while the canonical
+  producer card owns repair. Primary card copy now hides raw timestamps and
+  presents concise evidence guidance, with full diagnostics kept behind details.
+- Replaced long npm package-runner commands in Workspai terminals with the
+  ordinary `workspai ...` command surface. Each terminal is still bound to the
+  integrity-checked CLI embedded in the extension, so shorter commands do not
+  depend on a global installation or weaken version guarantees.
+- Fixed ordinary Create-tab messages such as greetings or questions being
+  coerced into a default FastAPI creation plan. Planning now requires an
+  explicit, high-confidence create intent and a self-contained brief assembled
+  from the bounded Create conversation.
+- Bound every AI creation approval to an expiring SHA-256 plan digest, immutable
+  Create session, and target-aware destination. A new workspace is independent
+  of volatile sidebar selection, while a new project is locked to the active
+  user-selected canonical workspace. Edited, stale, replayed, concurrent, or
+  cross-workspace approvals fail closed with an actionable re-draft path.
+- Prevented asynchronous scope hydration or an older conversation from silently
+  changing an explicit Workspace/Project selector choice. Project plans now
+  display their actual active-workspace destination instead of an unused model
+  workspace suggestion; workspace plans explicitly state that their proposed
+  workspace will be created before the first project.
+- Restricted automatic Create retries to failures proven to occur before source
+  mutation. Generator, partial-workspace, and post-create verification failures
+  now require review and a fresh plan instead of replaying a possibly partial
+  scaffold.
+- Kept host installation policy out of model proposals. AI Create now delegates
+  Python bootstrap selection to the verified runtime's `auto` policy, preventing
+  a valid product plan from failing because the model selected an unavailable
+  local installer such as pipx.
+- Prevented Create conversation responses from echoing the user's message or
+  returning generic model identity disclaimers; social turns now remain concise
+  and native to the Create experience.
+- Separated application topology from runtime profile selection. Delegated
+  full-stack plans now prefer the portable Next.js + NestJS `node-only` lane;
+  `polyglot` is reserved for genuinely different runtime families or an
+  explicit multi-runtime request, while explicitly requested frameworks remain
+  authoritative.
+- Python-required AI Create plans now validate Python version and venv support
+  before workspace mutation. Missing prerequisites return one actionable,
+  portable Create result instead of opening a nested modal or collapsing into a
+  generic creation failure.
+- Removed the duplicate frontend capability probe from packaged Create
+  execution. Workspace and project scaffolding now share the same
+  integrity-checked bundled CLI authority, so a transient secondary probe
+  cannot reject a runtime that just created the workspace.
+- Added an Electron-aware launcher for the embedded CLI. Commander now receives
+  Node-style arguments inside the packaged VS Code Extension Host, preventing
+  Doctor and other valid commands from being reported as missing capabilities.
+- Unified CLI authority across background execution, capability probes, Studio,
+  Dashboard, and user-visible terminal commands. Internal operations use the
+  integrity-bound runtime, terminal commands use the exact CLI release verified
+  by the extension contract, and composed gates present one actionable error at
+  the UI boundary instead of duplicate capability notifications.
+- Decoupled the optional Python engine from the `polyglot` profile. AI Create
+  installs it only when the approved plan contains a Python-backed project;
+  Node-only polyglot and enterprise workspaces can remain lightweight.
+- Removed duplicated framework-to-kit inventories from AI planning. Routing,
+  tool schemas, normalization, and execution now project one canonical scaffold
+  capability map.
+- Fixed first-run AI Create failing with npm `ENOTEMPTY` after the managed
+  Workspai directory had been removed. Internal CLI execution is now isolated
+  from npm cache races and verified against the extension release policy.
+- Fixed AI Create continuing into project scaffolding after the nested
+  `workspai.createWorkspace` command had swallowed the real failure and then
+  reporting a misleading local workspace path.
+- Removed synthetic fallback workspaces. A creation result is successful only
+  after canonical workspace markers pass verification; otherwise Create stops
+  with a portable, actionable error and leaves project scaffolding untouched.
+- Derived every Create profile, executable kit, runtime candidate, default kit,
+  and Python-engine decision from the CLI-published Create Planner contract.
+  The extension no longer maintains a second creation architecture that can
+  drift from the CLI.
+- Renamed the explicit post-create Bootstrap action to Initialize dependencies
+  and kept it separate from Create. New workspaces and projects finish with
+  synchronized canonical intelligence; dependency installation and strict
+  verification run only when the user requests those lifecycle operations.
+
+### Security
+
+- The packaged CLI runtime has an exact SHA-256 file inventory, rejects
+  traversal and symbolic links, fails closed when missing or incompatible, and
+  carries generated third-party notices and license files in the VSIX.
+
 ## [0.42.0] - 2026-08-21
 
 ### Added
@@ -2804,7 +2950,9 @@ Thank you for using RapidKit! 🚀
 
 ---
 
-[Unreleased]: https://github.com/chistiq/rapidkit-vscode/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/chistiq/rapidkit-vscode/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.41.0...v0.42.0
+[0.41.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.37.0...v0.38.0

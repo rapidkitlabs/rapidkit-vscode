@@ -44,6 +44,8 @@ import {
   type WorkspaceRepairProgress,
 } from './workspaceRepairCliClient.js';
 import { buildDashboardEvidenceBundle } from './dashboardEvidenceBridge.js';
+import { buildStudioBlockerHandoff } from './studioBlockerHandoffBuilder.js';
+import { resolveStudioCausalProducerRoute } from './studioCausalProducerRouter.js';
 import {
   isExpectedDiagnosticFindingExit,
   runIncidentInlineCommand,
@@ -52,6 +54,10 @@ import {
   clearDoctorRemediationPlanCache,
   readDoctorRemediationPlanForStudio,
 } from './doctorRemediationPlanReader.js';
+import {
+  ensureStudioRemediationRecovery,
+  selectStudioRemediationRecoveryStep,
+} from './studioRemediationRecovery.js';
 import {
   applyStudioGovernedCommandReuse,
   preserveAllAgentConsumersForStudioRefresh,
@@ -124,21 +130,36 @@ export async function runNativeChatStudioAgent(input: {
   });
   requireReadyProjectAgentBootstrap(projectBootstrap);
 
+  let activeHandoff = input.handoff;
+  const initialEvidenceBundle = await buildDashboardEvidenceBundle({
+    workspacePath: input.workspacePath,
+    projectPath: input.projectPath,
+  });
+  const currentCard = initialEvidenceBundle.cards.find((card) => card.id === input.handoff.cardId);
+  if (currentCard) {
+    activeHandoff = await buildStudioBlockerHandoff({
+      card: currentCard,
+      workspacePath: input.workspacePath,
+      projectPath: input.projectPath,
+      handoffSource: 'dashboard',
+      extensionContext: input.extensionContext,
+    });
+  }
   let repairEvidence = await collectSidebarStudioRepairEvidence({
     workspacePath: input.workspacePath,
     projectPath: input.projectPath,
-    handoff: input.handoff,
+    handoff: activeHandoff,
   });
-  const cardRepairCapability = requireStudioCardRepairCapability(input.handoff.cardId);
+  const cardRepairCapability = requireStudioCardRepairCapability(activeHandoff.cardId);
   const inspectedSource = new Map<string, string | null>();
   const commandGenerations = new Map<StudioEvidenceRefreshCommandId, string>();
   const commandAttempts = new Map<
     StudioEvidenceRefreshCommandId,
     { blockerSignature?: string; evidenceGeneration: string; count: number }
   >();
-  const activeBlockerSignature = input.handoff.blockerSignature;
+  let activeBlockerSignature = activeHandoff.blockerSignature;
   const projectName = resolveStudioRepairProjectTarget({
-    affectedProjectNames: input.handoff.affectedProjectNames,
+    affectedProjectNames: activeHandoff.affectedProjectNames,
     projectPath: input.projectPath,
   });
   const reportProgress = (callback?: (data: Record<string, unknown>) => Promise<void>) =>
@@ -161,7 +182,7 @@ export async function runNativeChatStudioAgent(input: {
     repairEvidence = await collectSidebarStudioRepairEvidence({
       workspacePath,
       projectPath: input.projectPath,
-      handoff: input.handoff,
+      handoff: activeHandoff,
     });
     return execution;
   };
@@ -172,7 +193,7 @@ export async function runNativeChatStudioAgent(input: {
     repairEvidence = await collectSidebarStudioRepairEvidence({
       workspacePath: input.workspacePath,
       projectPath: input.projectPath,
-      handoff: input.handoff,
+      handoff: activeHandoff,
     });
     return presentStudioCliOwnedRepairObservation({
       result,
@@ -196,7 +217,7 @@ export async function runNativeChatStudioAgent(input: {
   }) => {
     const result = await executeCliOwnedCanonicalRepair({
       workspacePath: request.workspacePath,
-      cardId: input.handoff.cardId,
+      cardId: activeHandoff.cardId,
       projectName: request.projectName ?? projectName,
       ...(request.actionId ? { actionId: request.actionId } : {}),
       approvedBy: 'vscode:native-chat-agent',
@@ -207,21 +228,38 @@ export async function runNativeChatStudioAgent(input: {
 
   const host: StudioAgentWorkspaiToolHost = {
     recoverActiveBlocker: async (request) => {
-      clearDoctorRemediationPlanCache();
-      const plan = await readDoctorRemediationPlanForStudio({
+      const producerRoute = resolveStudioCausalProducerRoute(activeHandoff);
+      if (producerRoute) {
+        const producerResult = await host.runGovernedCommand({
+          commandId: producerRoute.commandId,
+          workspacePath: request.workspacePath,
+          projectPath: request.projectPath,
+          reportProgress: request.reportProgress,
+        });
+        return {
+          ...producerResult,
+          changed: false,
+          output: {
+            ...(producerResult.output && typeof producerResult.output === 'object'
+              ? producerResult.output
+              : {}),
+            producerRefreshCommandId: producerRoute.commandId,
+            producerRefreshReason: producerRoute.reason,
+            nextAction: producerResult.ok ? 'verify-blocker' : 'inspect-remediation-plan',
+          },
+        };
+      }
+      const recovery = await ensureStudioRemediationRecovery({
         workspacePath: request.workspacePath,
         handoff: {
-          ...input.handoff,
+          ...activeHandoff,
           ...(request.projectPath ? { projectPath: request.projectPath } : {}),
         },
-        maxSteps: 8,
+        projectPath: request.projectPath,
+        maxSteps: 64,
+        actionId: 'native-chat-repair-plan-preflight',
       });
-      const step = plan?.visibleSteps.find(
-        (candidate) =>
-          candidate.risk !== 'invasive' &&
-          (candidate.studioState === 'ready' || candidate.studioState === 'review-required') &&
-          (candidate.canApply || candidate.executable)
-      );
+      const step = selectStudioRemediationRecoveryStep(recovery.plan, activeHandoff);
       if (!step) {
         return {
           ok: false,
@@ -238,8 +276,11 @@ export async function runNativeChatStudioAgent(input: {
               'run-workspace-command',
               'apply-workspace-patch',
             ],
+            remediationPlanRefreshed: recovery.refreshed,
+            ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
           },
           error:
+            recovery.refreshError ??
             'No exact executable action matches the active blocker. Continue with inspected source repair; do not create a card-wide transaction.',
         };
       }
@@ -355,8 +396,8 @@ export async function runNativeChatStudioAgent(input: {
         workspacePath: request.workspacePath,
         projectPath: request.projectPath,
         projectName,
-        cardId: input.handoff.cardId,
-        blockerSignature: input.handoff.blockerSignature,
+        cardId: activeHandoff.cardId,
+        blockerSignature: activeBlockerSignature,
         approvedBy: 'vscode:native-chat-agent',
         patches: normalized.map((patch) => ({
           relativePath: patch.relativePath,
@@ -568,10 +609,25 @@ export async function runNativeChatStudioAgent(input: {
               projectPath: request.projectPath,
               actionId: `native-chat-${request.commandId}`,
             });
+      const refreshedBundle = await buildDashboardEvidenceBundle({
+        workspacePath: request.workspacePath,
+        projectPath: request.projectPath,
+      });
+      const refreshedCard = refreshedBundle.cards.find((card) => card.id === activeHandoff.cardId);
+      if (refreshedCard) {
+        activeHandoff = await buildStudioBlockerHandoff({
+          card: refreshedCard,
+          workspacePath: request.workspacePath,
+          projectPath: request.projectPath,
+          handoffSource: 'dashboard',
+          extensionContext: input.extensionContext,
+        });
+        activeBlockerSignature = activeHandoff.blockerSignature;
+      }
       repairEvidence = await collectSidebarStudioRepairEvidence({
         workspacePath: request.workspacePath,
         projectPath: request.projectPath,
-        handoff: input.handoff,
+        handoff: activeHandoff,
       });
       const producerCompleted = execution.exitCode === 0 || execution.exitCode === 2;
       const intelligenceRun =
@@ -609,7 +665,7 @@ export async function runNativeChatStudioAgent(input: {
       const plan = await readDoctorRemediationPlanForStudio({
         workspacePath: request.workspacePath,
         handoff: {
-          ...input.handoff,
+          ...activeHandoff,
           ...(request.projectPath ? { projectPath: request.projectPath } : {}),
         },
         maxSteps: 64,
@@ -688,7 +744,7 @@ export async function runNativeChatStudioAgent(input: {
               repairEvidence = await collectSidebarStudioRepairEvidence({
                 workspacePath: request.workspacePath,
                 projectPath: request.projectPath,
-                handoff: input.handoff,
+                handoff: activeHandoff,
               });
               return {
                 ok: true,
@@ -808,7 +864,7 @@ export async function runNativeChatStudioAgent(input: {
       }),
     verify: async (request) => {
       const execution = await runIncidentInlineCommand({
-        command: input.handoff.verifyCommand ?? input.handoff.sourceCommand,
+        command: activeHandoff.verifyCommand ?? activeHandoff.sourceCommand,
         workspacePath: request.workspacePath,
         projectPath: request.projectPath,
         actionId: 'native-chat-agent-verify',
@@ -818,19 +874,39 @@ export async function runNativeChatStudioAgent(input: {
         projectPath: request.projectPath,
         projectName,
       });
-      const card = bundle.cards.find((entry) => entry.id === input.handoff.cardId);
+      const card = bundle.cards.find((entry) => entry.id === activeHandoff.cardId);
       const cardBlocking = card ? (card.blocking ?? card.status === 'fail') : true;
+      const previousBlockerSignature = activeBlockerSignature;
+      if (card) {
+        activeHandoff = await buildStudioBlockerHandoff({
+          card,
+          workspacePath: request.workspacePath,
+          projectPath: request.projectPath,
+          handoffSource: 'dashboard',
+          extensionContext: input.extensionContext,
+        });
+        activeBlockerSignature = activeHandoff.blockerSignature;
+        repairEvidence = await collectSidebarStudioRepairEvidence({
+          workspacePath: request.workspacePath,
+          projectPath: request.projectPath,
+          handoff: activeHandoff,
+        });
+      }
       const incident = buildStudioIncidentGraph({
-        primaryCardId: input.handoff.cardId,
+        primaryCardId: activeHandoff.cardId,
         cards: bundle.cards,
       });
       const evidenceProduced = execution.exitCode === 0 || execution.exitCode === 2;
       return {
         ok: evidenceProduced && !cardBlocking,
         cardBlocking,
+        blockerSignature: activeBlockerSignature,
+        evidenceGeneration: repairEvidence.evidenceFingerprint,
         output: {
           execution,
-          cardVerification: { cardId: input.handoff.cardId, resolved: !cardBlocking },
+          previousBlockerSignature,
+          nextAction: cardBlocking ? 'next-causal-target' : 'complete',
+          cardVerification: { cardId: activeHandoff.cardId, resolved: !cardBlocking },
           workspaceVerification: {
             resolved: incident.resolved,
             blockingCards: incident.blockingCards,
@@ -848,17 +924,17 @@ export async function runNativeChatStudioAgent(input: {
 
   const objective = [
     input.task,
-    `Card: ${input.handoff.cardLabel ?? input.handoff.cardId}`,
-    `Blockers: ${input.handoff.blockers.join('; ')}`,
-    `Verify command: ${input.handoff.verifyCommand}`,
+    `Card: ${activeHandoff.cardLabel ?? activeHandoff.cardId}`,
+    `Blockers: ${activeHandoff.blockers.join('; ')}`,
+    `Verify command: ${activeHandoff.verifyCommand}`,
     repairEvidence.promptSection,
     'Inspect causal project source before editing. Canonical .workspai/.rapidkit state and evidence are never source targets. Use apply-workspace-patch for every source mutation. The CLI owns checkpoint, validation, verification, closure, and rollback.',
     'JSON files (.json) must contain strictly valid JSON. Never include comments, trailing commas, or non-standard syntax in .json file content.',
   ].join('\n\n');
   const registry = createStudioAgentWorkspaiToolRegistry({
     host,
-    cardId: input.handoff.cardId,
-    blockerSignature: input.handoff.blockerSignature,
+    cardId: activeHandoff.cardId,
+    blockerSignature: activeHandoff.blockerSignature,
     assistantMode: 'agent',
   });
   const model = new ContractStudioAgentModelAdapter(
@@ -890,10 +966,10 @@ export async function runNativeChatStudioAgent(input: {
     {
       workspacePath: input.workspacePath,
       ...(input.projectPath ? { projectPath: input.projectPath } : {}),
-      cardId: input.handoff.cardId,
+      cardId: activeHandoff.cardId,
       assistantMode: 'agent',
       ...(input.requestedModelId ? { selectedModelId: input.requestedModelId } : {}),
-      blockerSignature: input.handoff.blockerSignature,
+      blockerSignature: activeHandoff.blockerSignature,
       repairPolicy: cardRepairCapability.repairPolicy,
       ...(input.initialSourceRepairDirective
         ? { initialSourceRepairDirective: input.initialSourceRepairDirective }

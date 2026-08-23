@@ -8,6 +8,7 @@ import {
   resolveCardForReportKind,
   sanitizeDashboardEvidenceText,
 } from '../core/dashboardEvidenceBridge';
+import { DASHBOARD_EVIDENCE_CARD_IDS } from '../contracts/dashboardEvidenceCards';
 
 describe('dashboardEvidenceBridge', () => {
   const tempDirs: string[] = [];
@@ -352,6 +353,32 @@ describe('dashboardEvidenceBridge', () => {
     expect(bundle.cards.some((card) => card.id === 'analyze' && card.status === 'missing')).toBe(
       true
     );
+    const expectedWorkspaceCards = DASHBOARD_EVIDENCE_CARD_IDS.filter(
+      (cardId) => cardId !== 'projectDoctor' && cardId !== 'importReadiness'
+    );
+    expect(bundle.cards.map((card) => card.id).sort()).toEqual(expectedWorkspaceCards.sort());
+    expect(new Set(bundle.cards.map((card) => card.id)).size).toBe(bundle.cards.length);
+    expect(bundle.cards.find((card) => card.id === 'share')?.status).toBe('missing');
+    expect(bundle.cards.find((card) => card.id === 'snapshot')?.status).toBe('missing');
+  });
+
+  it('returns every project-scoped card explicitly when a project is selected', async () => {
+    const workspacePath = await createWorkspaceWithReports({});
+    const projectPath = path.join(workspacePath, 'api');
+    await fs.ensureDir(projectPath);
+
+    const bundle = await buildDashboardEvidenceBundle({
+      workspacePath,
+      projectPath,
+      projectName: 'api',
+    });
+
+    expect(bundle.cards.map((card) => card.id).sort()).toEqual(
+      [...DASHBOARD_EVIDENCE_CARD_IDS].sort()
+    );
+    expect(new Set(bundle.cards.map((card) => card.id)).size).toBe(bundle.cards.length);
+    expect(bundle.cards.find((card) => card.id === 'projectDoctor')?.status).toBe('missing');
+    expect(bundle.cards.find((card) => card.id === 'importReadiness')?.status).toBe('missing');
   });
 
   it('surfaces malformed JSON artifacts as failed corrupt cards instead of missing evidence', async () => {

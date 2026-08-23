@@ -6,6 +6,7 @@ import {
   MIN_RAPIDKIT_CLI_VERSION,
   VERIFIED_RAPIDKIT_CLI_VERSION,
 } from '../core/cliVersionCompatibilityContract';
+import releasePolicy from '../../contracts/extension-cli-release-policy.v1.json';
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const roadmapRoot = path.resolve(repoRoot, '..', 'Docs', 'workspai', 'new plan');
@@ -25,15 +26,13 @@ function readRoadmapFile(fileName: string): string {
 describe('RC baseline contract', () => {
   it('pins the current release line while preserving the historical RC record', () => {
     const packageJson = readJson<{ version: string }>('package.json');
-    const matrix = readJson<{ npmTruthBaseline: string }>(
-      'releases/enterprise-validation-matrix.json'
-    );
+    const matrix = readJson<Record<string, unknown>>('releases/enterprise-validation-matrix.json');
     const baseline = readRoadmapFile('WORKSPAI_EXTENSION_RC_BASELINE_2026-06-28.md');
 
-    expect(packageJson.version).toBe('0.42.0');
-    expect(MIN_RAPIDKIT_CLI_VERSION).toBe('0.63.0');
-    expect(VERIFIED_RAPIDKIT_CLI_VERSION).toBe('0.63.0');
-    expect(matrix.npmTruthBaseline).toBe(VERIFIED_RAPIDKIT_CLI_VERSION);
+    expect(packageJson.version).toBe(releasePolicy.extensionVersion);
+    expect(MIN_RAPIDKIT_CLI_VERSION).toBe(releasePolicy.minimumCliVersion);
+    expect(VERIFIED_RAPIDKIT_CLI_VERSION).toBe(releasePolicy.verifiedCliVersion);
+    expect(matrix).not.toHaveProperty('npmTruthBaseline');
     expect(baseline).toContain('rapidkit@0.42.0');
     expect(baseline).toContain('rapidkit-vscode@0.35.0');
   });

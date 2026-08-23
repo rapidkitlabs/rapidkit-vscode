@@ -35,9 +35,12 @@ import {
   validateCreationPlanForExecution,
   UnsupportedCreationStackError,
 } from '../../core/aiService';
-import { resolveNewWorkspacePath } from '../../core/workspacePaths';
 import { ensureManagedDefaultWorkspace } from '../../core/ensureManagedDefaultWorkspace';
 import { createProjectCommand } from '../../commands/createProject';
+import {
+  createManagedWorkspace,
+  describePortableCreationFailure,
+} from '../../core/workspaceCreationService';
 import { WorkspaiCLI } from '../../core/rapidkitCLI';
 import { WorkspaceManager } from '../../core/workspaceManager';
 import { readWorkspaiSettings, setWorkspaiPreferredModel } from '../../core/workspaiSettingsBridge';
@@ -60,6 +63,21 @@ import {
   routeAssistantIntent,
   type AssistantIntentRoute,
 } from '../../core/assistantIntentRouter.js';
+import { routeCreateIntent } from '../../core/createIntentRouter.js';
+import {
+  runCreateCapabilityPlanning,
+  type CreateCapabilityToolDefinition,
+} from '../../core/createCapabilityHost.js';
+import {
+  CreatePlanApprovalStore,
+  createScopeBinding,
+  parseCreatePlanAuthorization,
+} from '../../core/createPlanApproval.js';
+import { bindCreatePlanDestination } from '../../core/createPlanDestination.js';
+import {
+  CreateExecutionCapabilityError,
+  executeApprovedCreatePlan,
+} from '../../core/createExecutionCapability.js';
 import {
   assistantExecutionPolicyInstruction,
   parseAssistantExecutionPolicy,
@@ -68,7 +86,7 @@ import {
 } from '../../core/assistantExecutionPolicy.js';
 import { buildCoreRapidkitShellCommand, runCommandsInTerminal } from '../../utils/terminalExecutor';
 import { buildRapidkitCommand } from '../../utils/platformCapabilities';
-import { createWorkspaceCommand } from '../../commands/createWorkspace';
+import { Logger } from '../../utils/logger';
 import type { ScaffoldFramework } from '../../core/scaffoldKits';
 import {
   isStudioBlockerHandoff,
@@ -114,6 +132,10 @@ import {
   readDoctorRemediationPlanForStudio,
   type DoctorRemediationPlanStepView,
 } from '../../core/doctorRemediationPlanReader.js';
+import {
+  ensureStudioRemediationRecovery,
+  selectStudioRemediationRecoveryStep,
+} from '../../core/studioRemediationRecovery.js';
 import { resolveDashboardCommandContractByVscodeCommand } from '../../core/dashboardCommandContracts.js';
 import { gateDashboardCommandCapability } from '../../core/dashboardCommandCapabilityGate.js';
 import {
@@ -123,6 +145,7 @@ import {
 } from '../../core/dashboardCommandExecutionPlan.js';
 import { collectSidebarStudioRepairEvidence } from '../../core/sidebarStudioPatchBridge.js';
 import type { StudioEvidenceRefreshCommandId } from '../../core/sidebarStudioAgentRuntime.js';
+import { resolveStudioCausalProducerRoute } from '../../core/studioCausalProducerRouter.js';
 import { normalizePatchesForWorkspaceScope, type FilePatch } from '../../core/patchApplyEngine.js';
 import {
   clearSidebarPendingPatches,
@@ -744,7 +767,12 @@ function resolveStudioActionScope(payloadScope: unknown): {
   };
 }
 
-function resolveExplicitWorkspaceScope(payloadScope: unknown): { workspacePath?: string } {
+function resolveExplicitWorkspaceScope(payloadScope: unknown): {
+  workspacePath?: string;
+  workspaceName?: string;
+  projectPath?: string;
+  projectName?: string;
+} {
   const scope =
     payloadScope && typeof payloadScope === 'object' && !Array.isArray(payloadScope)
       ? (payloadScope as Record<string, unknown>)
@@ -761,7 +789,36 @@ function resolveExplicitWorkspaceScope(payloadScope: unknown): { workspacePath?:
     typeof workspace?.path === 'string' && workspace.path.trim().length > 0
       ? workspace.path.trim()
       : undefined;
-  return { workspacePath: directWorkspacePath ?? workspacePath };
+  const project =
+    scope.project && typeof scope.project === 'object' && !Array.isArray(scope.project)
+      ? (scope.project as Record<string, unknown>)
+      : null;
+  const directProjectPath =
+    typeof scope.projectPath === 'string' && scope.projectPath.trim().length > 0
+      ? scope.projectPath.trim()
+      : undefined;
+  const projectPath =
+    typeof project?.path === 'string' && project.path.trim().length > 0
+      ? project.path.trim()
+      : undefined;
+  const workspaceName =
+    typeof scope.workspaceName === 'string' && scope.workspaceName.trim().length > 0
+      ? scope.workspaceName.trim()
+      : typeof workspace?.name === 'string' && workspace.name.trim().length > 0
+        ? workspace.name.trim()
+        : undefined;
+  const projectName =
+    typeof scope.projectName === 'string' && scope.projectName.trim().length > 0
+      ? scope.projectName.trim()
+      : typeof project?.name === 'string' && project.name.trim().length > 0
+        ? project.name.trim()
+        : undefined;
+  return {
+    workspacePath: directWorkspacePath ?? workspacePath,
+    workspaceName,
+    projectPath: directProjectPath ?? projectPath,
+    projectName,
+  };
 }
 
 function parseStudioBlockerHandoffPayload(value: unknown): StudioBlockerHandoff | undefined {
@@ -856,14 +913,16 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
   private _activeBlockerHandoff?: StudioBlockerHandoff;
   private _pendingSidebarPatches = new Map<string, FilePatch[]>();
   private _lastSidebarStudioAuditInput?: RecordSidebarStudioFixAuditInput;
-  private _studioEvidenceWatcher?: vscode.FileSystemWatcher;
-  private _studioEvidenceWatchWorkspace?: string;
+  private _studioEvidenceWatcher?: vscode.Disposable;
+  private _studioEvidenceWatchScope?: string;
   private _studioEvidenceWatchSessionId?: string;
   private _studioEvidencePulseTimer?: NodeJS.Timeout;
   private _studioEvidenceGeneration = 0;
   private _studioEvidenceChangedPaths = new Set<string>();
   private readonly _activeStudioAgentSessions = new Map<string, StudioAgentSession>();
   private readonly _activeStudioAgentRepairRuns = new Map<string, Promise<void>>();
+  private readonly _createPlanApprovals = new CreatePlanApprovalStore<AICreationPlan>();
+  private readonly _activeCreatePlanningTokens = new Map<string, vscode.CancellationTokenSource>();
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -900,6 +959,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     return {
       runInlineAICreatePlan: (data) => this._runInlineAICreatePlan(data),
       runInlineAICreateConfirm: (data) => this._runInlineAICreateConfirm(data),
+      cancelInlineAICreatePlan: (data) => this._cancelInlineAICreatePlan(data),
       runSidebarManualCreate: (data) => this._runSidebarManualCreate(data),
       runSidebarCreatedWorkspaceBootstrap: (data) =>
         this._runSidebarCreatedWorkspaceBootstrap(data),
@@ -911,8 +971,22 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       openDashboardSection: (data) => this._openDashboardSection(data),
       openWorkspaceFile: (data) => this._openSidebarWorkspaceFile(data),
       openWorkspaceDiff: (data) => this._openSidebarWorkspaceDiff(data),
-      reviewWorkspaceChanges: (data) => this._reviewSidebarWorkspaceChanges(data),
+      reviewWorkspaceChanges: async (data) => {
+        try {
+          await this._reviewSidebarWorkspaceChanges(data);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this._postInlineCreate('sidebarActionError', {
+            title: 'Review unavailable',
+            error: message,
+          });
+          void vscode.window.showWarningMessage(`Workspai review: ${message}`);
+        }
+      },
       undoAgentPatch: (data) => this._undoStudioAgentPatch(data),
+      openSetup: async () => {
+        await vscode.commands.executeCommand('workspai.openSetup');
+      },
       sendInlineScope: () => this._sendInlineScope(),
       sendInlineModels: () => this._sendInlineModels(),
       setPreferredModel: async (modelId) => {
@@ -1111,13 +1185,20 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         : {};
     const transactionId =
       typeof record.transactionId === 'string' ? record.transactionId.trim() : '';
-    const workspacePath =
-      (typeof record.workspacePath === 'string' ? record.workspacePath.trim() : '') ||
-      this._activeBlockerHandoff?.workspacePath?.trim() ||
-      '';
+    const sessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+    const requestedWorkspacePath =
+      typeof record.workspacePath === 'string' ? record.workspacePath.trim() : '';
+    const preferredWorkspacePath = requestedWorkspacePath
+      ? ''
+      : ((await resolvePreferredAIModalContext()).workspaceRootPath ?? '');
+    // Never let a stale card handoff silently redirect a free-form Undo. The
+    // explicit webview scope is authoritative; the current editor/workspace
+    // context is the only safe fallback.
+    const workspacePath = requestedWorkspacePath || preferredWorkspacePath;
     if (!transactionId || !workspacePath) {
       this._postInlineCreate('sidebarStudioAgentPatchRollback', {
         transactionId,
+        ...(sessionId ? { sessionId } : {}),
         ok: false,
         error: 'The durable CLI transaction id and workspace path are required for Undo.',
       });
@@ -1138,7 +1219,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       const ok = result.transaction.state === 'rolled-back';
       this._postInlineCreate('sidebarStudioAgentPatchRollback', {
         transactionId,
-        sessionId: typeof record.sessionId === 'string' ? record.sessionId : undefined,
+        ...(sessionId ? { sessionId } : {}),
         cardId:
           typeof record.cardId === 'string' ? record.cardId : this._activeBlockerHandoff?.cardId,
         ok,
@@ -1156,6 +1237,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       this._postInlineCreate('sidebarStudioAgentPatchRollback', {
         transactionId,
+        ...(sessionId ? { sessionId } : {}),
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -1237,33 +1319,50 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  private _ensureStudioEvidenceWatcher(handoff: StudioBlockerHandoff, sessionId?: string): void {
-    const workspacePath = handoff.workspacePath?.trim();
+  private _ensureStudioEvidenceWatcher(
+    scope: {
+      workspacePath?: string;
+      projectPath?: string;
+      cardId?: string;
+      blockerSignature?: string;
+    },
+    sessionId?: string
+  ): void {
+    const workspacePath = scope.workspacePath?.trim();
     if (!workspacePath) {
       return;
     }
+    const projectPath = scope.projectPath?.trim();
+    const watchRoots = [workspacePath, projectPath]
+      .filter((item): item is string => Boolean(item))
+      .map((item) => path.resolve(item))
+      .filter((item, index, values) => values.indexOf(item) === index)
+      .filter((item) => {
+        if (item === path.resolve(workspacePath)) {
+          return true;
+        }
+        const relative = path.relative(workspacePath, item);
+        return relative.startsWith('..') || path.isAbsolute(relative);
+      });
+    const watchScope = watchRoots.slice().sort().join('::');
     this._studioEvidenceWatchSessionId = sessionId;
-    if (this._studioEvidenceWatcher && this._studioEvidenceWatchWorkspace === workspacePath) {
+    if (this._studioEvidenceWatcher && this._studioEvidenceWatchScope === watchScope) {
       return;
     }
     this._studioEvidenceWatcher?.dispose();
     this._studioEvidenceWatcher = undefined;
-    this._studioEvidenceWatchWorkspace = workspacePath;
+    this._studioEvidenceWatchScope = watchScope;
     this._studioEvidenceGeneration = 0;
     this._studioEvidenceChangedPaths.clear();
 
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(workspacePath, '.workspai/**/*')
-    );
-    const schedulePulse = (uri: vscode.Uri) => {
-      const relativePath = path.relative(workspacePath, uri.fsPath).replace(/\\/g, '/');
+    const schedulePulse = (rootPath: string, uri: vscode.Uri) => {
+      const scopeToken = rootPath === path.resolve(workspacePath) ? '$WORKSPACE' : '$PROJECT';
+      const relativePath = `${scopeToken}/${path.relative(rootPath, uri.fsPath).replace(/\\/g, '/')}`;
       if (
         /(?:^|\/)\.[^/]+\.tmp$/i.test(relativePath) ||
         /\.json\.\d+\.[0-9a-f-]+\.tmp$/i.test(relativePath) ||
-        /^\.workspai\/repair\/inbox(?:\/|$)/i.test(relativePath) ||
-        /^\.workspai\/repair\/engine\.lock$/i.test(relativePath) ||
-        /\.lock$/i.test(relativePath) ||
-        /(?:^|\/)(?:cache|snapshots)(?:\/|$)/i.test(relativePath)
+        /(?:^|\/)\.workspai\/repair\/inbox(?:\/|$)/i.test(relativePath) ||
+        /(?:^|\/)\.workspai\/repair\/engine\.lock$/i.test(relativePath)
       ) {
         return;
       }
@@ -1275,11 +1374,14 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         const changedPaths = [...this._studioEvidenceChangedPaths].sort();
         this._studioEvidenceChangedPaths.clear();
         this._studioEvidenceGeneration += 1;
+        // The CLI may update a causal family of reports in one transaction.
+        // Refresh the complete dashboard snapshot so every card observes the
+        // same post-transaction generation as Studio.
+        void WelcomePanel.refreshDashboardEvidenceSnapshotForWorkspacePath(workspacePath);
         this._postInlineCreate('sidebarStudioEvidencePulse', {
           sessionId: this._studioEvidenceWatchSessionId,
-          cardId: this._activeBlockerHandoff?.cardId ?? handoff.cardId,
-          blockerSignature:
-            this._activeBlockerHandoff?.blockerSignature ?? handoff.blockerSignature,
+          cardId: this._activeBlockerHandoff?.cardId ?? scope.cardId,
+          blockerSignature: this._activeBlockerHandoff?.blockerSignature ?? scope.blockerSignature,
           generation: this._studioEvidenceGeneration,
           observedAt: new Date().toISOString(),
           changedPaths,
@@ -1287,10 +1389,22 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         });
       }, 180);
     };
-    watcher.onDidCreate(schedulePulse);
-    watcher.onDidChange(schedulePulse);
-    watcher.onDidDelete(schedulePulse);
-    this._studioEvidenceWatcher = watcher;
+    const watchers = watchRoots.map((rootPath) => {
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(rootPath, '{.workspai,.rapidkit}/**/*')
+      );
+      watcher.onDidCreate((uri) => schedulePulse(rootPath, uri));
+      watcher.onDidChange((uri) => schedulePulse(rootPath, uri));
+      watcher.onDidDelete((uri) => schedulePulse(rootPath, uri));
+      return watcher;
+    });
+    this._studioEvidenceWatcher = {
+      dispose: () => {
+        for (const watcher of watchers) {
+          watcher.dispose();
+        }
+      },
+    };
   }
 
   private async _postSidebarDoctorRemediationPlan(input: {
@@ -1566,6 +1680,19 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     const sessionId =
       typeof payloadRecord.sessionId === 'string' ? payloadRecord.sessionId.trim() : undefined;
     const createTarget = payloadRecord.target === 'project' ? 'project' : 'workspace';
+    const history = Array.isArray(payloadRecord.history)
+      ? payloadRecord.history
+          .filter(
+            (entry): entry is { role: 'user' | 'assistant'; content: string } =>
+              Boolean(entry) &&
+              typeof entry === 'object' &&
+              !Array.isArray(entry) &&
+              ((entry as { role?: unknown }).role === 'user' ||
+                (entry as { role?: unknown }).role === 'assistant') &&
+              typeof (entry as { content?: unknown }).content === 'string'
+          )
+          .slice(-8)
+      : [];
     if (!prompt) {
       return;
     }
@@ -1577,46 +1704,186 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const planningKey = sessionId || 'create-session';
+    this._activeCreatePlanningTokens.get(planningKey)?.cancel();
+    this._activeCreatePlanningTokens.get(planningKey)?.dispose();
+    const planningTokenSource = new vscode.CancellationTokenSource();
+    this._activeCreatePlanningTokens.set(planningKey, planningTokenSource);
+
     this._postInlineCreate('sidebarAiCreateThinking', {
-      label: 'Connecting to AI planner…',
+      label: 'Understanding your request…',
       sessionId,
     });
     try {
       const scope = resolveExplicitWorkspaceScope(payloadRecord.scope);
-      const workspacePath = scope.workspacePath;
+      const workspacePath = createTarget === 'project' ? scope.workspacePath : undefined;
+      const workspaceName = createTarget === 'project' ? scope.workspaceName : undefined;
+      if (createTarget === 'project' && !workspacePath) {
+        this._postInlineCreate('sidebarAiCreateError', {
+          error:
+            'Select the workspace that should own this project, then draft the project plan again.',
+          failureCode: 'workspace-selection-required',
+          retryable: false,
+          sessionId,
+        });
+        return;
+      }
+      const route = await routeCreateIntent({
+        request: prompt,
+        selectedTarget: createTarget,
+        stackFocus,
+        workspaceName,
+        projectName: undefined,
+        history,
+        complete: async ({ prompt: routePrompt, toolName, toolSchema }) => {
+          const response = await askConfiguredAIProviderForToolAction(
+            this._context!,
+            [{ role: 'user', content: routePrompt }],
+            [
+              {
+                name: toolName,
+                description:
+                  'Route a Create-tab message before Workspai drafts a plan or mutates the filesystem.',
+                inputSchema: toolSchema as unknown as Record<string, unknown>,
+              },
+            ],
+            planningTokenSource.token,
+            requestedModelId,
+            [{ path: workspacePath, token: '$WORKSPACE' }]
+          );
+          return response.type === 'tool'
+            ? { type: 'tool', toolName: response.toolName, input: response.input }
+            : { type: 'text', text: response.text };
+        },
+      });
+      if (planningTokenSource.token.isCancellationRequested) {
+        throw new vscode.CancellationError();
+      }
+      if (route.intent !== 'create' || route.confidence !== 'high') {
+        const fallbackResponse =
+          route.userResponse ||
+          (route.intent === 'assistant-task'
+            ? 'This request changes existing source. Continue in Agent for governed edits and verification.'
+            : 'Tell me what workspace or project you want Workspai to create.');
+        this._postInlineCreate('sidebarAiCreateGuidance', {
+          response: fallbackResponse,
+          intent: route.intent,
+          confidence: route.confidence,
+          action: route.recommendedAction,
+          request: route.normalizedRequest,
+          sessionId,
+        });
+        return;
+      }
       const creationPrompt =
         stackFocus && stackFocus !== 'Any stack'
-          ? `${prompt}\n\nStack focus: ${stackFocus}`
-          : prompt;
-      const { plan, modelId, planSource } = await parseCreationIntent(
-        creationPrompt,
-        createTarget,
-        undefined,
-        workspacePath,
-        undefined,
-        async (messages, token) => {
-          if (requestedModelId && readWorkspaiSettings().aiProvider === 'vscode-lm') {
-            let text = '';
-            const response = await streamAIResponse(
-              messages,
-              (chunk) => {
-                text += chunk.text;
-              },
-              token,
-              requestedModelId
-            );
-            return {
-              text,
-              modelId: response.modelId,
-            };
-          }
-          const response = await askConfiguredAIProvider(this._context!, messages, token);
+          ? `${route.normalizedRequest}\n\nStack focus: ${stackFocus}`
+          : route.normalizedRequest;
+      const configuredTextProvider = async (
+        messages: import('../../core/aiService.js').AIMessage[],
+        token?: vscode.CancellationToken
+      ) => {
+        if (requestedModelId && readWorkspaiSettings().aiProvider === 'vscode-lm') {
+          let text = '';
+          const response = await streamAIResponse(
+            messages,
+            (chunk) => {
+              text += chunk.text;
+            },
+            token ?? planningTokenSource.token,
+            requestedModelId
+          );
           return {
-            text: response.text,
-            modelId: response.provider,
+            text,
+            modelId: response.modelId,
           };
         }
-      );
+        const response = await askConfiguredAIProvider(
+          this._context!,
+          messages,
+          token ?? planningTokenSource.token
+        );
+        return {
+          text: response.text,
+          modelId: response.provider,
+        };
+      };
+      const capabilityPlanning = await runCreateCapabilityPlanning({
+        context: {
+          request: creationPrompt,
+          selectedTarget: createTarget,
+          stackFocus,
+          workspaceName,
+          projectName: undefined,
+          workspaceAvailable: Boolean(workspacePath),
+        },
+        callModel: async (messages, tools: readonly CreateCapabilityToolDefinition[]) => {
+          const response = await askConfiguredAIProviderForToolAction(
+            this._context!,
+            messages,
+            tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })),
+            planningTokenSource.token,
+            requestedModelId,
+            [{ path: workspacePath, token: '$WORKSPACE' }]
+          );
+          return response;
+        },
+      });
+      if (planningTokenSource.token.isCancellationRequested) {
+        throw new vscode.CancellationError();
+      }
+      const normalized =
+        capabilityPlanning.status === 'submitted'
+          ? await parseCreationIntent(
+              creationPrompt,
+              createTarget,
+              undefined,
+              workspacePath,
+              undefined,
+              async () => ({
+                text: JSON.stringify(capabilityPlanning.draft),
+                modelId: capabilityPlanning.provider,
+              })
+            )
+          : await parseCreationIntent(
+              creationPrompt,
+              createTarget,
+              undefined,
+              workspacePath,
+              undefined,
+              configuredTextProvider
+            );
+      if (planningTokenSource.token.isCancellationRequested) {
+        throw new vscode.CancellationError();
+      }
+      const { plan: parsedPlan, modelId, planSource } = normalized;
+      const plan = bindCreatePlanDestination(parsedPlan, { workspacePath, workspaceName });
+      if (capabilityPlanning.status === 'fallback') {
+        Logger.getInstance().warn(
+          `[Create] Capability planning used the compatibility fallback: ${capabilityPlanning.reason}`
+        );
+      }
+      const planSessionId = sessionId || 'create-session';
+      const authorization = this._createPlanApprovals.issue({
+        plan,
+        sessionId: planSessionId,
+        scopeBinding: createScopeBinding({
+          target: plan.type,
+          workspacePath: plan.type === 'project' ? workspacePath : undefined,
+        }),
+      });
+      const authorizedPlan = { ...plan, authorization };
+      if (capabilityPlanning.status === 'submitted') {
+        this._postCreateTimelineStep(
+          'Planned with Create capabilities',
+          'Workspace context, executable stacks, and the proposed architecture were checked.',
+          sessionId
+        );
+      }
       if (planSource === 'heuristic') {
         this._postCreateTimelineStep(
           'Using local stack planner',
@@ -1630,18 +1897,43 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           sessionId
         );
       }
-      this._postInlineCreate('sidebarAiCreatePlan', { plan, modelId, planSource, sessionId });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this._postInlineCreate('sidebarAiCreateError', {
-        error: message,
-        unsupportedStack:
-          error instanceof UnsupportedCreationStackError ? error.stackLabel : undefined,
-        createCapability:
-          error instanceof UnsupportedCreationStackError ? error.capability : undefined,
+      this._postInlineCreate('sidebarAiCreatePlan', {
+        plan: authorizedPlan,
+        modelId,
+        planSource,
+        planningMode:
+          capabilityPlanning.status === 'submitted' ? 'capability-host' : 'compatibility-fallback',
         sessionId,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (planningTokenSource.token.isCancellationRequested) {
+        this._postInlineCreate('sidebarAiCreateCancelled', { sessionId });
+      } else {
+        this._postInlineCreate('sidebarAiCreateError', {
+          error: message,
+          unsupportedStack:
+            error instanceof UnsupportedCreationStackError ? error.stackLabel : undefined,
+          createCapability:
+            error instanceof UnsupportedCreationStackError ? error.capability : undefined,
+          sessionId,
+        });
+      }
+    } finally {
+      if (this._activeCreatePlanningTokens.get(planningKey) === planningTokenSource) {
+        this._activeCreatePlanningTokens.delete(planningKey);
+      }
+      planningTokenSource.dispose();
     }
+  }
+
+  private async _cancelInlineAICreatePlan(payload: unknown): Promise<void> {
+    const record =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : {};
+    const sessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+    this._activeCreatePlanningTokens.get(sessionId || 'create-session')?.cancel();
   }
 
   private async _runInlineAICreateConfirm(payload: unknown): Promise<void> {
@@ -1663,124 +1955,127 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const rawPlanRecord = rawPlan as AICreationPlan & { authorization?: unknown };
+    const authorization = parseCreatePlanAuthorization(rawPlanRecord.authorization);
+    const approvalScope = resolveExplicitWorkspaceScope(payloadRecord.scope);
+    const approvalTarget: 'workspace' | 'project' =
+      rawPlanRecord.type === 'project' ? 'project' : 'workspace';
+    if (approvalTarget === 'project' && !approvalScope.workspacePath) {
+      this._postInlineCreate('sidebarAiCreateError', {
+        error:
+          'The destination workspace is no longer selected. Select it and draft the project plan again.',
+        failureCode: 'workspace-selection-required',
+        retryable: false,
+        sessionId,
+      });
+      return;
+    }
+    const approval = this._createPlanApprovals.begin({
+      authorization,
+      sessionId: sessionId || 'create-session',
+      target: approvalTarget,
+      scopeBinding: createScopeBinding({
+        target: approvalTarget,
+        workspacePath: approvalTarget === 'project' ? approvalScope.workspacePath : undefined,
+      }),
+    });
+    if (!approval.ok) {
+      this._postInlineCreate('sidebarAiCreateError', {
+        error: approval.reason,
+        failureCode: `plan-${approval.code}`,
+        retryable: false,
+        sessionId,
+      });
+      return;
+    }
+
     try {
-      const plan = validateCreationPlanForExecution(rawPlan);
-      if (plan.type === 'project') {
-        const scope = resolveExplicitWorkspaceScope(payloadRecord.scope);
-        const workspacePath = scope.workspacePath ?? (await ensureManagedDefaultWorkspace()).path;
-        this._postInlineCreate('sidebarAiCreateProgress', {
-          title: 'Creating project structure',
-          detail: `${plan.projectName} · ${plan.framework} · ${plan.kit}`,
-          sessionId,
-        });
-        await createProjectCommand(workspacePath, plan.framework, plan.projectName, plan.kit, {
-          suppressPostCreatePrompt: true,
-          silent: true,
-        });
-        this._postInlineCreate('sidebarAiCreateProgress', {
-          title: 'Syncing workspace intelligence',
-          detail: 'Refreshing workspace model and project evidence…',
-          sessionId,
-        });
-        await syncWorkspaceAfterInlineCreate(workspacePath);
-        await vscode.commands.executeCommand('workspai.refreshProjects');
-        this._postInlineCreate('sidebarAiCreateDone', {
-          plan,
-          workspacePath,
-          projects: [
-            {
-              name: plan.projectName,
-              framework: plan.framework,
-              kit: plan.kit,
-              path: path.join(workspacePath, plan.projectName),
-            },
-          ],
+      const plan = validateCreationPlanForExecution(approval.plan);
+      const execution = await executeApprovedCreatePlan({
+        plan,
+        selectedWorkspacePath: approvalScope.workspacePath,
+        host: {
+          createWorkspace: createManagedWorkspace,
+          createProject: async (project) => {
+            await createProjectCommand(
+              project.workspacePath,
+              project.framework,
+              project.projectName,
+              project.kit,
+              { suppressPostCreatePrompt: true, silent: true }
+            );
+          },
+          projectPath: (workspacePath, projectName) => path.join(workspacePath, projectName),
+          syncIntelligence: syncWorkspaceAfterInlineCreate,
+          refreshProjects: async () => {
+            await vscode.commands.executeCommand('workspai.refreshProjects');
+          },
+          onProgress: (progress) => {
+            this._postInlineCreate('sidebarAiCreateProgress', {
+              title: progress.title,
+              detail: progress.detail,
+              phase: progress.phase,
+              sessionId,
+            });
+          },
+          resolveWorkspaceProfile: resolveCreationProfile,
+        },
+      });
+      if (!execution.ok) {
+        const workspaceFailure = execution.failure;
+        Logger.getInstance().error(
+          `AI workspace creation stopped (${workspaceFailure.code})`,
+          workspaceFailure.technicalMessage
+        );
+        if (workspaceFailure.retryable) {
+          this._createPlanApprovals.markRetryable(approval.authorization.planId);
+        } else {
+          this._createPlanApprovals.complete(approval.authorization.planId);
+        }
+        this._postInlineCreate('sidebarAiCreateError', {
+          error: workspaceFailure.message,
+          failureCode: workspaceFailure.code,
+          setupRequired: workspaceFailure.code === 'runtime-unavailable',
+          retryable: workspaceFailure.retryable,
+          retryPlan: workspaceFailure.retryable
+            ? { ...plan, authorization: approval.authorization }
+            : undefined,
           sessionId,
         });
         return;
       }
-      this._postInlineCreate('sidebarAiCreateProgress', {
-        title: 'Creating workspace shell',
-        detail: `Workspace: ${plan.workspaceName}`,
-        sessionId,
-      });
-
-      const profile = resolveCreationProfile(plan.profile, plan.framework);
-      await vscode.commands.executeCommand('workspai.createWorkspace', {
-        name: plan.workspaceName,
-        profile,
-        installMethod: plan.installMethod ?? 'auto',
-        skipPythonEngine: shouldSkipPythonEngineForCreationProfile(profile),
-        initGit: true,
-        policyMode: 'warn',
-        dependencySharing: 'isolated',
-        suppressPostCreatePrompt: true,
-        silent: true,
-      });
-
-      const workspacePath = resolveNewWorkspacePath(plan.workspaceName);
-      const workspaceCreated = await fs.pathExists(workspacePath);
-      if (!workspaceCreated) {
-        throw new Error(`Workspace was not found after creation: ${workspacePath}`);
-      }
-
-      this._postInlineCreate('sidebarAiCreateProgress', {
-        title: 'Creating project structure',
-        detail: `${plan.projectName} · ${plan.framework} · ${plan.kit}`,
-        sessionId,
-      });
-      await createProjectCommand(workspacePath, plan.framework, plan.projectName, plan.kit, {
-        suppressPostCreatePrompt: true,
-        silent: true,
-      });
-      const createdProjects = [
-        {
-          name: plan.projectName,
-          framework: plan.framework,
-          kit: plan.kit,
-          path: path.join(workspacePath, plan.projectName),
-        },
-      ];
-
-      if (plan.secondaryProject) {
-        this._postInlineCreate('sidebarAiCreateProgress', {
-          title: 'Creating companion project',
-          detail: `${plan.secondaryProject.projectName} · ${plan.secondaryProject.framework}`,
-          sessionId,
-        });
-        await createProjectCommand(
-          workspacePath,
-          plan.secondaryProject.framework,
-          plan.secondaryProject.projectName,
-          plan.secondaryProject.kit,
-          { suppressPostCreatePrompt: true, silent: true }
-        );
-        createdProjects.push({
-          name: plan.secondaryProject.projectName,
-          framework: plan.secondaryProject.framework,
-          kit: plan.secondaryProject.kit,
-          path: path.join(workspacePath, plan.secondaryProject.projectName),
-        });
-      }
-
-      this._postInlineCreate('sidebarAiCreateProgress', {
-        title: 'Preparing workspace intelligence',
-        detail:
-          plan.suggestedModules.length > 0
-            ? `Module suggestions captured: ${plan.suggestedModules.join(', ')}`
-            : 'Workspace model and project evidence are ready.',
-        sessionId,
-      });
-      await syncWorkspaceAfterInlineCreate(workspacePath);
       this._postInlineCreate('sidebarAiCreateDone', {
         plan,
-        workspacePath,
-        projects: createdProjects,
+        workspacePath: execution.workspacePath,
+        projects: execution.projects,
         sessionId,
       });
+      this._createPlanApprovals.complete(approval.authorization.planId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this._postInlineCreate('sidebarAiCreateError', { error: message, sessionId });
+      const planName =
+        approval.plan.workspaceName || approval.plan.projectName || 'the requested resource';
+      const failure = describePortableCreationFailure(error, planName);
+      Logger.getInstance().error(`AI creation stopped (${failure.code})`, failure.technicalMessage);
+      const retryable =
+        error instanceof CreateExecutionCapabilityError ? error.safeToRetry : failure.retryable;
+      if (retryable) {
+        this._createPlanApprovals.markRetryable(approval.authorization.planId);
+      } else {
+        this._createPlanApprovals.complete(approval.authorization.planId);
+      }
+      this._postInlineCreate('sidebarAiCreateError', {
+        error:
+          error instanceof CreateExecutionCapabilityError
+            ? 'Creation stopped after a controlled mutation phase began. Review the partial result, then draft a fresh plan.'
+            : failure.message,
+        failureCode: failure.code,
+        setupRequired: failure.code === 'runtime-unavailable',
+        retryable,
+        retryPlan: retryable
+          ? { ...approval.plan, authorization: approval.authorization }
+          : undefined,
+        sessionId,
+      });
     }
   }
 
@@ -1990,7 +2285,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         sessionId
       );
 
-      await createWorkspaceCommand({
+      const workspaceResult = await createManagedWorkspace({
         name,
         profile,
         installMethod:
@@ -2006,16 +2301,30 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         initGit: payloadRecord.initGit !== false,
         policyMode: payloadRecord.policyMode === 'strict' ? 'strict' : 'warn',
         dependencySharing: payloadRecord.dependencySharing === 'shared' ? 'shared' : 'isolated',
-        suppressPostCreatePrompt: true,
-        silent: true,
       });
+      if (!workspaceResult.ok) {
+        Logger.getInstance().error(
+          `Manual workspace creation stopped (${workspaceResult.code})`,
+          workspaceResult.technicalMessage
+        );
+        this._postInlineCreate('sidebarManualCreateResult', {
+          status: 'failed',
+          mode,
+          name,
+          error: workspaceResult.message,
+          retryable: workspaceResult.retryable,
+          failureCode: workspaceResult.code,
+          sessionId,
+        });
+        return;
+      }
 
       this._postCreateTimelineStep(
         'Finalizing workspace',
         'Workspace shell is ready for projects and evidence.',
         sessionId
       );
-      const workspacePath = resolveNewWorkspacePath(name);
+      const workspacePath = workspaceResult.workspacePath;
       await syncWorkspaceAfterInlineCreate(workspacePath);
       await WelcomePanel.refreshDashboardForWorkspacePath(workspacePath);
       this._postInlineCreate('sidebarManualCreateResult', {
@@ -2028,11 +2337,18 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         sessionId,
       });
     } catch (error) {
+      const failure = describePortableCreationFailure(error, name || 'the requested resource');
+      Logger.getInstance().error(
+        `Manual creation stopped (${failure.code})`,
+        failure.technicalMessage
+      );
       this._postInlineCreate('sidebarManualCreateResult', {
         status: 'failed',
         mode,
         name,
-        error: error instanceof Error ? error.message : String(error),
+        error: failure.message,
+        retryable: failure.retryable,
+        failureCode: failure.code,
         sessionId,
       });
     }
@@ -2531,6 +2847,17 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       routeConfidence: 'high',
     });
     const mode = resolveWorkspaiAssistantModeContract(executionPolicy.toolMode);
+    if (mode.canMutateWorkspace) {
+      this._ensureStudioEvidenceWatcher(
+        {
+          workspacePath: input.workspacePath,
+          projectPath: input.projectPath,
+          cardId: input.handoff?.cardId,
+          blockerSignature: input.handoff?.blockerSignature,
+        },
+        input.sessionId
+      );
+    }
 
     let projectBootstrapPrompt = '';
     if (input.projectPath) {
@@ -3409,18 +3736,6 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         });
         return presentAssistantCliRepairResult(result, request);
       },
-      inspectDependencySecurity: async () => ({
-        ok: false,
-        error: 'A blocker card is required to inspect dependency security evidence.',
-      }),
-      repairDependencySecurity: async () => ({
-        ok: false,
-        error: 'A blocker card is required to repair dependency security evidence.',
-      }),
-      upgradeDependencySecurity: async () => ({
-        ok: false,
-        error: 'A blocker card is required to upgrade a vulnerable dependency.',
-      }),
       verify: async (request: { workspacePath: string; projectPath?: string; goalId?: string }) => {
         if (input.assistantMode === 'goal') {
           if (!governedGoalId || !governedGoal) {
@@ -3776,6 +4091,39 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       throw new Error('Studio Agent requires extension context.');
     }
     let activeHandoff = input.handoff;
+    // Session history is not evidence. Rebind the card to the current
+    // canonical snapshot before creating a model/tool loop so Resume cannot
+    // execute an obsolete blocker or verify command.
+    const initialEvidenceBundle = await buildDashboardEvidenceBundle({
+      workspacePath: input.workspacePath,
+      projectPath: input.projectPath,
+    });
+    const currentCard = initialEvidenceBundle.cards.find(
+      (card) => card.id === input.handoff.cardId
+    );
+    if (currentCard) {
+      activeHandoff = await buildStudioBlockerHandoff({
+        card: currentCard,
+        workspacePath: input.workspacePath,
+        projectPath: input.projectPath,
+        handoffSource: 'dashboard',
+        extensionContext: this._context,
+      });
+      this._activeBlockerHandoff = activeHandoff;
+      if (activeHandoff.blockerSignature !== input.handoff.blockerSignature) {
+        this._postInlineCreate('sidebarStudioCardRefreshed', {
+          sessionId: input.sessionId,
+          handoff: activeHandoff,
+          cardId: activeHandoff.cardId,
+          cardStatus: activeHandoff.cardStatus,
+          blockers: activeHandoff.blockers,
+          refreshedCardIds: [activeHandoff.cardId],
+          verifySucceeded: activeHandoff.blocking !== true,
+          evidenceOutcome: activeHandoff.blocking === true ? 'blocking' : 'resolved',
+          agentOwned: true,
+        });
+      }
+    }
     const cardRepairCapability = requireStudioCardRepairCapability(activeHandoff.cardId);
     let repairEvidence = await collectSidebarStudioRepairEvidence({
       workspacePath: input.workspacePath,
@@ -3784,10 +4132,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     });
     const objective = [
       input.task,
-      `Card: ${input.handoff.cardLabel ?? input.handoff.cardId}`,
-      `Blockers: ${input.handoff.blockers.join('; ')}`,
-      `Selected causal target: ${JSON.stringify(input.handoff.selectedTarget ?? null)}`,
-      `Verify command: ${input.handoff.verifyCommand ?? 'resolve from governed evidence'}`,
+      `Card: ${activeHandoff.cardLabel ?? activeHandoff.cardId}`,
+      `Blockers: ${activeHandoff.blockers.join('; ')}`,
+      `Selected causal target: ${JSON.stringify(activeHandoff.selectedTarget ?? null)}`,
+      `Verify command: ${activeHandoff.verifyCommand ?? 'resolve from governed evidence'}`,
       'Use Studio inspect tools to load file bodies only when needed. Generated reports must be refreshed through their governed producers, never patched.',
       'Canonical .workspai/.rapidkit state, repair transactions, goals, registries, and evidence are control-plane inputs, never model-owned source targets.',
       `Evidence generation: ${repairEvidence.evidenceFingerprint}`,
@@ -4228,6 +4576,38 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
                 projectPath: request.projectPath,
                 actionId: `studio-session-${request.commandId}`,
               });
+        const refreshedBundle = await buildDashboardEvidenceBundle({
+          workspacePath: request.workspacePath,
+          projectPath: request.projectPath,
+        });
+        const refreshedCard = refreshedBundle.cards.find(
+          (card) => card.id === activeHandoff.cardId
+        );
+        if (refreshedCard) {
+          const previousSignature = activeBlockerSignature;
+          activeHandoff = await buildStudioBlockerHandoff({
+            card: refreshedCard,
+            workspacePath: request.workspacePath,
+            projectPath: request.projectPath,
+            handoffSource: 'dashboard',
+            extensionContext: this._context,
+          });
+          activeBlockerSignature = activeHandoff.blockerSignature;
+          this._activeBlockerHandoff = activeHandoff;
+          if (previousSignature !== activeBlockerSignature) {
+            this._postInlineCreate('sidebarStudioCardRefreshed', {
+              sessionId: input.sessionId,
+              handoff: activeHandoff,
+              cardId: activeHandoff.cardId,
+              cardStatus: activeHandoff.cardStatus,
+              blockers: activeHandoff.blockers,
+              refreshedCardIds: [activeHandoff.cardId],
+              verifySucceeded: activeHandoff.blocking !== true,
+              evidenceOutcome: activeHandoff.blocking === true ? 'blocking' : 'resolved',
+              agentOwned: true,
+            });
+          }
+        }
         repairEvidence = await collectSidebarStudioRepairEvidence({
           workspacePath: request.workspacePath,
           projectPath: request.projectPath,
@@ -4632,39 +5012,69 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         projectPath?: string;
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
+        const producerRoute = resolveStudioCausalProducerRoute(activeHandoff);
+        if (producerRoute) {
+          const producerResult = await host.runGovernedCommand({
+            commandId: producerRoute.commandId,
+            workspacePath: request.workspacePath,
+            projectPath: request.projectPath,
+            reportProgress: request.reportProgress,
+          });
+          return {
+            ...producerResult,
+            changed: false,
+            output: {
+              ...(producerResult.output && typeof producerResult.output === 'object'
+                ? producerResult.output
+                : {}),
+              producerRefreshCommandId: producerRoute.commandId,
+              producerRefreshReason: producerRoute.reason,
+              nextAction: producerResult.ok ? 'verify-blocker' : 'inspect-remediation-plan',
+            },
+          };
+        }
         // The prelude must bind the CLI transaction to one exact causal action.
         // A card id is presentation scope, not a repair target: sending only
         // `doctor` can mix unrelated findings into one all-or-nothing plan.
-        clearDoctorRemediationPlanCache();
-        const plan = await readDoctorRemediationPlanForStudio({
+        const recovery = await ensureStudioRemediationRecovery({
           workspacePath: request.workspacePath,
           handoff: {
             ...activeHandoff,
             ...(request.projectPath ? { projectPath: request.projectPath } : {}),
           },
+          projectPath: request.projectPath,
           maxSteps: 64,
+          actionId: 'sidebar-repair-plan-preflight',
         });
-        const step = plan?.visibleSteps.find(
-          (candidate) =>
-            candidate.risk !== 'invasive' &&
-            (candidate.studioState === 'ready' || candidate.studioState === 'review-required') &&
-            (candidate.canApply || candidate.executable)
-        );
+        const step = selectStudioRemediationRecoveryStep(recovery.plan, activeHandoff);
         if (!step) {
           // A persisted plan is an optimization, not the source of truth. The
           // CLI builds the current canonical plan under lock and selects one
           // causal family. Only its bounded result may delegate to source
           // diagnosis; absence of an IDE-side plan must never authorize an
           // arbitrary card-wide model patch.
-          const firstBlockingFinding = activeHandoff.doctorFindings?.find(
-            (finding) => finding.status === 'blocking'
-          );
-          return executeCanonicalRepair({
-            workspacePath: request.workspacePath,
-            projectPath: request.projectPath ?? firstBlockingFinding?.projectPath,
-            projectName: firstBlockingFinding?.projectName,
-            reportProgress: request.reportProgress,
-          });
+          return {
+            ok: false,
+            changed: false,
+            evidenceGeneration: repairEvidence.evidenceFingerprint,
+            output: {
+              recoveryPath: 'general-source-repair',
+              nextAction: 'general-source-repair',
+              sourceCandidates: repairEvidence.autonomousTargetPaths,
+              recommendedTools: [
+                'inspect-source',
+                'search-workspace',
+                'inspect-workspace-diagnostics',
+                'run-workspace-command',
+                'apply-workspace-patch',
+              ],
+              remediationPlanRefreshed: recovery.refreshed,
+              ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
+            },
+            error:
+              recovery.refreshError ??
+              'No exact executable action matches the active blocker. Continue with inspected source repair; do not create a card-wide transaction.',
+          };
         }
         bindSelectedRemediationStep(step);
         return executeCanonicalRepair({
@@ -4895,8 +5305,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
 
     const registry = createStudioAgentWorkspaiToolRegistry({
       host,
-      cardId: input.handoff.cardId,
-      blockerSignature: input.handoff.blockerSignature,
+      cardId: activeHandoff.cardId,
+      blockerSignature: activeHandoff.blockerSignature,
       assistantMode: 'agent',
     });
     const store = new VSCodeStudioAgentSessionStore(this._context);
@@ -4904,7 +5314,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     const persisted =
       persistedCandidate &&
       studioAgentSessionScopeMatches(persistedCandidate, input) &&
-      persistedCandidate.cardId === input.handoff.cardId &&
+      persistedCandidate.cardId === activeHandoff.cardId &&
+      persistedCandidate.blockerSignature === activeHandoff.blockerSignature &&
       persistedCandidate.assistantMode === 'agent' &&
       persistedCandidate.status !== 'completed' &&
       persistedCandidate.status !== 'cancelled'
@@ -4914,10 +5325,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       id: input.sessionId,
       workspacePath: input.workspacePath,
       ...(input.projectPath ? { projectPath: input.projectPath } : {}),
-      cardId: input.handoff.cardId,
+      cardId: activeHandoff.cardId,
       assistantMode: 'agent' as const,
       ...(input.requestedModelId ? { selectedModelId: input.requestedModelId } : {}),
-      blockerSignature: input.handoff.blockerSignature,
+      blockerSignature: activeHandoff.blockerSignature,
       repairPolicy: cardRepairCapability.repairPolicy,
       permissionLevel: 'autopilot' as const,
       workspaceTrusted: vscode.workspace.isTrusted,
@@ -6062,7 +6473,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       handoff: input.handoff,
       projectPath: input.projectPath,
       verifyExitCode: input.verifyExitCode,
-      refreshDashboardCards: (payload) => WelcomePanel.refreshDashboardEvidenceCards(payload),
+      refreshDashboardCards: () =>
+        WelcomePanel.refreshDashboardEvidenceSnapshotForWorkspacePath(input.workspacePath),
     });
     const verifyResolved = refresh.evidenceOutcome === 'resolved';
     if (verifyResolved) {
@@ -6355,6 +6767,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     }
     this._studioEvidenceWatcher?.dispose();
     this._studioEvidenceWatcher = undefined;
+    this._studioEvidenceWatchScope = undefined;
     this._studioEvidenceChangedPaths.clear();
   }
 }

@@ -47,3 +47,7 @@ releases/fixtures/
 
 # Local/internal evidence outputs (not part of OSS source)
 artifacts/
+
+# Explicit local Workspai CLI development channel. This receipt may contain a
+# machine-local checkout path and must never be committed or packaged.
+.workspai-cli-local.json

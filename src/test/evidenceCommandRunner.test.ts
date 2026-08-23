@@ -82,7 +82,7 @@ describe('evidenceCommandRunner', () => {
     );
   });
 
-  it('fails closed when the linked CLI lacks the required contract capability', async () => {
+  it('fails closed when the active runtime lacks the required contract capability', async () => {
     vi.mocked(gateRapidkitCliArgs).mockResolvedValueOnce({
       allowed: false,
       error: 'Workspace Verify is blocked because workspace verify is missing.',

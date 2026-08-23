@@ -2,8 +2,6 @@
 
 <div align="center">
 
-<!-- <img src="media/icons/icon-128.png" alt="Workspai" width="64" /> -->
-
 ### Understand the workspace. Change it with evidence. Verify the result.
 
 Workspai gives developers and AI agents one shared view of the code, projects,
@@ -55,7 +53,7 @@ Try retry, refactoring, performance, documentation, or coverage outcomes from
 Coverage, dependency-security, and release-readiness Goals use exact CLI
 verifiers. Other Goals keep the same scope, evidence, transaction, rollback,
 and attempt controls, but finish with outcome review plus CLI workspace safety
-checks—not a false machine-proof claim. Requires Workspai CLI 0.60.0+.
+checks—not a false machine-proof claim.
 
 ## Why Workspai
 
@@ -94,15 +92,17 @@ preferences are stored separately for each provider.
 ## Start in minutes
 
 1. [Install Workspai from the Marketplace](https://marketplace.visualstudio.com/items?itemName=rapidkit.rapidkit-vscode).
-2. Install or update the canonical CLI:
-
-   ```bash
-   npm install -g workspai@latest
-   ```
-
-3. Open **Workspai: Open Dashboard**, select or adopt a workspace, then open the
+2. Open the Workspai sidebar. The extension includes its verified CLI runtime,
+   so Create, adopt, Doctor, Graph, Agent, and Goal work without a separate
+   global CLI installation.
+3. In **Create**, describe what you need. Workspai distinguishes a new scaffold
+   from questions, clarification, adopt/import, or existing-source work, and
+   never changes files before you approve a clear creation plan.
+4. Open **Workspai: Open Dashboard**, select or adopt a workspace, then open the
    Assistant and choose **Ask**, **Plan**, **Agent**, or **Goal**.
 
+Install `workspai` separately only for an external terminal; extension-owned
+operations use the integrity-checked runtime shipped inside the extension.
 Workspai supports FastAPI, NestJS, Next.js, Vite, Angular, Go, Spring Boot, .NET,
 adopted repositories, and mixed-stack workspaces. Deep module generation remains
 available for FastAPI and NestJS; Workspace Intelligence covers the workspace.

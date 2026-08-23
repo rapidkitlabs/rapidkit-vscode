@@ -20,6 +20,7 @@ describe('VSIX packaging exclusions', () => {
       'src/**',
       'scripts/**',
       'coverage/**',
+      '.workspai-cli-local.json',
     ]) {
       expect(vscodeignore, pattern).toContain(pattern);
     }
@@ -30,17 +31,28 @@ describe('VSIX packaging exclusions', () => {
       scripts?: Record<string, string>;
     };
 
-    expect(packageJson.scripts?.['vscode:prepublish']).toBe(
-      'corepack npm run check:english-text && corepack npm run check:local-paths && corepack npm run build'
-    );
+    expect(packageJson.scripts?.['vscode:prepublish']).toBe('node scripts/vscode-prepublish.mjs');
     expect(packageJson.scripts?.['check:english-text']).toBe(
       'node scripts/english-text-guard.mjs --all'
     );
-    expect(packageJson.scripts?.prepackage).toBe('corepack npm run build');
+    expect(packageJson.scripts?.prepackage).toBeUndefined();
     expect(packageJson.scripts?.build).toContain('--production');
     expect(packageJson.scripts?.['package:ci']).toBe(
-      'corepack npm run check:english-text && corepack npm run build && node scripts/vsce-package-runner.mjs package --no-dependencies --out rapidkit-vscode-${npm_package_version}.vsix'
+      'corepack npm run check:cli-release-policy && corepack npm run check:english-text && node scripts/package-vsix-variants.mjs --release-only && corepack npm run smoke:cli-first-run'
     );
+    expect(packageJson.scripts?.package).toBe('node scripts/package-vsix-variants.mjs');
+    expect(packageJson.scripts?.['package:release']).toBe(
+      'node scripts/package-vsix-variants.mjs --release-only'
+    );
+    expect(packageJson.scripts?.['package:local']).toBe(
+      'node scripts/package-vsix-variants.mjs --local-only'
+    );
+    const packager = read('scripts/package-vsix-variants.mjs');
+    expect(packager).toContain('withPinnedReleaseContracts');
+    expect(packager).toContain('snapshotContractMirrors()');
+    expect(packager).toContain('restoreContractMirrors(snapshot)');
+    expect(packager).toContain('packageRelease();');
+    expect(packager).toContain('packageLocal();');
     expect(packageJson.scripts?.['smoke:vsix-artifact']).toBe(
       'node scripts/inspect-vsix-artifact.mjs --artifact rapidkit-vscode-${npm_package_version}.vsix'
     );
@@ -76,7 +88,7 @@ describe('VSIX packaging exclusions', () => {
     };
 
     expect(packageJson.scripts?.pretest).toBe(
-      'corepack npm run typecheck && corepack npm run lint'
+      'corepack npm run check:cli-release-policy && corepack npm run typecheck && corepack npm run lint'
     );
     expect(packageJson.scripts?.pretest).not.toContain('compile');
   });
@@ -88,6 +100,10 @@ describe('VSIX packaging exclusions', () => {
 
     expect(script).toContain('findLocalPathViolations');
     expect(script).toContain('VSIX contains machine-local paths');
+    expect(script).toContain("options.channel === 'release' ? 'release' : 'local-vsix'");
+    expect(electronSmokeTests).toContain("[runtimeEntry, 'commands', '--json']");
+    expect(electronSmokeTests).toContain('runtimeCapabilities.commandMap?.doctor');
+    expect(electronSmokeTests).toContain("doctorCapability?.status === 'supported'");
 
     for (const required of [
       'extension/dist/extension.js',
@@ -96,6 +112,11 @@ describe('VSIX packaging exclusions', () => {
       'extension/dist/graphWorker.js',
       'extension/dist/sidebar.js',
       'extension/dist/sidebar.css',
+      'extension/dist/workspai-runtime/manifest.json',
+      'extension/dist/workspai-runtime/launcher.cjs',
+      'extension/dist/workspai-runtime/dist/index.mjs',
+      'extension/dist/workspai-runtime/terminal-bin/workspai',
+      'extension/dist/workspai-runtime/terminal-bin/workspai.cmd',
       'extension/contracts/runtime-command-surface.v1.json',
       'extension/contracts/extension-cli-compatibility.v1.json',
       'extension/contracts/extension-cli-release-policy.v1.json',
@@ -165,15 +186,17 @@ describe('VSIX packaging exclusions', () => {
     expect(workflow).toContain('xvfb-run -a npm run smoke:vsix-electron');
   });
 
-  it('gates marketplace publish on the inspected VSIX artifact and Workspai CLI version', () => {
+  it('gates marketplace publish on the inspected VSIX artifact and canonical CLI policy', () => {
     const workflow = read('.github/workflows/release-extension.yml');
     const guard = read('scripts/guard-vsix-publish.mjs');
 
     expect(workflow).toContain('workflow_dispatch:');
     expect(workflow).toContain('smoke_run_id:');
     expect(workflow).toContain('commit_sha:');
-    expect(workflow).toContain('workspai_cli_version:');
-    expect(workflow).toContain('npm view workspai@${{ inputs.workspai_cli_version }} version');
+    expect(workflow).not.toContain('workspai_cli_version:');
+    expect(workflow).toContain('extension-cli-release-policy.v1.json');
+    expect(workflow).toContain('verifiedCliVersion');
+    expect(workflow).toContain('npm view "workspai@${CLI_VERSION}" version');
     expect(workflow).toContain('actions/download-artifact@v4');
     expect(workflow).toContain('name: workspai-vsix-${{ inputs.commit_sha }}');
     expect(workflow).toContain('run-id: ${{ inputs.smoke_run_id }}');

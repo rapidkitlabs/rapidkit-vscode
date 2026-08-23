@@ -173,7 +173,7 @@ describe('workspace foundation ensure command', () => {
 
     expect(terminalMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Workspai: Bootstrap — created-without-name',
+        name: 'Workspai: Initialize Dependencies — created-without-name',
         cwd: '/tmp/created-without-name',
         commands: [['bootstrap', '--profile', 'minimal']],
       })

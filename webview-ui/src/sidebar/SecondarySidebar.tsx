@@ -32,6 +32,7 @@ import { StudioActionProgress } from './StudioActionProgress';
 import { StudioChangedFilesSummary } from './StudioChangedFilesSummary';
 import { StudioRemediationPlan } from './StudioRemediationPlan';
 import { StudioRepairPrelude } from './StudioRepairPrelude';
+import { StudioDecisionBar } from './StudioDecisionBar';
 import { StudioRepairResult } from './StudioRepairResult';
 import { StudioShipLoopStepper } from './StudioShipLoopStepper';
 import { StudioIntelligencePhaseRail } from './StudioIntelligencePhaseRail';
@@ -1139,7 +1140,7 @@ export function SecondarySidebar() {
             ...eventMeta,
             ...(transactionId ? { transactionId } : {}),
             ...(transactionState ? { transactionState } : {}),
-            canUndo: changedFiles && Boolean(transactionId),
+            canUndo: changedFiles && transactionClosed && Boolean(transactionId),
             validationStages,
             policyRejected,
             ...(policyRejected && typeof eventData.error === 'string'
@@ -1532,6 +1533,25 @@ export function SecondarySidebar() {
         const restoredPaths = Array.isArray(data.restoredPaths)
           ? data.restoredPaths.filter((entry): entry is string => typeof entry === 'string')
           : [];
+        const rollbackSessionId =
+          typeof data.sessionId === 'string' && data.sessionId.trim()
+            ? data.sessionId.trim()
+            : studio.activeId;
+        if (data.ok === true && rollbackSessionId) {
+          studio.failSession(
+            rollbackSessionId,
+            'Changes were undone. Run the repair again to produce fresh verification evidence.'
+          );
+          setStudioReturnState(null);
+          const rollbackIncidentKey = resolveStudioIncidentKeyForSession(rollbackSessionId);
+          setStudioIncidentReturnStates((current) => {
+            const next = { ...current };
+            if (rollbackIncidentKey) {
+              delete next[rollbackIncidentKey];
+            }
+            return next;
+          });
+        }
         startStudioActionProgress({
           action: 'agent-patch-rollback',
           status: data.ok === true ? 'done' : 'review',
@@ -1586,6 +1606,43 @@ export function SecondarySidebar() {
         }
         break;
       }
+      case 'sidebarAiCreateGuidance': {
+        const sessionId = createSessionIdForEvent(data);
+        dropThinking(sessionId);
+        setCreateBusy(false);
+        setActiveCreateOperationId((current) => (current === sessionId ? null : current));
+        create.setStatus(sessionId, 'ready');
+        appendCreate(
+          {
+            id: nextId(),
+            role: 'ai',
+            kind: 'guidance',
+            response:
+              typeof data.response === 'string'
+                ? data.response
+                : 'Tell me what workspace or project you want to create.',
+            intent: typeof data.intent === 'string' ? data.intent : 'clarification',
+            confidence:
+              data.confidence === 'high' ||
+              data.confidence === 'medium' ||
+              data.confidence === 'low'
+                ? data.confidence
+                : 'low',
+            action:
+              data.action === 'plan-workspace' ||
+              data.action === 'plan-project' ||
+              data.action === 'adopt-project' ||
+              data.action === 'import-project' ||
+              data.action === 'import-workspace' ||
+              data.action === 'continue-in-agent'
+                ? data.action
+                : 'none',
+            request: typeof data.request === 'string' ? data.request : '',
+          },
+          sessionId
+        );
+        break;
+      }
       case 'sidebarAiCreateProgress': {
         const sessionId = createSessionIdForEvent(data);
         dropThinking(sessionId);
@@ -1633,6 +1690,30 @@ export function SecondarySidebar() {
             kind: 'error',
             error: (data.error as string) || 'Unknown error',
             unsupportedStack: Boolean(data.unsupportedStack),
+            failureCode: typeof data.failureCode === 'string' ? data.failureCode : undefined,
+            setupRequired: data.setupRequired === true,
+            retryable: data.retryable === true,
+            retryPlan:
+              data.retryPlan && typeof data.retryPlan === 'object'
+                ? (data.retryPlan as CreationPlan)
+                : undefined,
+          },
+          sessionId
+        );
+        break;
+      }
+      case 'sidebarAiCreateCancelled': {
+        const sessionId = createSessionIdForEvent(data);
+        dropThinking(sessionId);
+        setCreateBusy(false);
+        setActiveCreateOperationId((current) => (current === sessionId ? null : current));
+        create.setStatus(sessionId, 'ready');
+        appendCreate(
+          {
+            id: nextId(),
+            role: 'ai',
+            kind: 'text',
+            text: 'Planning stopped. Nothing was created or changed.',
           },
           sessionId
         );
@@ -2381,12 +2462,48 @@ export function SecondarySidebar() {
 
   // ---- Create handlers ----
   const handleSubmitPrompt = (prompt: string, stackFocus: string, target: CreateTarget) => {
-    const sessionId = create.startSession({
-      target,
-      method: 'ai',
-      request: prompt,
-      initialMessage: { id: nextId(), role: 'user', kind: 'text', text: prompt },
-    });
+    const activeSession = create.sessions.find((session) => session.sessionId === create.activeId);
+    const lastMessage = activeSession?.messages[activeSession.messages.length - 1];
+    const continuesGuidance =
+      activeSession?.method === 'ai' &&
+      activeSession.status === 'ready' &&
+      lastMessage?.kind === 'guidance' &&
+      activeSession.target === target;
+    const history = continuesGuidance
+      ? activeSession.messages
+          .flatMap((message) => {
+            if (message.kind === 'text') {
+              return [
+                {
+                  role: message.role === 'user' ? ('user' as const) : ('assistant' as const),
+                  content: message.text,
+                },
+              ];
+            }
+            if (message.kind === 'guidance') {
+              return [{ role: 'assistant' as const, content: message.response }];
+            }
+            return [];
+          })
+          .slice(-8)
+      : [];
+    const sessionId = continuesGuidance
+      ? activeSession.sessionId
+      : create.startSession({
+          target,
+          method: 'ai',
+          request: prompt,
+          initialMessage: { id: nextId(), role: 'user', kind: 'text', text: prompt },
+        });
+    if (continuesGuidance) {
+      create.appendMessage(sessionId, {
+        id: nextId(),
+        role: 'user',
+        kind: 'text',
+        text: prompt,
+      });
+      create.setStatus(sessionId, 'planning');
+    }
     setCreateBusy(true);
     setActiveCreateOperationId(sessionId);
     vscode.postMessage(
@@ -2397,14 +2514,26 @@ export function SecondarySidebar() {
         stackFocus,
         target,
         sessionId,
-        scope: scope.workspacePath ? { workspacePath: scope.workspacePath } : undefined,
+        history,
+        scope:
+          scope.workspacePath || scope.projectPath
+            ? {
+                workspacePath: scope.workspacePath,
+                workspaceName: scope.workspaceName,
+                projectPath: scope.projectPath,
+                projectName: scope.projectName,
+              }
+            : undefined,
       },
       META
     );
   };
 
-  const handleApprovePlan = (plan: CreationPlan) => {
-    const sessionId = create.activeId || '';
+  const handleApprovePlan = (plan: CreationPlan, planSessionId: string) => {
+    const sessionId = planSessionId.trim();
+    if (!sessionId || !create.sessions.some((session) => session.sessionId === sessionId)) {
+      return;
+    }
     create.replaceMessages(sessionId, (messages) =>
       messages.map((message) =>
         message.kind === 'plan' ? { ...message, resolved: true } : message
@@ -2418,9 +2547,15 @@ export function SecondarySidebar() {
       {
         plan,
         sessionId,
-        scope: scope.workspacePath
-          ? { workspaceName: scope.workspaceName, workspacePath: scope.workspacePath }
-          : undefined,
+        scope:
+          scope.workspacePath || scope.projectPath
+            ? {
+                workspaceName: scope.workspaceName,
+                workspacePath: scope.workspacePath,
+                projectName: scope.projectName,
+                projectPath: scope.projectPath,
+              }
+            : undefined,
       },
       META
     );
@@ -2433,6 +2568,14 @@ export function SecondarySidebar() {
         message.kind === 'plan' ? { ...message, resolved: true } : message
       )
     );
+  };
+
+  const handleCancelCreatePlanning = () => {
+    const sessionId = create.activeId;
+    if (!sessionId) {
+      return;
+    }
+    vscode.postMessage('sidebarCancelCreatePlanning', { sessionId }, META);
   };
 
   const handleManualCreate = (
@@ -2501,6 +2644,10 @@ export function SecondarySidebar() {
 
   const handleFocusView = (target: 'workspaces' | 'projects') => {
     vscode.postMessage('sidebarFocusView', { target }, META);
+  };
+
+  const handleOpenSetup = () => {
+    vscode.postMessage('sidebarOpenSetup', {}, META);
   };
 
   const handleAdoptProject = () => {
@@ -2740,6 +2887,14 @@ export function SecondarySidebar() {
 
   const handleSubmitStudio = (task: string, options?: { forceNew?: boolean }) => {
     submitStudioWithMode(task, assistantMode, options);
+  };
+
+  const handleContinueCreateInAgent = (request: string) => {
+    setActiveTab('studio');
+    setAssistantMode('agent');
+    setStudioMode('investigate');
+    setSelectedModelId(assistantModelsRef.current.agent ?? null);
+    submitStudioWithMode(request, 'agent', { forceNew: true });
   };
 
   const acceptModeSuggestion = (suggestion: ChatModeSuggestion) => {
@@ -3024,7 +3179,15 @@ export function SecondarySidebar() {
     );
   };
   const undoStudioAgentPatch = (transactionId: string) => {
-    vscode.postMessage('sidebarStudioUndoPatch', { transactionId }, META);
+    vscode.postMessage(
+      'sidebarStudioUndoPatch',
+      {
+        transactionId,
+        workspacePath: scope.workspacePath,
+        sessionId: studio.activeId ?? undefined,
+      },
+      META
+    );
   };
   const studioVerifyHandoff = () => {
     setStudioVerifyFailure(null);
@@ -3402,8 +3565,11 @@ export function SecondarySidebar() {
         onAdoptProject={handleAdoptProject}
         onImportProject={handleImportProject}
         onImportWorkspace={handleImportWorkspace}
+        onContinueInAgent={handleContinueCreateInAgent}
         onBootstrapWorkspace={handleBootstrapCreatedWorkspace}
         onFocusView={handleFocusView}
+        onOpenSetup={handleOpenSetup}
+        onCancelPlanning={handleCancelCreatePlanning}
       />
 
       <ChatTab
@@ -3645,62 +3811,40 @@ export function SecondarySidebar() {
         streamChrome={
           activeBlockerHandoff ? (
             <>
-              <StudioRepairPrelude
-                handoff={activeBlockerHandoff}
-                busy={activeStudioRepairRunning || studioAutoFixBusy || studioPatchApplyBusy}
-                completed={activeStudioCompleted}
-                resumable={
-                  !activeStudioRepairRunning &&
-                  !activeStudioReviewRequired &&
-                  (activeStudio?.status === 'error' ||
-                    activeStudio?.incident?.repairStatus === 'blocked')
-                }
-                terminalReason={activeStudioTerminalReason}
-                reviewMessage={activeStudioReviewMessage}
-                reviewRequired={activeStudioReviewRequired}
-                transactionId={activeStudioActionProgress?.transactionId}
-                decisionOptions={activeStudioActionProgress?.decisionOptions}
-                onReview={reviewStudioRepairOptions}
-                onDecision={reviewStudioRepairOptions}
-                onStart={
-                  activeBlockerHandoff.studioMode === 'VERIFY_ONLY'
-                    ? studioVerifyHandoff
-                    : studioAutoFix
-                }
-                onOpenSetup={() =>
-                  vscode.postMessage(
-                    'sidebarStudioAction',
-                    { action: 'open-setup', sessionId: studio.activeId ?? undefined },
-                    META
-                  )
-                }
-                onStop={stopStudioAgent}
-              />
+              {activeStudioReviewRequired ||
+              (!activeStudioRepairRunning &&
+                (activeStudio?.status === 'error' ||
+                  activeStudio?.incident?.repairStatus === 'blocked')) ? null : (
+                <StudioRepairPrelude
+                  handoff={activeBlockerHandoff}
+                  busy={activeStudioRepairRunning || studioAutoFixBusy || studioPatchApplyBusy}
+                  completed={activeStudioCompleted}
+                  terminalReason={activeStudioTerminalReason}
+                  onStart={
+                    activeBlockerHandoff.studioMode === 'VERIFY_ONLY'
+                      ? studioVerifyHandoff
+                      : studioAutoFix
+                  }
+                  onStop={stopStudioAgent}
+                  controlsVisible={false}
+                />
+              )}
+              {activeStudioPatchReview ? (
+                <StudioPatchReview
+                  key={`${activeBlockerHandoff.cardId}-${activeStudioPatchReview.patches.length}`}
+                  summary={activeStudioPatchReview.summary}
+                  riskSummary={activeStudioPatchReview.riskSummary}
+                  patches={activeStudioPatchReview.patches}
+                  busy={studioPatchApplyBusy}
+                  onApply={studioApplyPatches}
+                  onReject={studioRejectPatches}
+                />
+              ) : null}
               {activeStudioRepairTimeline.length > 0 ? (
                 <div
                   className="ws-sidebar__studio-repair-timeline"
                   aria-label="Live repair timeline"
                 >
-                  {activeStudioRepairTimeline.length > 1 ? (
-                    <details className="ws-sidebar__studio-activity-history">
-                      <summary>
-                        Worked on {Math.min(activeStudioRepairTimeline.length - 1, 6)} step
-                        {Math.min(activeStudioRepairTimeline.length - 1, 6) === 1 ? '' : 's'}
-                      </summary>
-                      {activeStudioRepairTimeline.slice(-7, -1).map((progress, index) => (
-                        <StudioActionProgress
-                          key={`${progress.action}:${progress.phase ?? 'phase'}:${progress.status}:${index}`}
-                          progress={progress}
-                          repairBubble={true}
-                          historical={true}
-                          onNextAction={handleStudioProgressNextAction}
-                          onOpenFile={openStudioChangedFile}
-                          onOpenDiff={openStudioChangedFileDiff}
-                          onUndo={undoStudioAgentPatch}
-                        />
-                      ))}
-                    </details>
-                  ) : null}
                   <StudioActionProgress
                     progress={activeStudioRepairTimeline[activeStudioRepairTimeline.length - 1]}
                     repairBubble={true}
@@ -3708,14 +3852,38 @@ export function SecondarySidebar() {
                     onNextAction={handleStudioProgressNextAction}
                     onOpenFile={openStudioChangedFile}
                     onOpenDiff={openStudioChangedFileDiff}
-                    onUndo={undoStudioAgentPatch}
+                    onUndo={
+                      activeStudioChangedFiles.files.length === 0 ? undoStudioAgentPatch : undefined
+                    }
+                    busy={activeStudioRepairRunning}
                   />
                   <StudioChangedFilesSummary
                     summary={activeStudioChangedFiles}
                     onOpenDiff={openStudioChangedFileDiff}
                     onReview={reviewStudioChangedFiles}
                     onUndo={undoStudioAgentPatch}
+                    busy={activeStudioRepairRunning}
                   />
+                  {activeStudioRepairTimeline.length > 1 ? (
+                    <details className="ws-sidebar__studio-activity-history">
+                      <summary>
+                        Worked on {Math.min(activeStudioRepairTimeline.length - 1, 6)} step
+                        {Math.min(activeStudioRepairTimeline.length - 1, 6) === 1 ? '' : 's'}
+                      </summary>
+                      <div role="list" aria-label="Completed repair steps">
+                        {activeStudioRepairTimeline.slice(-7, -1).map((progress, index) => (
+                          <StudioActionProgress
+                            key={`${progress.action}:${progress.phase ?? 'phase'}:${progress.status}:${index}`}
+                            progress={progress}
+                            repairBubble={true}
+                            historical={true}
+                            onNextAction={handleStudioProgressNextAction}
+                            busy={activeStudioRepairRunning}
+                          />
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                 </div>
               ) : null}
               {activeStudioRemediationPlan ? (
@@ -3736,57 +3904,79 @@ export function SecondarySidebar() {
                 onCopyRollback={studioCopyRollback}
                 onBackToDashboard={openDashboardRepairFlow}
               />
-              {activeStudioPatchReview ? (
-                <StudioPatchReview
-                  key={`${activeBlockerHandoff.cardId}-${activeStudioPatchReview.patches.length}`}
-                  summary={activeStudioPatchReview.summary}
-                  riskSummary={activeStudioPatchReview.riskSummary}
-                  patches={activeStudioPatchReview.patches}
-                  busy={studioPatchApplyBusy}
-                  onApply={studioApplyPatches}
-                  onReject={studioRejectPatches}
-                />
-              ) : null}
             </>
           ) : activeStudioRepairTimeline.length > 0 ? (
             <div
               className="ws-sidebar__studio-repair-timeline"
               aria-label="Live Assistant activity"
             >
-              {activeStudioRepairTimeline.length > 1 ? (
-                <details className="ws-sidebar__studio-activity-history">
-                  <summary>
-                    Worked on {Math.min(activeStudioRepairTimeline.length - 1, 6)} step
-                    {Math.min(activeStudioRepairTimeline.length - 1, 6) === 1 ? '' : 's'}
-                  </summary>
-                  {activeStudioRepairTimeline.slice(-7, -1).map((progress, index) => (
-                    <StudioActionProgress
-                      key={`${progress.action}:${progress.phase ?? 'phase'}:${progress.status}:${index}`}
-                      progress={progress}
-                      repairBubble={true}
-                      historical={true}
-                      onOpenFile={openStudioChangedFile}
-                      onOpenDiff={openStudioChangedFileDiff}
-                      onUndo={undoStudioAgentPatch}
-                    />
-                  ))}
-                </details>
-              ) : null}
               <StudioActionProgress
                 progress={activeStudioRepairTimeline[activeStudioRepairTimeline.length - 1]}
                 repairBubble={true}
                 historical={false}
                 onOpenFile={openStudioChangedFile}
                 onOpenDiff={openStudioChangedFileDiff}
-                onUndo={undoStudioAgentPatch}
+                onUndo={
+                  activeStudioChangedFiles.files.length === 0 ? undoStudioAgentPatch : undefined
+                }
+                busy={activeStudioRepairRunning}
               />
               <StudioChangedFilesSummary
                 summary={activeStudioChangedFiles}
                 onOpenDiff={openStudioChangedFileDiff}
                 onReview={reviewStudioChangedFiles}
                 onUndo={undoStudioAgentPatch}
+                busy={activeStudioRepairRunning}
               />
+              {activeStudioRepairTimeline.length > 1 ? (
+                <details className="ws-sidebar__studio-activity-history">
+                  <summary>
+                    Worked on {Math.min(activeStudioRepairTimeline.length - 1, 6)} step
+                    {Math.min(activeStudioRepairTimeline.length - 1, 6) === 1 ? '' : 's'}
+                  </summary>
+                  <div role="list" aria-label="Completed Assistant steps">
+                    {activeStudioRepairTimeline.slice(-7, -1).map((progress, index) => (
+                      <StudioActionProgress
+                        key={`${progress.action}:${progress.phase ?? 'phase'}:${progress.status}:${index}`}
+                        progress={progress}
+                        repairBubble={true}
+                        historical={true}
+                        busy={activeStudioRepairRunning}
+                      />
+                    ))}
+                  </div>
+                </details>
+              ) : null}
             </div>
+          ) : null
+        }
+        composerBanner={
+          activeBlockerHandoff && !activeStudioRepairRunning && !activeStudioCompleted ? (
+            <StudioDecisionBar
+              reviewRequired={activeStudioReviewRequired}
+              resumable={
+                !activeStudioReviewRequired &&
+                (activeStudio?.status === 'error' ||
+                  activeStudio?.incident?.repairStatus === 'blocked')
+              }
+              terminalReason={activeStudioTerminalReason}
+              message={activeStudioReviewMessage}
+              transactionId={activeStudioActionProgress?.transactionId}
+              decisionOptions={activeStudioActionProgress?.decisionOptions}
+              onDecision={reviewStudioRepairOptions}
+              onResume={
+                activeBlockerHandoff.studioMode === 'VERIFY_ONLY'
+                  ? studioVerifyHandoff
+                  : studioAutoFix
+              }
+              onOpenSetup={() =>
+                vscode.postMessage(
+                  'sidebarStudioAction',
+                  { action: 'open-setup', sessionId: studio.activeId ?? undefined },
+                  META
+                )
+              }
+            />
           ) : null
         }
         headerChrome={

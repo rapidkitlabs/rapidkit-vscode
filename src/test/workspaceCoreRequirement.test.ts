@@ -83,4 +83,41 @@ describe('workspace RapidKit Core requirement', () => {
       profile: 'polyglot',
     });
   });
+
+  it('does not require Core for a node-only NestJS project without installed Core modules', async () => {
+    const root = await workspaceFixture({
+      profile: 'node-only',
+      projects: [{ kit: 'nestjs.standard', modules: [] }],
+    });
+
+    await expect(resolveWorkspaceCoreRequirement(root)).resolves.toEqual({
+      required: false,
+      reason: 'not-required',
+      profile: 'node-only',
+    });
+  });
+
+  it('requires Core for installed NestJS Core modules and required FastAPI kits', async () => {
+    const nestRoot = await workspaceFixture({
+      profile: 'node-only',
+      projects: [{ kit: 'nestjs.standard', modules: ['free/essentials/settings'] }],
+    });
+    const fastApiRoot = await workspaceFixture({
+      profile: 'polyglot',
+      projects: [{ kit: 'fastapi.standard', modules: [] }],
+    });
+    await fs.outputJSON(path.join(fastApiRoot, '.workspai', 'workspace.json'), {
+      profile: 'polyglot',
+      engine: { python_core: { status: 'skipped', reason: 'user-opted-out' } },
+    });
+
+    await expect(resolveWorkspaceCoreRequirement(nestRoot)).resolves.toMatchObject({
+      required: true,
+      reason: 'modules',
+    });
+    await expect(resolveWorkspaceCoreRequirement(fastApiRoot)).resolves.toMatchObject({
+      required: true,
+      reason: 'python-kit',
+    });
+  });
 });

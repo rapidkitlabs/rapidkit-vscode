@@ -2,6 +2,9 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import * as os from 'os';
 
+import releasePolicy from '../../contracts/extension-cli-release-policy.v1.json';
+import { resolveBundledCliRuntime } from '../core/bundledCliRuntime';
+
 export type PlatformKind = 'windows' | 'linux' | 'macos' | 'other';
 
 export type RapidkitExecutionSpec = {
@@ -9,6 +12,8 @@ export type RapidkitExecutionSpec = {
   args: string[];
   displayCommand: string;
   shell: boolean;
+  env?: NodeJS.ProcessEnv;
+  runtime?: 'bundled' | 'npm';
 };
 
 export type PackageRunnerInvocation = {
@@ -28,6 +33,7 @@ let resolvedPackageSpecifier: string | null | undefined;
 
 const WORKSPAI_NPM_PACKAGE = 'workspai';
 const WORKSPAI_NPM_BINARY = 'workspai';
+const VERIFIED_WORKSPAI_NPM_SPECIFIER = `${WORKSPAI_NPM_PACKAGE}@${releasePolicy.verifiedCliVersion}`;
 
 const PACKAGE_RUNNER_COMMANDS = new Set(['npx', 'npm', 'yarn', 'pnpm']);
 
@@ -455,13 +461,20 @@ function readEnvRapidkitPackageSpecifier(): string | undefined {
  * mutable development builds into extension-host commands.
  */
 export function buildNpxRapidkitPrefix(): string[] {
-  const envSpec = readEnvRapidkitPackageSpecifier();
-  const packageSpecifier = envSpec ?? WORKSPAI_NPM_PACKAGE;
+  const envSpec = resolveBundledCliRuntime() ? undefined : readEnvRapidkitPackageSpecifier();
+  // User-visible terminal commands cannot execute the embedded VSIX files
+  // portably, but they must preserve the same release authority. Packaged and
+  // default development flows therefore use the exact CLI version verified by
+  // the extension contract. An explicit environment override remains a
+  // development-only escape hatch for linked package work.
+  const packageSpecifier = envSpec ?? VERIFIED_WORKSPAI_NPM_SPECIFIER;
   return ['--yes', '--package', packageSpecifier, WORKSPAI_NPM_BINARY];
 }
 
 export async function warmRapidkitNpmPackageResolution(): Promise<void> {
-  resolvedPackageSpecifier = readEnvRapidkitPackageSpecifier() ?? null;
+  resolvedPackageSpecifier =
+    (resolveBundledCliRuntime() ? undefined : readEnvRapidkitPackageSpecifier()) ??
+    VERIFIED_WORKSPAI_NPM_SPECIFIER;
 }
 
 export function buildRapidkitCommand(
@@ -505,12 +518,24 @@ export function buildRapidkitExecutionSpec(
   args: string[] = [],
   platform: NodeJS.Platform = process.platform
 ): RapidkitExecutionSpec {
+  const bundledRuntime = resolveBundledCliRuntime();
+  if (bundledRuntime) {
+    return {
+      command: bundledRuntime.command,
+      args: [...bundledRuntime.argsPrefix, ...args],
+      displayCommand: buildRapidkitDisplayCommand(args, platform),
+      shell: false,
+      env: bundledRuntime.env,
+      runtime: 'bundled',
+    };
+  }
   const invocation = resolvePackageRunnerInvocation('npx', platform);
   return {
     command: invocation.command,
     args: [...invocation.prefixArgs, ...buildNpxRapidkitArgs(args)],
     displayCommand: buildRapidkitDisplayCommand(args, platform),
     shell: isWindowsPlatform(platform),
+    runtime: 'npm',
   };
 }
 

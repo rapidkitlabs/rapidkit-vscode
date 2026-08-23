@@ -13,6 +13,7 @@ describe('Create tab durable session contract', () => {
   const createHook = read('webview-ui/src/sidebar/useCreateSessions.ts');
   const secondary = read('webview-ui/src/sidebar/SecondarySidebar.tsx');
   const provider = read('src/ui/webviews/actionsWebviewProvider.ts');
+  const createExecution = read('src/core/createExecutionCapability.ts');
   const targetSelector = read('webview-ui/src/sidebar/composer/CreateTargetSelector.tsx');
   const createDrawer = read('webview-ui/src/sidebar/drawers/CreateSessionsDrawer.tsx');
   const lifecycle = read('webview-ui/src/lib/createSessionLifecycle.ts');
@@ -47,17 +48,58 @@ describe('Create tab durable session contract', () => {
     expect(secondary).toContain('const sessionId = create.startSession');
     expect(targetSelector).toContain("id: 'workspace'");
     expect(targetSelector).toContain("id: 'project'");
+    expect(targetSelector).toContain('active selected workspace');
+    expect(secondary).toContain('activeSession.target === target');
     expect(provider).toContain("payloadRecord.target === 'project' ? 'project' : 'workspace'");
-    expect(provider).toContain("if (plan.type === 'project')");
-    expect(provider).toContain('await ensureManagedDefaultWorkspace()');
+    expect(provider).toContain(
+      "const workspacePath = createTarget === 'project' ? scope.workspacePath : undefined"
+    );
+    expect(provider).toContain(
+      'bindCreatePlanDestination(parsedPlan, { workspacePath, workspaceName })'
+    );
+    expect(createExecution).toContain("if (plan.type === 'workspace')");
+    expect(createExecution).toContain('Project creation requires an active selected workspace.');
+    expect(provider).toContain('executeApprovedCreatePlan');
+    expect(createTab).toContain('resolveCreateTargetAfterScopeChange');
+    expect(createTab).toContain('createTargetExplicitRef.current');
+    expect(createTab).toContain('label="Destination"');
+    expect(createTab).toContain('active workspace`');
   });
 
   it('correlates every host response with the originating create session', () => {
     expect(secondary).toContain('createSessionIdForEvent(data)');
     expect(secondary).toMatch(/sidebarAiCreateConfirm[\s\S]{0,240}sessionId/);
+    expect(secondary).toContain(
+      'const handleApprovePlan = (plan: CreationPlan, planSessionId: string)'
+    );
+    expect(secondary).toContain('const sessionId = planSessionId.trim()');
+    expect(secondary).toMatch(
+      /sidebarAiCreateConfirm[\s\S]{0,500}projectName: scope\.projectName[\s\S]{0,120}projectPath: scope\.projectPath/
+    );
     expect(provider).toContain("typeof payloadRecord.sessionId === 'string'");
-    expect(provider).toContain("'sidebarAiCreatePlan', { plan, modelId, planSource, sessionId }");
-    expect(provider).toContain("'sidebarAiCreateError', { error: message, sessionId }");
+    expect(provider).toContain("this._postInlineCreate('sidebarAiCreatePlan'");
+    expect(provider).toContain('plan: authorizedPlan');
+    expect(provider).toContain('this._createPlanApprovals.begin');
+    expect(provider).toContain('failureCode: `plan-${approval.code}`');
+    expect(provider).toContain("this._postInlineCreate('sidebarAiCreateError'");
+    expect(provider).toMatch(
+      /retryPlan:\s*retryable\s*\?\s*\{\s*\.\.\.approval\.plan,\s*authorization: approval\.authorization\s*\}/
+    );
+    expect(provider).toContain('createManagedWorkspace');
     expect(provider).toContain('sessionId,');
+  });
+
+  it('lets users stop AI planning without pretending a filesystem transaction is cancellable', () => {
+    const dispatcher = read('src/ui/webviews/actionsWebviewMessageDispatcher.ts');
+    const composer = read('webview-ui/src/sidebar/composer/ComposerShell.tsx');
+
+    expect(createTab).toContain('planningActive');
+    expect(createTab).toContain('onCancelPlanning');
+    expect(secondary).toContain('sidebarCancelCreatePlanning');
+    expect(secondary).toContain('Planning stopped. Nothing was created or changed.');
+    expect(provider).toContain('_activeCreatePlanningTokens');
+    expect(provider).toContain('planningTokenSource.token');
+    expect(dispatcher).toContain("command: 'sidebarCancelCreatePlanning'");
+    expect(composer).toContain('const canStop');
   });
 });

@@ -92,7 +92,7 @@ export function buildAssistantIntentRoutingPrompt(input: {
     'Call route-workspai-request exactly once with:',
     '- conversation: greeting, thanks, social text, joke, or other non-engineering chat.',
     '- question: a request for explanation, investigation, or an answer without an explicit source change.',
-    '- engineering-task: a concrete code, configuration, test, documentation, or repair change.',
+    '- engineering-task: a concrete code, configuration, test, documentation, or repair change. Imperatives such as fix, repair, change, create, implement, remove, or make this work remain engineering-task even when phrased as a question.',
     '- goal: a durable outcome that should be tracked across multiple steps with explicit completion evidence.',
     '- clarification: engineering intent exists but the requested outcome or necessary target is too ambiguous to act safely.',
     '',

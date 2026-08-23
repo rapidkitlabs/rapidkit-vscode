@@ -10,7 +10,7 @@ import {
   shouldRefreshEvidenceOnTerminalClose,
 } from './core/workspaceIntelligenceRuntime';
 import { setWorkspaceEvidenceRefreshHandler } from './core/workspaceIntelligenceProgressRunner';
-import { presentCliVersionGate, resolveLinkedCliVersion } from './core/cliVersionGate';
+import { presentCliVersionGate, resolveActiveWorkspaiRuntimeVersion } from './core/cliVersionGate';
 import { syncWalkthroughEvidenceContext } from './core/walkthroughEvidenceContext';
 import { ensureInstalledAt } from './core/ttfvBridge';
 import { registerModuleExplorerReload } from './core/moduleExplorerRuntime';
@@ -79,6 +79,7 @@ import {
   parseWorkspaceShareBundle,
 } from './utils/workspaceShareBundle';
 import { WorkspaiWorkspace } from './types';
+import { configureBundledCliRuntimeStorage } from './core/bundledCliRuntime';
 
 let statusBar: WorkspaiStatusBar;
 let actionsWebviewProvider: ActionsWebviewProvider;
@@ -300,7 +301,7 @@ function refreshStatusBarAmbientTruth(workspace: WorkspaiWorkspace | null): void
   if (!workspace?.path) {
     return;
   }
-  void resolveLinkedCliVersion(workspace.path)
+  void resolveActiveWorkspaiRuntimeVersion(workspace.path)
     .then((cliVersion) => {
       const currentWorkspace = workspaceExplorer?.getSelectedWorkspace();
       if (currentWorkspace?.path !== workspace.path) {
@@ -594,6 +595,7 @@ function registerProjectRefreshWatchers(
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+  configureBundledCliRuntimeStorage(context.globalStorageUri.fsPath);
   const logger = Logger.getInstance();
   logger.info('Workspai extension is activating...');
 

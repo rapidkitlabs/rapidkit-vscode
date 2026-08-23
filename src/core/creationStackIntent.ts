@@ -1,9 +1,11 @@
 import {
-  frontendKitIdForFramework,
+  defaultScaffoldKitForFramework,
+  defaultWorkspaceProfileForFramework,
   isScaffoldFramework,
   isDesktopScaffoldFramework,
   isExtensionScaffoldFramework,
   isFrontendScaffoldFramework,
+  scaffoldRuntimeForFramework,
   type ScaffoldFramework,
 } from './scaffoldKits';
 
@@ -100,6 +102,13 @@ const POLYGLOT_SIGNALS = [
   'multi-runtime',
 ];
 
+const EXPLICIT_MULTI_RUNTIME_SIGNALS = [
+  'polyglot',
+  'multiple runtimes',
+  'multi-runtime',
+  'multi runtime',
+];
+
 const ENTERPRISE_SIGNALS = [
   'enterprise',
   'governance',
@@ -113,69 +122,20 @@ const ENTERPRISE_SIGNALS = [
 ];
 
 export function defaultProfileForFramework(framework: ScaffoldFramework): AICreateProfile {
-  if (
-    isFrontendScaffoldFramework(framework) ||
-    framework === 'nestjs' ||
-    framework === 'electron' ||
-    framework === 'vscode-extension'
-  ) {
-    return 'node-only';
-  }
-  if (framework === 'go') {
-    return 'go-only';
-  }
-  if (framework === 'springboot') {
-    return 'java-only';
-  }
-  if (framework === 'dotnet') {
-    return 'dotnet-only';
-  }
-  if (framework === 'rust' || framework === 'tauri' || framework === 'laravel') {
-    return 'minimal';
-  }
-  return 'python-only';
+  return defaultWorkspaceProfileForFramework(framework);
 }
 
 export function defaultKitForFramework(framework: ScaffoldFramework, promptLower: string): string {
-  if (isFrontendScaffoldFramework(framework)) {
-    return frontendKitIdForFramework(framework);
-  }
-  if (framework === 'nestjs') {
-    return 'nestjs.standard';
-  }
   if (framework === 'go') {
     return promptLower.includes('gin') ? 'gogin.standard' : 'gofiber.standard';
   }
-  if (framework === 'springboot') {
-    return 'springboot.standard';
-  }
-  if (framework === 'dotnet') {
-    return 'dotnet.webapi.clean';
-  }
-  if (framework === 'rust') {
-    return 'rust.axum';
-  }
-  if (framework === 'laravel') {
-    return 'php.laravel';
-  }
-  if (framework === 'tauri') {
-    return 'desktop.tauri';
-  }
-  if (framework === 'electron') {
-    return 'desktop.electron';
-  }
-  if (framework === 'vscode-extension') {
-    return 'extension.vscode';
-  }
   if (
-    promptLower.includes('ddd') ||
-    promptLower.includes('clean arch') ||
-    promptLower.includes('domain driven') ||
-    promptLower.includes('layered')
+    framework === 'fastapi' &&
+    ['ddd', 'clean arch', 'domain driven', 'layered'].some((signal) => promptLower.includes(signal))
   ) {
     return 'fastapi.ddd';
   }
-  return 'fastapi.standard';
+  return defaultScaffoldKitForFramework(framework);
 }
 
 function countSignals(promptLower: string, signals: string[]): number {
@@ -325,13 +285,18 @@ export function inferFrameworkFromCreationPrompt(
 export function inferWorkspaceProfileFromCreationPrompt(
   framework: ScaffoldFramework,
   promptLower: string,
-  stackIntent?: CreationStackIntent
+  stackIntent?: CreationStackIntent,
+  companionFramework?: ScaffoldFramework
 ): AICreateProfile {
   const resolvedIntent = inferStackIntentFromPrompt(promptLower, stackIntent);
   if (resolvedIntent === 'enterprise') {
     return 'enterprise';
   }
-  if (resolvedIntent === 'polyglot') {
+  if (
+    (companionFramework &&
+      scaffoldRuntimeForFramework(companionFramework) !== scaffoldRuntimeForFramework(framework)) ||
+    countSignals(promptLower, EXPLICIT_MULTI_RUNTIME_SIGNALS) > 0
+  ) {
     return 'polyglot';
   }
   return defaultProfileForFramework(framework);
@@ -492,7 +457,10 @@ export function inferPolyglotCompanionProject(
   }
 
   const frontendFramework = bestFrontendFrameworkInPrompt(promptLower) ?? 'nextjs';
-  const backendFramework = bestBackendFrameworkInPrompt(promptLower) ?? 'fastapi';
+  // Node is guaranteed by the extension host and provides the smallest
+  // dependency surface for delegated full-stack choices. Explicit Python,
+  // Go, Java, .NET, Rust, or PHP wording still selects that runtime above.
+  const backendFramework = bestBackendFrameworkInPrompt(promptLower) ?? 'nestjs';
   if (!frontendFramework || !backendFramework) {
     return undefined;
   }

@@ -44,6 +44,8 @@ type SetupStatus = {
   npmInstalled?: boolean;
   npmVersion?: string | null;
   npmAvailableViaNpx?: boolean;
+  bundledCliAvailable?: boolean;
+  bundledCliVersion?: string | null;
   coreInstalled?: boolean;
   coreVersion?: string | null;
   coreInstallType?: 'global' | 'workspace' | null;
@@ -61,6 +63,7 @@ type DetectionSource =
   | 'fallback'
   | 'workspace'
   | 'package-manager'
+  | 'bundled'
   | 'python';
 type SetupDetection = {
   source: DetectionSource;
@@ -1042,7 +1045,9 @@ export function SetupExperience({ embedded = false }: { embedded?: boolean }) {
     const pythonOk = Boolean(s?.pythonInstalled && !s?.pythonNeedsUpgrade);
     const coreLatest = s?.latestCoreStable || s?.latestCoreVersion;
     const coreUpgradeable = hasNewerVersion(s?.coreVersion, coreLatest);
-    const cliUpgradeable = hasNewerVersion(s?.npmVersion, s?.latestNpmVersion);
+    const cliVersion = s?.bundledCliVersion || s?.npmVersion;
+    const cliUpgradeable =
+      !s?.bundledCliAvailable && hasNewerVersion(cliVersion, s?.latestNpmVersion);
     return [
       {
         key: 'python',
@@ -1100,18 +1105,27 @@ export function SetupExperience({ embedded = false }: { embedded?: boolean }) {
         title: 'Workspai CLI',
         subtitle: 'Workspace Intelligence command engine',
         required: true,
-        installed: Boolean(s?.npmInstalled || s?.npmAvailableViaNpx),
-        version: s?.npmVersion,
+        installed: Boolean(s?.bundledCliAvailable || s?.npmInstalled || s?.npmAvailableViaNpx),
+        version: cliVersion,
         detection: s?.detections?.cli,
-        hint: s?.npmAvailableViaNpx
-          ? 'Available through npx; global installation is optional'
-          : 'Install globally via npm or use through npx',
+        hint: s?.bundledCliAvailable
+          ? 'Verified runtime included; install globally only for terminal use'
+          : s?.npmAvailableViaNpx
+            ? 'Available through npx; global installation is optional'
+            : 'Install globally via npm or use through npx',
         canUpgrade: cliUpgradeable,
-        primaryAction: {
-          label: 'Install',
-          command: cliUpgradeable ? 'upgradeNpmGlobal' : 'installNpmGlobal',
-        },
-        secondaryActions: [{ label: 'Verify', command: 'verifyNpm' }],
+        primaryAction: s?.bundledCliAvailable
+          ? undefined
+          : {
+              label: 'Install',
+              command: cliUpgradeable ? 'upgradeNpmGlobal' : 'installNpmGlobal',
+            },
+        secondaryActions: [
+          {
+            label: 'Verify',
+            command: s?.bundledCliAvailable ? 'verifyBundledCli' : 'verifyNpm',
+          },
+        ],
       },
     ];
   }, [status]);

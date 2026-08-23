@@ -59,11 +59,7 @@ export function DashboardOperateSubNav({
   };
 
   return (
-    <nav
-      className="dashboard-operate-sub-nav"
-      role="tablist"
-      aria-label="Run workspace sections"
-    >
+    <nav className="dashboard-operate-sub-nav" role="tablist" aria-label="Run workspace sections">
       {RUN_WORKSPACE_ZONES.map((zone) => {
         const isActive = activeZone === zone.id;
         return (
@@ -84,9 +80,6 @@ export function DashboardOperateSubNav({
             onKeyDown={(event) => handleTabKeyDown(event, zone.id)}
           >
             <span className="dashboard-operate-sub-nav__label">{zone.label}</span>
-            <span className="dashboard-operate-sub-nav__scope" aria-hidden="true">
-              {zone.description}
-            </span>
           </button>
         );
       })}

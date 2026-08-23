@@ -77,7 +77,13 @@ export function resolveAssistantExecutionPolicy(input: {
       return {
         ...base,
         profile: 'evidence-answer',
-        toolMode: 'ask',
+        // Agent is explicit user authority. Keep its complete capability host
+        // available for causal investigation, while the profile instruction
+        // keeps a genuinely read-only question non-mutating. The intent model
+        // classifies any explicit "fix/change/create" request as an
+        // engineering-task, so question-shaped repair commands do not lose
+        // mutation authority accidentally.
+        toolMode: 'agent',
       };
     }
     return {
@@ -168,7 +174,9 @@ export function resolveAssistantExecutionPolicy(input: {
 export function assistantExecutionPolicyInstruction(policy: AssistantExecutionPolicy): string {
   switch (policy.profile) {
     case 'evidence-answer':
-      return 'Execution policy: answer from read-only workspace evidence. Do not mutate source, create a Goal, or claim verified change completion.';
+      return policy.selectedMode === 'agent'
+        ? 'Execution policy: investigate with the full Agent capability host, but keep this genuinely informational request read-only. Do not mutate source unless the user explicitly asks to fix, change, create, remove, or implement something.'
+        : 'Execution policy: answer from read-only workspace evidence. Do not mutate source, create a Goal, or claim verified change completion.';
     case 'implementation-plan':
       return 'Execution policy: produce an evidence-backed implementation plan without mutating source or running mutating commands.';
     case 'autonomous-change':

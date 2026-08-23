@@ -17,7 +17,7 @@ export async function gateProjectLifecycleCommand(
   const detail = resolution.reason;
   const inspect = 'Inspect Capabilities';
   const choice = await vscode.window.showErrorMessage(
-    `Cannot run rapidkit ${command} for "${projectName}".\n\n${detail}`,
+    `Cannot run workspai ${command} for "${projectName}".\n\n${detail}`,
     inspect
   );
 
@@ -49,7 +49,7 @@ export async function gateModuleMutationCommand(
   const capabilities = await fetchProjectCommandCapabilities(projectPath);
   if (!capabilities) {
     vscode.window.showErrorMessage(
-      `Could not verify module support for "${projectName}". Ensure Workspai CLI is available and the project is managed.`
+      `Could not verify module support for "${projectName}". Open Setup to validate the active Workspai runtime and confirm that the project is managed.`
     );
     return false;
   }

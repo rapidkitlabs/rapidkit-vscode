@@ -70,23 +70,30 @@ export async function gateIncidentStudioRapidkitCommand(input: {
   const versionAllowed = await gateCompatibleCliVersion({
     cwd: input.cwd,
     featureLabel: input.featureLabel,
+    presentError: false,
   });
   if (!versionAllowed) {
     return {
       allowed: false,
-      error: `${input.featureLabel} is blocked until the linked Workspai CLI is updated.`,
+      error: `${input.featureLabel} is blocked until the active Workspai runtime is compatible.`,
     };
   }
 
   const [root, subcommand] = parsed.rapidkitArgs;
   if (root === 'workspace' && subcommand) {
     const capabilityAllowed = WORKSPACE_INTELLIGENCE_SUBCOMMANDS.has(subcommand)
-      ? await gateWorkspaceIntelligenceCli(input.featureLabel, { cwd: input.cwd })
-      : await gateWorkspaceSubcommandCli(input.featureLabel, subcommand, { cwd: input.cwd });
+      ? await gateWorkspaceIntelligenceCli(input.featureLabel, {
+          cwd: input.cwd,
+          presentError: false,
+        })
+      : await gateWorkspaceSubcommandCli(input.featureLabel, subcommand, {
+          cwd: input.cwd,
+          presentError: false,
+        });
     if (!capabilityAllowed) {
       return {
         allowed: false,
-        error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise workspace ${subcommand}.`,
+        error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise workspace ${subcommand}.`,
       };
     }
     return { allowed: true };
@@ -95,11 +102,12 @@ export async function gateIncidentStudioRapidkitCommand(input: {
   if (PROJECT_SCOPED_COMMANDS.has(root)) {
     const capabilityAllowed = await gateProjectScopedRapidkitCli(input.featureLabel, root, {
       cwd: input.cwd,
+      presentError: false,
     });
     if (!capabilityAllowed) {
       return {
         allowed: false,
-        error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise project ${root}.`,
+        error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise project ${root}.`,
       };
     }
     return { allowed: true };
@@ -108,11 +116,12 @@ export async function gateIncidentStudioRapidkitCommand(input: {
   if (CORE_BACKED_COMMANDS.has(root)) {
     const capabilityAllowed = await gateRootRapidkitCli(input.featureLabel, root, {
       cwd: input.cwd,
+      presentError: false,
     });
     if (!capabilityAllowed) {
       return {
         allowed: false,
-        error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise ${root}.`,
+        error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise ${root}.`,
       };
     }
     return { allowed: true };
@@ -120,11 +129,12 @@ export async function gateIncidentStudioRapidkitCommand(input: {
 
   const capabilityAllowed = await gateTopLevelRapidkitCli(input.featureLabel, root, {
     cwd: input.cwd,
+    presentError: false,
   });
   if (!capabilityAllowed) {
     return {
       allowed: false,
-      error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise ${root}.`,
+      error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise ${root}.`,
     };
   }
 
@@ -147,22 +157,29 @@ export async function gateRapidkitCliArgs(input: {
   const versionAllowed = await gateCompatibleCliVersion({
     cwd: input.cwd,
     featureLabel: input.featureLabel,
+    presentError: false,
   });
   if (!versionAllowed) {
     return {
       allowed: false,
-      error: `${input.featureLabel} is blocked until the linked Workspai CLI is updated.`,
+      error: `${input.featureLabel} is blocked until the active Workspai runtime is compatible.`,
     };
   }
 
   if (root === 'workspace' && subcommand) {
     const capabilityAllowed = WORKSPACE_INTELLIGENCE_SUBCOMMANDS.has(subcommand)
-      ? await gateWorkspaceIntelligenceCli(input.featureLabel, { cwd: input.cwd })
-      : await gateWorkspaceSubcommandCli(input.featureLabel, subcommand, { cwd: input.cwd });
+      ? await gateWorkspaceIntelligenceCli(input.featureLabel, {
+          cwd: input.cwd,
+          presentError: false,
+        })
+      : await gateWorkspaceSubcommandCli(input.featureLabel, subcommand, {
+          cwd: input.cwd,
+          presentError: false,
+        });
     if (!capabilityAllowed) {
       return {
         allowed: false,
-        error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise workspace ${subcommand}.`,
+        error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise workspace ${subcommand}.`,
       };
     }
     return { allowed: true };
@@ -171,11 +188,12 @@ export async function gateRapidkitCliArgs(input: {
   if (PROJECT_SCOPED_COMMANDS.has(root)) {
     const capabilityAllowed = await gateProjectScopedRapidkitCli(input.featureLabel, root, {
       cwd: input.cwd,
+      presentError: false,
     });
     if (!capabilityAllowed) {
       return {
         allowed: false,
-        error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise project ${root}.`,
+        error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise project ${root}.`,
       };
     }
     return { allowed: true };
@@ -184,11 +202,12 @@ export async function gateRapidkitCliArgs(input: {
   if (CORE_BACKED_COMMANDS.has(root)) {
     const capabilityAllowed = await gateRootRapidkitCli(input.featureLabel, root, {
       cwd: input.cwd,
+      presentError: false,
     });
     if (!capabilityAllowed) {
       return {
         allowed: false,
-        error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise ${root}.`,
+        error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise ${root}.`,
       };
     }
     return { allowed: true };
@@ -196,11 +215,12 @@ export async function gateRapidkitCliArgs(input: {
 
   const capabilityAllowed = await gateTopLevelRapidkitCli(input.featureLabel, root, {
     cwd: input.cwd,
+    presentError: false,
   });
   if (!capabilityAllowed) {
     return {
       allowed: false,
-      error: `${input.featureLabel} is blocked because the linked Workspai CLI does not advertise ${root}.`,
+      error: `${input.featureLabel} is blocked because the active Workspai runtime does not advertise ${root}.`,
     };
   }
 

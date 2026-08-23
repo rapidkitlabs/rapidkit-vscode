@@ -1,5 +1,9 @@
 import path from 'path';
 
+import {
+  isDashboardEvidenceCardId,
+  type DashboardEvidenceCardId,
+} from '../contracts/dashboardEvidenceCards.js';
 import { projectDoctorEvidence } from './doctorEvidenceProjection.js';
 import type { DashboardEvidenceStatus } from './dashboardEvidenceBridge';
 import { resolveWorkspaceRunCardReport } from './workspaceRunEvidence.js';
@@ -48,7 +52,12 @@ export type DashboardReportKind =
 export type DashboardReportBinding = {
   kind: DashboardReportKind;
   command: string;
-  cardId: string;
+  /**
+   * The concrete evidence card owned by this artifact. Orchestration-only
+   * artifacts deliberately omit this value and force a complete evidence
+   * snapshot instead of pretending that they own a dashboard card.
+   */
+  cardId?: DashboardEvidenceCardId;
   scope: 'workspace' | 'project' | 'system';
 };
 
@@ -305,7 +314,6 @@ const REPORT_BINDINGS: Array<{
     binding: {
       kind: 'artifact-remediation-plan',
       command: 'workspaceRemediationPlan',
-      cardId: 'remediationPlan',
       scope: 'workspace',
     },
   },
@@ -452,14 +460,18 @@ export function resolveReportBinding(filePath: string): DashboardReportBinding |
 
 export function resolveEvidenceCardIdsForDashboardCommand(command: string): string[] {
   const cardIds = [
-    ...REPORT_BINDINGS.filter((entry) => entry.binding.command === command).map(
-      (entry) => entry.binding.cardId
-    ),
+    ...REPORT_BINDINGS.filter(
+      (
+        entry
+      ): entry is typeof entry & {
+        binding: DashboardReportBinding & { cardId: DashboardEvidenceCardId };
+      } => entry.binding.command === command && Boolean(entry.binding.cardId)
+    ).map((entry) => entry.binding.cardId),
     ...Object.entries(EVIDENCE_CARD_COMMAND_FALLBACKS)
       .filter(([, mappedCommand]) => mappedCommand === command)
       .map(([cardId]) => cardId),
   ];
-  return [...new Set(cardIds)];
+  return [...new Set(cardIds)].filter(isDashboardEvidenceCardId);
 }
 
 export function resolveDashboardCommandForEvidenceCard(cardId: string): string | undefined {

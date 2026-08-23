@@ -43,6 +43,13 @@ export function simplifyRepairFinding(value: string): string {
     return `Run evidence for ${projectEvidence[1]} (${humanizeIdentifier(projectEvidence[2] ?? '')}) is missing.`;
   }
 
+  const staleProjectEvidence = text.match(
+    /^project\.([^.]+)\.([^.]+):\s*Workspace run evidence for [^:]+ is stale\b/i
+  );
+  if (staleProjectEvidence) {
+    return `Run evidence for ${staleProjectEvidence[1]} (${humanizeIdentifier(staleProjectEvidence[2] ?? '')}) is out of date.`;
+  }
+
   const unmanagedProject = text.match(/^([^:]+):\s*Not a Workspai-managed project/i);
   if (unmanagedProject) {
     return `${unmanagedProject[1]?.trim()} is not registered as a Workspai project.`;
@@ -72,6 +79,10 @@ export function simplifyRepairFinding(value: string): string {
   }
 
   const scopedMessage = text.match(/^[A-Za-z0-9_.-]+:\s*(.+)$/)?.[1] ?? text;
+  const staleEvidence = scopedMessage.match(/^(.+?)(?:\s+evidence|\s+report)\s+is stale\b/i);
+  if (staleEvidence) {
+    return `${sentence(staleEvidence[1] ?? 'Evidence').replace(/[.!?]$/, '')} evidence is out of date.`;
+  }
   return sentence(scopedMessage);
 }
 
@@ -107,13 +118,18 @@ export function buildDashboardRepairCardCopy(input: {
 
   let guidance: string;
   if (input.blocking) {
-    guidance = 'This issue blocks verification or release.';
+    const evidenceOnly =
+      findings.length > 0 &&
+      findings.every((finding) => /evidence|report|out of date/i.test(finding));
+    guidance = evidenceOnly
+      ? 'Refresh the required evidence, then verify again.'
+      : 'Resolve this item before verification.';
   } else if (input.card.status === 'missing') {
     guidance = input.actionLabel
       ? `Run ${input.actionLabel} to create the missing evidence.`
       : 'Generate this evidence to complete the workspace record.';
   } else {
-    guidance = 'This does not currently block release, but it should be reviewed.';
+    guidance = 'Review this item when convenient.';
   }
 
   return { issue, guidance, remainingFindingCount };

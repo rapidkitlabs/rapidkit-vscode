@@ -13,7 +13,10 @@ describe('spring support contracts', () => {
     const coreCommandsSource = read('src/commands/coreCommands.ts');
     const createProjectSource = read('src/commands/createProject.ts');
     const projectWizardSource = read('src/ui/wizards/projectWizard.ts');
-    const rapidkitCliSource = read('src/core/scaffoldKits.ts');
+    const createContract = JSON.parse(read('contracts/create-planner-capabilities.v1.json')) as {
+      nativeCreate: Array<{ id: string }>;
+      officialCreate: Array<{ id: string; canExecuteCreate: boolean }>;
+    };
     const appSource = read('webview-ui/src/App.tsx');
 
     expect(coreCommandsSource).toContain("'workspai.createSpringBootProject'");
@@ -27,8 +30,14 @@ describe('spring support contracts', () => {
     expect(projectWizardSource).toContain('Spring Boot');
     expect(projectWizardSource).toContain('.NET Web API');
 
-    expect(rapidkitCliSource).toContain('springboot.standard');
-    expect(rapidkitCliSource).toContain('dotnet.webapi.clean');
+    const executableKits = [
+      ...createContract.nativeCreate.map((entry) => entry.id),
+      ...createContract.officialCreate
+        .filter((entry) => entry.canExecuteCreate)
+        .map((entry) => entry.id),
+    ];
+    expect(executableKits).toContain('springboot.standard');
+    expect(executableKits).toContain('dotnet.webapi.clean');
 
     const scaffoldRoutingSource = read('src/core/rapidkitCLI.ts');
     expect(scaffoldRoutingSource).toContain("'create',");

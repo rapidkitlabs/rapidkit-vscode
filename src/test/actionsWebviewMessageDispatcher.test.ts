@@ -10,6 +10,7 @@ function host(): ActionsWebviewMessageDispatchHost {
   return {
     runInlineAICreatePlan: vi.fn(async () => undefined),
     runInlineAICreateConfirm: vi.fn(async () => undefined),
+    cancelInlineAICreatePlan: vi.fn(async () => undefined),
     runSidebarManualCreate: vi.fn(async () => undefined),
     runSidebarCreatedWorkspaceBootstrap: vi.fn(async () => undefined),
     runInlineImpactQuery: vi.fn(async () => undefined),
@@ -20,7 +21,9 @@ function host(): ActionsWebviewMessageDispatchHost {
     openDashboardSection: vi.fn(async () => undefined),
     openWorkspaceFile: vi.fn(async () => undefined),
     openWorkspaceDiff: vi.fn(async () => undefined),
+    reviewWorkspaceChanges: vi.fn(async () => undefined),
     undoAgentPatch: vi.fn(async () => undefined),
+    openSetup: vi.fn(async () => undefined),
     sendInlineScope: vi.fn(async () => undefined),
     sendInlineModels: vi.fn(async () => undefined),
     setPreferredModel: vi.fn(async () => undefined),
@@ -58,5 +61,31 @@ describe('actions webview message dispatcher', () => {
     expect(target.openWorkspaceDiff).toHaveBeenCalledWith(receipt);
     expect(target.openWorkspaceFile).not.toHaveBeenCalled();
     expect(listActionsWebviewMessageCommands()).toContain('sidebarOpenWorkspaceDiff');
+  });
+
+  it('routes Create prerequisite recovery to the native Setup surface', async () => {
+    const target = host();
+
+    await dispatchActionsWebviewMessage(target, {
+      command: 'sidebarOpenSetup',
+      data: {},
+    });
+
+    expect(target.openSetup).toHaveBeenCalledOnce();
+    expect(listActionsWebviewMessageCommands()).toContain('sidebarOpenSetup');
+  });
+
+  it('routes Create planning cancellation without cancelling a filesystem transaction', async () => {
+    const target = host();
+
+    await dispatchActionsWebviewMessage(target, {
+      command: 'sidebarCancelCreatePlanning',
+      data: { sessionId: 'create-session-1' },
+    });
+
+    expect(target.cancelInlineAICreatePlan).toHaveBeenCalledWith({
+      sessionId: 'create-session-1',
+    });
+    expect(target.runInlineAICreateConfirm).not.toHaveBeenCalled();
   });
 });

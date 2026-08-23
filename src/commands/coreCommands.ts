@@ -95,6 +95,13 @@ export function registerCoreCommands(options: {
           getWorkspaceExplorer()?.refresh();
         } catch (error) {
           logger.error('Failed to create workspace', error);
+          if (
+            workspaceInput &&
+            typeof workspaceInput === 'object' &&
+            workspaceInput.silent === true
+          ) {
+            throw error;
+          }
           vscode.window.showErrorMessage(
             `Failed to create workspace: ${error instanceof Error ? error.message : String(error)}`
           );

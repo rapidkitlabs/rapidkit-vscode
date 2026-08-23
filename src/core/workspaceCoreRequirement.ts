@@ -1,8 +1,11 @@
 import path from 'node:path';
 import * as fs from 'fs-extra';
 
-const CORE_REQUIRED_PROFILES = new Set(['python-only', 'polyglot', 'enterprise']);
-const MODULE_CAPABLE_KITS = new Set(['fastapi.standard', 'fastapi.ddd', 'nestjs.standard']);
+import {
+  profileInstallsPythonEngineAtCreate,
+  resolveWorkspaceCreateProfile,
+} from '../contracts/createPlannerCapabilities.js';
+import { workspacePythonEngineForKit } from './scaffoldKits.js';
 
 export type WorkspaceCoreRequirement = {
   required: boolean;
@@ -49,10 +52,13 @@ export async function resolveWorkspaceCoreRequirement(
     typeof workspaceManifest?.profile === 'string' ? workspaceManifest.profile : undefined;
   const engine = record(workspaceManifest?.engine);
   const pythonCore = record(engine?.python_core);
-  if (pythonCore?.status === 'skipped' && pythonCore.reason === 'user-opted-out') {
-    return { required: false, reason: 'user-opted-out', profile };
-  }
-  if (profile && CORE_REQUIRED_PROFILES.has(profile)) {
+  const pythonEngineSkipped = pythonCore?.status === 'skipped';
+  const profileCapability = resolveWorkspaceCreateProfile(profile);
+  if (
+    !pythonEngineSkipped &&
+    profileCapability &&
+    profileInstallsPythonEngineAtCreate(profileCapability.id)
+  ) {
     return { required: true, reason: 'profile', profile };
   }
 
@@ -62,7 +68,12 @@ export async function resolveWorkspaceCoreRequirement(
   const contractWorkspace = record(contract?.workspace);
   const contractProfile =
     typeof contractWorkspace?.profile === 'string' ? contractWorkspace.profile : profile;
-  if (contractProfile && CORE_REQUIRED_PROFILES.has(contractProfile)) {
+  const contractProfileCapability = resolveWorkspaceCreateProfile(contractProfile);
+  if (
+    !pythonEngineSkipped &&
+    contractProfileCapability &&
+    profileInstallsPythonEngineAtCreate(contractProfileCapability.id)
+  ) {
     return { required: true, reason: 'profile', profile: contractProfile };
   }
 
@@ -73,16 +84,21 @@ export async function resolveWorkspaceCoreRequirement(
       continue;
     }
     const kit = typeof project.kit === 'string' ? project.kit : '';
-    if (kit.startsWith('fastapi.')) {
+    const pythonEngine = workspacePythonEngineForKit(kit);
+    if (pythonEngine === 'required') {
       return { required: true, reason: 'python-kit', profile: contractProfile };
     }
     if (
-      MODULE_CAPABLE_KITS.has(kit) &&
+      pythonEngine === 'optional' &&
       Array.isArray(project.modules) &&
       project.modules.length > 0
     ) {
       return { required: true, reason: 'modules', profile: contractProfile };
     }
+  }
+
+  if (pythonEngineSkipped) {
+    return { required: false, reason: 'user-opted-out', profile: contractProfile };
   }
 
   return { required: false, reason: 'not-required', profile: contractProfile };

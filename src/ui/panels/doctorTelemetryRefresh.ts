@@ -73,6 +73,17 @@ export function extractWorkspacePathFromReportPath(filePath: string): string | u
         return filePath.slice(0, metadataIdx);
       }
     }
+
+    // Governed state is larger than reports: repair transactions, indexes,
+    // goals, project lenses, contracts, and lifecycle manifests can all alter
+    // what a dashboard card must show. Resolve any canonical metadata write
+    // back to its nearest workspace rather than silently ignoring it.
+    const metadataMarker = `${path.sep}${metadataDir}${path.sep}`;
+    const metadataIdx = filePath.lastIndexOf(metadataMarker);
+    if (metadataIdx > 0) {
+      const metadataOwner = filePath.slice(0, metadataIdx);
+      return findWorkspaceRootSync(metadataOwner) ?? metadataOwner;
+    }
   }
 
   return extractWorkspacePathFromDoctorReportPath(filePath);
@@ -89,6 +100,51 @@ export type DashboardEvidenceRefreshContext = {
 };
 
 type TimerHandle = ReturnType<typeof setTimeout>;
+
+const CARD_DEPENDENTS: Partial<
+  Record<DashboardEvidenceCardId, readonly DashboardEvidenceCardId[]>
+> = {
+  doctor: ['analyze', 'readiness', 'workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
+  projectDoctor: ['doctor', 'analyze', 'readiness', 'workspaceVerify'],
+  pipeline: ['analyze', 'readiness', 'workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
+  analyze: ['readiness', 'workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
+  readiness: ['workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
+  workspaceRun: ['pipeline', 'analyze', 'readiness', 'workspaceVerify'],
+  workspaceModel: [
+    'intelligenceSnapshot',
+    'workspaceDiff',
+    'workspaceImpact',
+    'workspaceIntelligenceRun',
+    'workspaceVerify',
+    'workspaceExplain',
+    'workspaceWhy',
+    'workspaceTrace',
+    'workspaceWatch',
+    'workspaceContextAgent',
+    'agentGrounding',
+  ],
+  workspaceImpact: ['workspaceVerify', 'workspaceExplain', 'workspaceWhy', 'workspaceTrace'],
+  workspaceIntelligenceRun: ['workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
+  workspaceContextAgent: ['agentGrounding'],
+};
+
+export function resolveDashboardEvidenceRefreshContext(
+  filePath: string,
+  workspacePathHint?: string
+): DashboardEvidenceRefreshContext {
+  const binding = resolveReportBinding(filePath);
+  const workspacePath = workspacePathHint ?? extractWorkspacePathFromReportPath(filePath);
+  if (!binding?.cardId) {
+    return { reportPath: filePath, workspacePath, refreshMode: 'full' };
+  }
+  const cardIds = [binding.cardId, ...(CARD_DEPENDENTS[binding.cardId] ?? [])];
+  return {
+    reportPath: filePath,
+    workspacePath,
+    refreshMode: 'patch',
+    cardIds: [...new Set(cardIds)],
+  };
+}
 
 type CreateDoctorTelemetryRefreshControllerOptions = {
   onRefresh: (context?: DashboardEvidenceRefreshContext) => void | Promise<void>;
@@ -109,19 +165,9 @@ export function createDoctorTelemetryRefreshController(
   let pendingContext: DashboardEvidenceRefreshContext | undefined;
 
   return {
-    schedule(filePath?: string) {
-      const binding = filePath ? resolveReportBinding(filePath) : undefined;
+    schedule(filePath?: string, workspacePathHint?: string) {
       const context: DashboardEvidenceRefreshContext | undefined = filePath
-        ? {
-            reportPath: filePath,
-            workspacePath: extractWorkspacePathFromReportPath(filePath),
-            ...(binding?.cardId
-              ? {
-                  cardIds: [binding.cardId as DashboardEvidenceCardId],
-                  refreshMode: 'patch' as const,
-                }
-              : {}),
-          }
+        ? resolveDashboardEvidenceRefreshContext(filePath, workspacePathHint)
         : undefined;
       pendingContext = mergeDashboardEvidenceRefreshContexts(pendingContext, context);
 
@@ -163,6 +209,11 @@ export function mergeDashboardEvidenceRefreshContexts(
     return next;
   }
 
+  const requiresFullRefresh =
+    current.refreshMode === 'full' ||
+    next.refreshMode === 'full' ||
+    !current.cardIds?.length ||
+    !next.cardIds?.length;
   const cardIds = Array.from(new Set([...(current.cardIds ?? []), ...(next.cardIds ?? [])]));
   return {
     ...current,
@@ -171,6 +222,8 @@ export function mergeDashboardEvidenceRefreshContexts(
     projectPath: next.projectPath ?? current.projectPath,
     projectName: next.projectName ?? current.projectName,
     reportPath: next.reportPath ?? current.reportPath,
-    ...(cardIds.length > 0 ? { cardIds, refreshMode: 'patch' as const } : {}),
+    ...(requiresFullRefresh
+      ? { cardIds: undefined, refreshMode: 'full' as const }
+      : { cardIds, refreshMode: 'patch' as const }),
   };
 }

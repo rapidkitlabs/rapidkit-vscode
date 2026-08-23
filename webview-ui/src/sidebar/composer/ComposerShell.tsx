@@ -61,6 +61,7 @@ export function ComposerShell(props: ComposerShellProps) {
       }
     });
   };
+  const canStop = Boolean(props.running && !props.value.trim() && props.onCancel);
 
   return (
     <div className="ws-composer-dock">
@@ -115,7 +116,7 @@ export function ComposerShell(props: ComposerShellProps) {
             className="ws-composer__send"
             aria-label={props.running && !props.value.trim() ? 'Stop' : 'Send'}
             title={props.running && !props.value.trim() ? 'Stop' : 'Send'}
-            disabled={props.disabled || (!props.value.trim() && !props.running)}
+            disabled={canStop ? false : props.disabled || (!props.value.trim() && !props.running)}
             onClick={() => {
               if (props.running && !props.value.trim()) {
                 props.onCancel?.();

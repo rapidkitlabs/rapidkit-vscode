@@ -7,6 +7,7 @@ import {
   createDoctorTelemetryRefreshController,
   extractWorkspacePathFromDoctorReportPath,
   extractWorkspacePathFromReportPath,
+  resolveDashboardEvidenceRefreshContext,
 } from '../ui/panels/doctorTelemetryRefresh';
 
 describe('doctorTelemetryRefresh', () => {
@@ -57,7 +58,7 @@ describe('doctorTelemetryRefresh', () => {
     await fs.remove(workspacePath);
   });
 
-  it('debounces doctor telemetry refresh and keeps the latest workspace path', async () => {
+  it('debounces governed evidence refresh and keeps the latest workspace path', async () => {
     const onRefresh = vi.fn();
     const controller = createDoctorTelemetryRefreshController({ onRefresh, delayMs: 250 });
     const thirdReport = '/tmp/third/.rapidkit/reports/doctor-last-run.json';
@@ -76,14 +77,21 @@ describe('doctorTelemetryRefresh', () => {
     expect(onRefresh).toHaveBeenCalledWith({
       workspacePath: '/tmp/third',
       reportPath: thirdReport,
-      cardIds: ['doctor'],
       refreshMode: 'patch',
+      cardIds: [
+        'doctor',
+        'analyze',
+        'readiness',
+        'workspaceVerify',
+        'workspaceExplain',
+        'workspaceWhy',
+      ],
     });
 
     controller.dispose();
   });
 
-  it('coalesces rapid report writes in the same workspace into one patch refresh', async () => {
+  it('coalesces rapid report writes into one dependency-aware card patch', async () => {
     const onRefresh = vi.fn();
     const controller = createDoctorTelemetryRefreshController({ onRefresh, delayMs: 250 });
     const workspacePath = '/tmp/workspace';
@@ -102,12 +110,20 @@ describe('doctorTelemetryRefresh', () => {
     await Promise.resolve();
 
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(onRefresh).toHaveBeenCalledWith({
-      workspacePath,
-      reportPath: `${workspacePath}/.rapidkit/reports/doctor-last-run.json`,
-      cardIds: ['doctor', 'analyze', 'readiness', 'pipeline'],
-      refreshMode: 'patch',
-    });
+    expect(onRefresh).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspacePath,
+        reportPath: `${workspacePath}/.rapidkit/reports/doctor-last-run.json`,
+        refreshMode: 'patch',
+        cardIds: expect.arrayContaining([
+          'doctor',
+          'pipeline',
+          'analyze',
+          'readiness',
+          'workspaceVerify',
+        ]),
+      })
+    );
 
     controller.dispose();
   });
@@ -126,8 +142,8 @@ describe('doctorTelemetryRefresh', () => {
     expect(onRefresh).toHaveBeenCalledWith({
       workspacePath: '/tmp/second',
       reportPath: '/tmp/second/.rapidkit/reports/analyze-last-run.json',
-      cardIds: ['analyze'],
       refreshMode: 'patch',
+      cardIds: ['analyze', 'readiness', 'workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
     });
 
     controller.dispose();
@@ -164,10 +180,63 @@ describe('doctorTelemetryRefresh', () => {
     expect(onRefresh).toHaveBeenCalledWith({
       workspacePath: '/tmp/demo',
       reportPath: '/tmp/demo/.rapidkit/reports/doctor-last-run.json',
-      cardIds: ['doctor'],
       refreshMode: 'patch',
+      cardIds: [
+        'doctor',
+        'analyze',
+        'readiness',
+        'workspaceVerify',
+        'workspaceExplain',
+        'workspaceWhy',
+      ],
     });
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(refreshError);
+  });
+
+  it('uses the canonical workspace hint for linked project evidence', async () => {
+    const onRefresh = vi.fn();
+    const controller = createDoctorTelemetryRefreshController({ onRefresh, delayMs: 10 });
+    const projectReport = '/external/project/.workspai/reports/project-context-agent.json';
+
+    controller.schedule(projectReport, '/canonical/workspace');
+    vi.advanceTimersByTime(10);
+    await Promise.resolve();
+
+    expect(onRefresh).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspacePath: '/canonical/workspace',
+        reportPath: projectReport,
+      })
+    );
+  });
+
+  it('resolves repair transaction artifacts as governed workspace evidence', () => {
+    expect(
+      extractWorkspacePathFromReportPath(
+        '/tmp/demo/.workspai/repair/transactions/repair-1/transaction.json'
+      )
+    ).toBe('/tmp/demo');
+  });
+
+  it('patches only the owner and its freshness dependents', () => {
+    expect(
+      resolveDashboardEvidenceRefreshContext(
+        '/tmp/demo/.workspai/reports/release-readiness-last-run.json'
+      )
+    ).toEqual({
+      workspacePath: '/tmp/demo',
+      reportPath: '/tmp/demo/.workspai/reports/release-readiness-last-run.json',
+      refreshMode: 'patch',
+      cardIds: ['readiness', 'workspaceVerify', 'workspaceExplain', 'workspaceWhy'],
+    });
+  });
+
+  it('falls back to a full snapshot for orchestration and unknown governed state', () => {
+    expect(
+      resolveDashboardEvidenceRefreshContext(
+        '/tmp/demo/.workspai/repair/transactions/repair-1/transaction.json'
+      ).refreshMode
+    ).toBe('full');
   });
 });

@@ -1,5 +1,57 @@
 # Release Notes
 
+## v0.43.0 (August 22, 2026)
+
+### Conversational Create and embedded CLI authority
+
+Workspai for VS Code 0.43.0 is validated against Workspai CLI 0.64.0. This
+release gives the Create experience one model-guided but controller-governed
+path and makes the packaged CLI the consistent authority for extension
+operations from the first run.
+
+Highlights:
+
+- Create distinguishes conversation, clarification, architecture guidance,
+  adoption, existing-source work, and high-confidence creation intent before it
+  can propose or execute a scaffold plan.
+- The model consumes the CLI-published profile and kit contract, while one
+  controller-owned capability executes approved workspace, project, companion,
+  and intelligence operations.
+- Workspace plans remain stable while sidebar context refreshes. Project plans
+  are bound to the active workspace selected by the user and cannot silently
+  fall back to a different or default workspace.
+- The plan card now names its real mutation target: either a new workspace and
+  first project, or a new project in the active selected workspace.
+- The extension embeds an integrity-checked Workspai CLI 0.64.0 runtime, so
+  Create, Doctor, Graph, Goal, Agent, and Dashboard do not depend on a global
+  installation or a mutable `npx` cache.
+- Python-engine setup is derived from the approved project plan and returns
+  runtime-specific, actionable diagnostics without coupling Node-only or
+  polyglot workspaces to Python bootstrap.
+- Create and lifecycle commands share one verified CLI capability surface, so a
+  command that successfully creates a workspace is not rejected by a conflicting
+  secondary capability check.
+- Integrated terminals now show normal `workspai ...` commands while remaining
+  bound to the same CLI embedded in the extension.
+- Repair cards now show concise causes, avoid duplicate explanatory artifacts,
+  and refresh the CLI-authored causal evidence queue before a model is asked to
+  diagnose or change source.
+- Dashboard and Artifacts now rebuild one complete canonical snapshot whenever
+  CLI or Studio evidence changes, including linked-project artifacts and
+  explicit missing states.
+
+Compatibility:
+
+- VS Code 1.106.0+
+- Workspai CLI 0.64.0+
+- RapidKit Core 0.6.0 only for Python-backed kits/modules
+
+[Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.43.0/releases/RELEASE_NOTES_v0.43.0.md)
+
+Release posture: `conversational-create-and-embedded-cli-authority`
+
+Publication status: pending.
+
 ## v0.42.0 (August 21, 2026)
 
 ### Intent-aware modes, causal repair queues, and native change review

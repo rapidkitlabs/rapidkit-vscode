@@ -105,18 +105,18 @@ export interface StudioAgentWorkspaiToolHost {
     projectPath?: string;
     reportProgress?: (data: Record<string, unknown>) => Promise<void>;
   }): Promise<StudioAgentToolResult>;
-  inspectDependencySecurity(input: {
+  inspectDependencySecurity?(input: {
     projectName?: string;
     workspacePath: string;
     projectPath?: string;
   }): Promise<StudioAgentToolResult>;
-  repairDependencySecurity(input: {
+  repairDependencySecurity?(input: {
     projectName?: string;
     workspacePath: string;
     projectPath?: string;
     reportProgress?: (data: Record<string, unknown>) => Promise<void>;
   }): Promise<StudioAgentToolResult>;
-  upgradeDependencySecurity(input: {
+  upgradeDependencySecurity?(input: {
     projectName?: string;
     packageName: string;
     transactionId: string;
@@ -124,7 +124,7 @@ export interface StudioAgentWorkspaiToolHost {
     projectPath?: string;
     reportProgress?: (data: Record<string, unknown>) => Promise<void>;
   }): Promise<StudioAgentToolResult>;
-  completeDependencyTransaction(input: {
+  completeDependencyTransaction?(input: {
     projectNames?: string[];
     changedPaths?: string[];
     workspacePath: string;
@@ -704,127 +704,134 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
     },
   });
 
-  register({
-    name: 'inspect-dependency-security',
-    title: 'Inspect dependency security',
-    description:
-      'Run the runtime-native read-only audit for a project named by fresh Doctor security evidence. Returns advisory details without changing files.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: { projectName: { type: 'string', minLength: 1 } },
-    },
-    activity: 'inspect',
-    risk: 'read',
-    async execute(raw, context) {
-      const value = asRecord(raw);
-      return input.host.inspectDependencySecurity({
-        ...(typeof value.projectName === 'string' && value.projectName.trim()
-          ? { projectName: value.projectName.trim() }
-          : {}),
-        workspacePath: context.workspacePath,
-        ...optionalScope(context),
-      });
-    },
-  });
-
-  register({
-    name: 'repair-dependency-security',
-    title: 'Repair dependency security',
-    description:
-      'Start a CLI-owned dependency repair transaction for a project named by fresh failed Doctor evidence. Reconcile, audit, tests, build, canonical verify, and rollback are inseparable stages.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: { projectName: { type: 'string', minLength: 1 } },
-    },
-    activity: 'change',
-    risk: 'guarded-write',
-    async execute(raw, context) {
-      const value = asRecord(raw);
-      return input.host.repairDependencySecurity({
-        ...(typeof value.projectName === 'string' && value.projectName.trim()
-          ? { projectName: value.projectName.trim() }
-          : {}),
-        workspacePath: context.workspacePath,
-        ...optionalScope(context),
-        reportProgress: context.reportProgress,
-      });
-    },
-  });
-
-  register({
-    name: 'upgrade-dependency-security',
-    title: 'Upgrade vulnerable direct dependency',
-    description:
-      'Request a CLI-owned dependency repair after inspecting an advisory candidate. The package hint is evidence only; CLI policy and the immutable remediation plan remain authoritative.',
-    inputSchema: {
-      type: 'object',
-      required: ['packageName'],
-      additionalProperties: false,
-      properties: {
-        projectName: { type: 'string', minLength: 1 },
-        packageName: { type: 'string', minLength: 1 },
+  if (
+    input.host.inspectDependencySecurity &&
+    input.host.repairDependencySecurity &&
+    input.host.upgradeDependencySecurity &&
+    input.host.completeDependencyTransaction
+  ) {
+    register({
+      name: 'inspect-dependency-security',
+      title: 'Inspect dependency security',
+      description:
+        'Run the runtime-native read-only audit for a project named by fresh Doctor security evidence. Returns advisory details without changing files.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { projectName: { type: 'string', minLength: 1 } },
       },
-    },
-    activity: 'change',
-    risk: 'guarded-write',
-    async execute(raw, context) {
-      const value = asRecord(raw);
-      if (typeof value.packageName !== 'string' || !value.packageName.trim()) {
-        throw new Error('Studio Agent dependency packageName is required.');
-      }
-      return input.host.upgradeDependencySecurity({
-        ...(typeof value.projectName === 'string' && value.projectName.trim()
-          ? { projectName: value.projectName.trim() }
-          : {}),
-        packageName: value.packageName.trim(),
-        transactionId: context.toolCallId,
-        workspacePath: context.workspacePath,
-        ...optionalScope(context),
-        reportProgress: context.reportProgress,
-      });
-    },
-  });
+      activity: 'inspect',
+      risk: 'read',
+      async execute(raw, context) {
+        const value = asRecord(raw);
+        return input.host.inspectDependencySecurity!({
+          ...(typeof value.projectName === 'string' && value.projectName.trim()
+            ? { projectName: value.projectName.trim() }
+            : {}),
+          workspacePath: context.workspacePath,
+          ...optionalScope(context),
+        });
+      },
+    });
 
-  register({
-    name: 'complete-dependency-transaction',
-    title: 'Complete dependency transaction',
-    description:
-      'Resume the CLI-owned repair transaction. CLI reconciles manifests and lockfiles, runs audit/tests/build, then performs canonical verification before reporting closed.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        projectNames: {
-          type: 'array',
-          minItems: 1,
-          items: { type: 'string', minLength: 1 },
-        },
-        changedPaths: {
-          type: 'array',
-          minItems: 1,
-          items: { type: 'string', minLength: 1 },
+    register({
+      name: 'repair-dependency-security',
+      title: 'Repair dependency security',
+      description:
+        'Start a CLI-owned dependency repair transaction for a project named by fresh failed Doctor evidence. Reconcile, audit, tests, build, canonical verify, and rollback are inseparable stages.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { projectName: { type: 'string', minLength: 1 } },
+      },
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(raw, context) {
+        const value = asRecord(raw);
+        return input.host.repairDependencySecurity!({
+          ...(typeof value.projectName === 'string' && value.projectName.trim()
+            ? { projectName: value.projectName.trim() }
+            : {}),
+          workspacePath: context.workspacePath,
+          ...optionalScope(context),
+          reportProgress: context.reportProgress,
+        });
+      },
+    });
+
+    register({
+      name: 'upgrade-dependency-security',
+      title: 'Upgrade vulnerable direct dependency',
+      description:
+        'Request a CLI-owned dependency repair after inspecting an advisory candidate. The package hint is evidence only; CLI policy and the immutable remediation plan remain authoritative.',
+      inputSchema: {
+        type: 'object',
+        required: ['packageName'],
+        additionalProperties: false,
+        properties: {
+          projectName: { type: 'string', minLength: 1 },
+          packageName: { type: 'string', minLength: 1 },
         },
       },
-    },
-    activity: 'change',
-    risk: 'guarded-write',
-    async execute(raw, context) {
-      const value = asRecord(raw);
-      return input.host.completeDependencyTransaction({
-        ...(Array.isArray(value.projectNames)
-          ? { projectNames: stringArray(value.projectNames, 'projectNames') }
-          : {}),
-        ...(Array.isArray(value.changedPaths)
-          ? { changedPaths: stringArray(value.changedPaths, 'changedPaths') }
-          : {}),
-        workspacePath: context.workspacePath,
-        ...optionalScope(context),
-        reportProgress: context.reportProgress,
-      });
-    },
-  });
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(raw, context) {
+        const value = asRecord(raw);
+        if (typeof value.packageName !== 'string' || !value.packageName.trim()) {
+          throw new Error('Studio Agent dependency packageName is required.');
+        }
+        return input.host.upgradeDependencySecurity!({
+          ...(typeof value.projectName === 'string' && value.projectName.trim()
+            ? { projectName: value.projectName.trim() }
+            : {}),
+          packageName: value.packageName.trim(),
+          transactionId: context.toolCallId,
+          workspacePath: context.workspacePath,
+          ...optionalScope(context),
+          reportProgress: context.reportProgress,
+        });
+      },
+    });
+
+    register({
+      name: 'complete-dependency-transaction',
+      title: 'Complete dependency transaction',
+      description:
+        'Resume the CLI-owned repair transaction. CLI reconciles manifests and lockfiles, runs audit/tests/build, then performs canonical verification before reporting closed.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          projectNames: {
+            type: 'array',
+            minItems: 1,
+            items: { type: 'string', minLength: 1 },
+          },
+          changedPaths: {
+            type: 'array',
+            minItems: 1,
+            items: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(raw, context) {
+        const value = asRecord(raw);
+        return input.host.completeDependencyTransaction!({
+          ...(Array.isArray(value.projectNames)
+            ? { projectNames: stringArray(value.projectNames, 'projectNames') }
+            : {}),
+          ...(Array.isArray(value.changedPaths)
+            ? { changedPaths: stringArray(value.changedPaths, 'changedPaths') }
+            : {}),
+          workspacePath: context.workspacePath,
+          ...optionalScope(context),
+          reportProgress: context.reportProgress,
+        });
+      },
+    });
+  }
 
   register({
     name: 'verify-blocker',

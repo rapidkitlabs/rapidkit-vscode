@@ -10,6 +10,7 @@ import {
 } from '../utils/platformCapabilities';
 import { runShellCommandInTerminal } from '../utils/terminalExecutor';
 import { parseTrailingJson } from './canonicalProjectLifecycle';
+import { resolveBundledCliRuntime } from './bundledCliRuntime';
 import {
   assessCliVersion,
   compareSemver,
@@ -20,13 +21,13 @@ import {
 const SEMVER_TOKEN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/;
 
 /**
- * Resolve an installed or linked Workspai CLI version without downloading a
+ * Resolve the active Workspai runtime version without downloading a
  * package during extension activation. Workspace-local package metadata wins;
  * then the executable PATH, version-manager package metadata, and bounded npm
  * global probes are checked. Returns `null` only after every local source has
  * been exhausted.
  */
-export async function resolveLinkedCliVersion(
+export async function resolveActiveWorkspaiRuntimeVersion(
   cwd?: string,
   options: {
     platform?: NodeJS.Platform;
@@ -35,6 +36,10 @@ export async function resolveLinkedCliVersion(
     installedPackages?: InstalledNpmPackageMetadata[];
   } = {}
 ): Promise<string | null> {
+  const bundledRuntime = resolveBundledCliRuntime();
+  if (bundledRuntime) {
+    return bundledRuntime.version;
+  }
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const installedPackages =
@@ -110,6 +115,9 @@ export async function resolveLinkedCliVersion(
   return null;
 }
 
+/** @deprecated Use resolveActiveWorkspaiRuntimeVersion for runtime-authority clarity. */
+export const resolveLinkedCliVersion = resolveActiveWorkspaiRuntimeVersion;
+
 export interface CliVersionGateDecision {
   assessment: CliVersionAssessment;
   /** True when the user should be warned (incompatible and not yet warned). */
@@ -137,7 +145,7 @@ export function resetCliVersionGateSession(): void {
 }
 
 /**
- * Runtime CLI version notice: detect the linked CLI version, compare against
+ * Runtime CLI version notice: detect the active runtime version, compare against
  * {@link import('./cliVersionPolicy').MIN_RAPIDKIT_CLI_VERSION}, and surface a
  * mismatch banner with an "Update CLI" action. This is intentionally usable for
  * activation/read-only contexts. Enterprise workflows must use
@@ -147,7 +155,7 @@ export async function presentCliVersionGate(options?: {
   cwd?: string;
   force?: boolean;
 }): Promise<CliVersionAssessment> {
-  const version = await resolveLinkedCliVersion(options?.cwd);
+  const version = await resolveActiveWorkspaiRuntimeVersion(options?.cwd);
   const assessment = assessCliVersion(version);
   const { shouldWarn } = decideCliVersionGate(assessment, {
     alreadyWarned: warnedThisSession,
@@ -183,11 +191,16 @@ export async function presentCliVersionGate(options?: {
 export async function gateCompatibleCliVersion(options: {
   cwd?: string;
   featureLabel: string;
+  presentError?: boolean;
 }): Promise<boolean> {
-  const version = await resolveLinkedCliVersion(options.cwd);
+  const version = await resolveActiveWorkspaiRuntimeVersion(options.cwd);
   const assessment = assessCliVersion(version);
   if (assessment.status === 'compatible') {
     return true;
+  }
+
+  if (options.presentError === false) {
+    return false;
   }
 
   const message = `${options.featureLabel} is blocked because ${formatCliVersionMismatchMessage(assessment)}`;

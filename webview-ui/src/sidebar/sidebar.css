@@ -206,6 +206,36 @@ body {
   user-select: none;
 }
 
+.ws-sidebar__create-empty {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 560px);
+  margin: auto;
+  padding: 18px var(--ws-sidebar-edge-inset);
+}
+
+.ws-sidebar__create-empty > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.ws-sidebar__create-empty strong {
+  font-size: var(--ws-sidebar-text-md, 13px);
+  font-weight: 600;
+}
+
+.ws-sidebar__create-empty span {
+  color: var(--vscode-descriptionForeground);
+  font-size: var(--ws-sidebar-text-sm, 12px);
+  line-height: 1.45;
+}
+
+.ws-sidebar__create-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .ws-sidebar__error-notice {
   margin: 0 var(--ws-sidebar-edge-inset, 8px);
   padding: 8px 12px;
@@ -1011,6 +1041,56 @@ body {
 .ws-sidebar--secondary .ws-composer-dock:has(.ws-composer__surface:focus-within) {
   border-color: color-mix(in srgb, var(--vscode-focusBorder) 42%, var(--vscode-panel-border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
+}
+
+.ws-sidebar__composer-banner {
+  flex: 0 0 auto;
+  padding: 0 var(--ws-sidebar-edge-inset);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.ws-sidebar__decision-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground) 42%, transparent);
+  border-radius: 10px;
+  background: color-mix(
+    in srgb,
+    var(--vscode-editorWarning-background, var(--vscode-editorWidget-background)) 28%,
+    var(--vscode-sideBar-background)
+  );
+}
+
+.ws-sidebar__decision-bar-icon {
+  display: flex;
+  padding-top: 1px;
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.ws-sidebar__decision-bar-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ws-sidebar__decision-bar-copy > strong {
+  font-size: var(--ws-sidebar-text-sm, 12px);
+  font-weight: 600;
+}
+
+.ws-sidebar__decision-bar-copy > span {
+  color: var(--vscode-descriptionForeground);
+  font-size: var(--ws-sidebar-text-xs, 11px);
+  line-height: 1.4;
+}
+
+.ws-sidebar__decision-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
 }
 
 .ws-sidebar--secondary .ws-composer {
@@ -3892,6 +3972,18 @@ body {
   padding-left: 0;
 }
 
+.ws-sidebar__artifact-card,
+.ws-sidebar__studio-patch-review,
+.ws-sidebar__studio-changeset {
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 38%, transparent);
+}
+
+.ws-sidebar__studio-patch-review {
+  padding: 10px;
+}
+
 .ws-sidebar__studio-live-activity {
   display: flex;
   min-width: 0;
@@ -3918,6 +4010,35 @@ body {
   border-radius: 0;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+
+.ws-sidebar__studio-history-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 2px;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 48%, transparent);
+}
+
+.ws-sidebar__studio-history-row > span {
+  display: flex;
+  color: var(--vscode-descriptionForeground);
+}
+
+.ws-sidebar__studio-history-row > strong {
+  overflow: hidden;
+  font-size: var(--ws-sidebar-text-xs);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-sidebar__studio-history-row > small {
+  color: var(--vscode-descriptionForeground);
+  font-size: var(--ws-sidebar-text-xxs);
+  white-space: nowrap;
 }
 
 .ws-sidebar__studio-patch-risk {
@@ -4171,6 +4292,50 @@ body {
   border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 78%, transparent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--vscode-editor-background) 86%, transparent);
+}
+
+.ws-sidebar__creation-receipt {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-testing-iconPassed) 34%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--vscode-testing-iconPassed) 7%, transparent);
+  color: var(--vscode-testing-iconPassed);
+}
+
+.ws-sidebar__creation-receipt > div {
+  display: grid;
+  gap: 2px;
+}
+
+.ws-sidebar__creation-receipt strong {
+  color: var(--vscode-foreground);
+  font-size: var(--ws-sidebar-text-sm);
+  font-weight: 600;
+}
+
+.ws-sidebar__creation-receipt span {
+  color: var(--vscode-descriptionForeground);
+  font-size: var(--ws-sidebar-text-xs);
+  line-height: 1.4;
+}
+
+@media (max-width: 420px) {
+  .ws-sidebar__studio-changeset-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ws-sidebar__studio-changeset-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .ws-sidebar__decision-bar-actions > button {
+    flex: 1 1 auto;
+  }
 }
 
 .ws-sidebar__studio-changeset-head {

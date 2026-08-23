@@ -167,7 +167,11 @@ export class WorkspaceGraphStreamSupervisor {
     const spawn = this.options.spawn ?? defaultSpawn;
     const process = spawn(execution.command, execution.args, {
       cwd: workspacePath,
-      env: buildPackageRunnerSubprocessEnv({ ...processEnv(), RAPIDKIT_LOG_FORMAT: 'text' }),
+      env: buildPackageRunnerSubprocessEnv({
+        ...processEnv(),
+        ...execution.env,
+        RAPIDKIT_LOG_FORMAT: 'text',
+      }),
       shell: execution.shell,
     });
     this.process = process;

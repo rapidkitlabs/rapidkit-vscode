@@ -3,6 +3,10 @@ import path from 'path';
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+const { resolveBundledCliRuntimeMock } = vi.hoisted(() => ({
+  resolveBundledCliRuntimeMock: vi.fn(),
+}));
+
 vi.mock('vscode', () => ({
   window: {
     showWarningMessage: vi.fn(),
@@ -15,6 +19,10 @@ vi.mock('vscode', () => ({
 
 vi.mock('../utils/exec', () => ({
   run: vi.fn(),
+}));
+
+vi.mock('../core/bundledCliRuntime', () => ({
+  resolveBundledCliRuntime: resolveBundledCliRuntimeMock,
 }));
 
 vi.mock('../utils/platformCapabilities', async (importOriginal) => {
@@ -117,6 +125,8 @@ describe('rapidkitCliCapabilities (commands --json driven)', () => {
     mockedRun.mockReset();
     clearRuntimeCommandSurfaceCache();
     vi.mocked(vscode.window.showErrorMessage).mockReset();
+    resolveBundledCliRuntimeMock.mockReset();
+    resolveBundledCliRuntimeMock.mockReturnValue(null);
   });
 
   it('detects workspace intelligence from workspai commands --json', async () => {
@@ -205,6 +215,21 @@ describe('rapidkitCliCapabilities (commands --json driven)', () => {
     });
   });
 
+  it('trusts the integrity-checked bundled runtime without a duplicate frontend probe', async () => {
+    resolveBundledCliRuntimeMock.mockReturnValue({
+      root: '$BUNDLED_RUNTIME',
+      entry: '$BUNDLED_RUNTIME/index.mjs',
+      version: MIN_RAPIDKIT_CLI_VERSION,
+      command: 'node',
+      argsPrefix: ['$BUNDLED_RUNTIME/index.mjs'],
+      env: {},
+    });
+
+    await expect(gateCreateFrontendCli('Create Frontend Project')).resolves.toBe(true);
+    expect(mockedRun).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
   it('detects enterprise Studio root commands and workspace subcommands from commands --json', async () => {
     mockedRun.mockResolvedValue({
       stdout: commandsJson({
@@ -250,6 +275,9 @@ describe('rapidkitCliCapabilities gates', () => {
   beforeEach(() => {
     mockedRun.mockReset();
     clearRuntimeCommandSurfaceCache();
+    vi.mocked(vscode.window.showErrorMessage).mockReset();
+    resolveBundledCliRuntimeMock.mockReset();
+    resolveBundledCliRuntimeMock.mockReturnValue(null);
   });
 
   it('allows workspace intelligence when the CLI advertises the full chain', async () => {
@@ -403,6 +431,7 @@ describe('rapidkitCliCapabilities gates', () => {
       allowed: false,
       error: expect.stringContaining('does not advertise readiness'),
     });
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 });
 

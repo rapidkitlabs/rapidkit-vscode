@@ -7,6 +7,9 @@ import { WorkspaiCLI, buildProjectScaffoldArgs } from '../core/rapidkitCLI';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import releasePolicy from '../../contracts/extension-cli-release-policy.v1.json';
+
+const verifiedWorkspaiPackage = `workspai@${releasePolicy.verifiedCliVersion}`;
 
 vi.mock('vscode', () => ({
   window: {
@@ -49,24 +52,16 @@ describe('WorkspaiCLI', () => {
     expect(version).toBe('0.14.2');
   });
 
-  it('falls back to npx when direct workspai binary is unavailable in getVersion', async () => {
-    vi.mocked(run)
-      .mockRejectedValueOnce(new Error('workspai not found'))
-      .mockResolvedValueOnce({ stdout: '0.24.1\n', stderr: '', exitCode: 0 } as any);
+  it('uses the central Workspai execution contract for version detection', async () => {
+    vi.mocked(run).mockResolvedValueOnce({ stdout: '0.24.1\n', stderr: '', exitCode: 0 } as any);
 
     const version = await cli.getVersion();
 
     expect(version).toBe('0.24.1');
-    expect(vi.mocked(run)).toHaveBeenNthCalledWith(
-      1,
-      'workspai',
-      ['--version'],
-      expect.objectContaining({ stdio: 'pipe', timeout: 3000 })
-    );
-    expect(vi.mocked(run)).toHaveBeenNthCalledWith(
-      2,
-      'npx',
-      ['--yes', '--package', 'workspai', 'workspai', '--version'],
+    expect(vi.mocked(run)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(run)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining(['--version']),
       expect.objectContaining({ stdio: 'pipe', timeout: 5000 })
     );
   });
@@ -161,7 +156,7 @@ describe('WorkspaiCLI', () => {
       [
         '--yes',
         '--package',
-        'workspai',
+        verifiedWorkspaiPackage,
         'workspai',
         'create',
         'frontend',
@@ -191,7 +186,7 @@ describe('WorkspaiCLI', () => {
       [
         '--yes',
         '--package',
-        'workspai',
+        verifiedWorkspaiPackage,
         'workspai',
         'create',
         'workspace',
@@ -218,7 +213,7 @@ describe('WorkspaiCLI', () => {
       [
         '--yes',
         '--package',
-        'workspai',
+        verifiedWorkspaiPackage,
         'workspai',
         'create',
         'workspace',
@@ -249,7 +244,7 @@ describe('WorkspaiCLI', () => {
       [
         '--yes',
         '--package',
-        'workspai',
+        verifiedWorkspaiPackage,
         'workspai',
         'create',
         'workspace',

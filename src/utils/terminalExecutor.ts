@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import { resolveBundledCliRuntime } from '../core/bundledCliRuntime';
 import {
   shouldRequestCliLogEventsForRapidkitTerminal,
   shouldTrackRapidkitEvidenceTerminal,
@@ -58,13 +60,38 @@ export function runRapidkitCommandsInTerminal(options: {
   env?: Record<string, string>;
   commands: string[][];
 }): vscode.Terminal {
-  const builtCommands = options.commands.map((args) => buildRapidkitCommand(args));
   const shouldTrackEvidence = Boolean(options.cwd) && shouldTrackRapidkitEvidenceTerminal(options);
   const shouldRequestCliLogEvents = shouldRequestCliLogEventsForRapidkitTerminal(options);
+  const requestedEnv = withCliLogEventEnv(options.env, shouldRequestCliLogEvents);
+  const bundledRuntime = resolveBundledCliRuntime();
+  const builtCommands = options.commands.map((args) =>
+    bundledRuntime
+      ? buildShellCommand(bundledRuntime.terminalCommand, args)
+      : buildRapidkitCommand(args)
+  );
+  let terminalEnv = requestedEnv;
+  if (bundledRuntime) {
+    const configuredPathKey = Object.keys(requestedEnv ?? {}).find(
+      (key) => key.toLowerCase() === 'path'
+    );
+    const inheritedPathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path');
+    const pathKey = configuredPathKey ?? inheritedPathKey ?? 'PATH';
+    const inheritedPath = requestedEnv?.[pathKey] ?? process.env[pathKey] ?? process.env.PATH ?? '';
+    const pathEntries = inheritedPath
+      .split(path.delimiter)
+      .filter(Boolean)
+      .filter((entry) => path.resolve(entry) !== path.resolve(bundledRuntime.terminalBin));
+    terminalEnv = {
+      ...(requestedEnv ?? {}),
+      [pathKey]: [bundledRuntime.terminalBin, ...pathEntries].join(path.delimiter),
+      WORKSPAI_EXTENSION_NODE: bundledRuntime.command,
+      WORKSPAI_EXTENSION_CLI_ENTRY: bundledRuntime.entry,
+    };
+  }
   const terminal = runCommandsInTerminal({
     name: options.name,
     cwd: options.cwd,
-    env: withCliLogEventEnv(options.env, shouldRequestCliLogEvents),
+    env: terminalEnv,
     commands: builtCommands,
   });
 
@@ -86,10 +113,11 @@ export async function runCoreRapidkitCommandsInTerminal(options: {
   commands: string[][];
 }): Promise<vscode.Terminal> {
   const runtime = await resolveCoreRuntime(options.cwd);
+  if (!runtime.executable) {
+    return runRapidkitCommandsInTerminal(options);
+  }
   const builtCommands = options.commands.map((args) =>
-    runtime.executable
-      ? buildCoreRapidkitShellCommand(runtime.executable, args)
-      : buildRapidkitCommand(args)
+    buildCoreRapidkitShellCommand(runtime.executable as string, args)
   );
 
   return runCommandsInTerminal({

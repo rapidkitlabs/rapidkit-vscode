@@ -6,7 +6,7 @@ export const EXTENSION_CLI_RELEASE_POLICY_SCHEMA_VERSION = releasePolicy.schemaV
 export const VERIFIED_RAPIDKIT_CLI_VERSION = releasePolicy.verifiedCliVersion;
 
 /**
- * Minimum linked CLI version owned by this extension release.
+ * Minimum active CLI runtime version owned by this extension release.
  *
  * The CLI-owned compatibility contract supplies published schema identities.
  * It must not own this floor: doing so would require a new CLI publication

@@ -1,6 +1,10 @@
 # Getting started with Workspai for VS Code
 
-> Extension 0.40.0 · compatible with Workspai CLI 0.60.0+
+<!-- WORKSPAI:CLI-RELEASE-POLICY:START -->
+
+> Extension 0.43.0 · verified with Workspai CLI 0.64.0 · minimum compatible CLI 0.64.0
+
+<!-- WORKSPAI:CLI-RELEASE-POLICY:END -->
 
 Workspai helps people and AI tools understand and change the same workspace
 using a shared model, graph, health evidence, and verification loop.
@@ -8,9 +12,12 @@ using a shared model, graph, health evidence, and verification loop.
 ## What you need
 
 - VS Code 1.106.0 or newer
-- Workspai CLI 0.60.0 or newer
-- Node.js supported by the installed Workspai CLI
 - Git when you want change, impact, or `--since` evidence
+
+The extension ships the integrity-checked Workspai CLI runtime selected by its
+canonical release policy. Internal operations use that verified runtime. A
+global CLI and a separate Node.js installation are not required
+for first-run Create, adopt, Doctor, Graph, Agent, or Goal flows.
 
 Python is **not required** for the extension, Workspace Intelligence, or
 non-Python projects. RapidKit Core and Python 3.10+ are optional and only needed
@@ -19,16 +26,20 @@ for Python-backed kits or modules.
 ## Install
 
 1. Install **Workspai** from the VS Code Marketplace.
-2. Install or update the CLI:
+2. Run **Workspai: Open Setup & Recovery**. The runtime row should confirm the
+   CLI version verified for this extension. Optional language runtimes are
+   evaluated against the active workspace, not treated as universal
+   requirements.
+
+3. Optional: install the CLI when you also want terminal access:
 
    ```bash
    npm install -g workspai@latest
    workspai --version
    ```
 
-3. Run **Workspai: Open Setup & Recovery**. The CLI row should show the detected
-   version. Optional runtimes are evaluated against the active workspace, not
-   treated as universal requirements.
+The global install is never used as hidden execution authority by the
+extension. Extension commands remain bound to the packaged, verified runtime.
 
 ## Start with a workspace
 
@@ -64,6 +75,30 @@ without requiring you to remember its path.
 From **Create**, choose manual creation or describe the project to a model. Both
 paths resolve the same canonical kit contract.
 
+Free-form Create messages pass through an intent router before planning. It is
+grounded in the selected target and canonical workspace architecture, so it can
+answer Create questions, request one focused clarification, open adopt/import,
+or offer an explicit handoff to governed Agent for changes to existing source.
+Only a high-confidence creation request reaches the plan preview, and no
+filesystem mutation occurs until that plan is approved.
+
+For model-driven creation, Workspai exposes a bounded capability lifecycle:
+
+1. inspect the portable Create context;
+2. read the canonical executable framework and kit contract;
+3. evaluate architecture choices when the user delegates them;
+4. submit one non-mutating plan proposal;
+5. bind approval to the immutable plan, session, and selected scope;
+6. execute workspace/project creation through one controller-owned operation;
+7. synchronize Workspace Intelligence and refresh the project surface.
+
+The model decides what should be proposed. It cannot call raw filesystem,
+package-manager, workspace, project, or synchronization mutations. After the
+user approves the visible plan, the extension executes the deterministic
+sequence through its verified Workspai runtime. Failed retryable operations can
+reuse only that same authorized plan; changing the scope or plan requires a new
+proposal and approval.
+
 The current catalog covers backend, frontend, desktop, and extension projects,
 including FastAPI, NestJS, Spring Boot, Go, .NET, Next.js, React, Vue, Angular,
 Nuxt, Astro, SvelteKit, Rust Axum, Laravel, Electron, Tauri, and VS Code
@@ -79,6 +114,15 @@ npx workspai create project desktop.tauri my-desktop
 
 After create, adopt, or import, Workspai refreshes the workspace model, graph,
 agent context, and related consumer surfaces.
+
+Create intentionally stops at that synchronized foundation. It does not
+silently run host dependency initialization or claim that Doctor, Analyze,
+Readiness, and strict verification passed. Use **Initialize dependencies** on a
+created workspace when you want the explicit `workspai bootstrap --profile ...`
+operation. Node-, Go-, Java-, and .NET-only profiles never install the optional
+workspace Python engine. The extension derives these profile, kit, runtime, and
+lifecycle decisions from the CLI-published Create capability contract rather
+than maintaining a second execution matrix.
 
 ## Use the Dashboard
 

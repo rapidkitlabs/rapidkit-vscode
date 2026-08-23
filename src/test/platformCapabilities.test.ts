@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import releasePolicy from '../../contracts/extension-cli-release-policy.v1.json';
 import {
   buildPackageRunnerInvocationEnv,
   buildPackageRunnerSubprocessEnv,
@@ -28,6 +29,8 @@ import {
   toDisplayRapidkitCommand,
   toPinnedRapidkitExecutionCommand,
 } from '../utils/platformCapabilities';
+
+const verifiedWorkspaiPackage = `workspai@${releasePolicy.verifiedCliVersion}`;
 
 describe('platformCapabilities', () => {
   beforeEach(() => {
@@ -77,21 +80,26 @@ describe('platformCapabilities', () => {
     expect(buildShellCommand('echo', ['a&b'], 'win32')).toBe('echo "a&b"');
   });
 
-  it('builds Workspai commands with an explicit registry package by default', () => {
+  it('builds Workspai commands with the exact verified registry package by default', () => {
     expect(buildRapidkitCommand(['doctor', 'workspace'], 'linux')).toBe(
-      'npx --yes --package workspai workspai doctor workspace'
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai doctor workspace`
     );
     expect(buildRapidkitCommand(['doctor', 'workspace'], 'win32')).toBe(
-      'npx --yes --package workspai workspai doctor workspace'
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai doctor workspace`
     );
     expect(buildRapidkitCommand(['create', 'workspace', 'my folder'], 'linux')).toBe(
-      "npx --yes --package workspai workspai create workspace 'my folder'"
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai create workspace 'my folder'`
     );
   });
 
   it('ignores ambient linked packages but honors an explicit package override', () => {
     setResolvedRapidkitNpmPackageSpecifier('file:/tmp/rapidkit-npm');
-    expect(buildNpxRapidkitPrefix()).toEqual(['--yes', '--package', 'workspai', 'workspai']);
+    expect(buildNpxRapidkitPrefix()).toEqual([
+      '--yes',
+      '--package',
+      verifiedWorkspaiPackage,
+      'workspai',
+    ]);
     process.env.WORKSPAI_NPM_PACKAGE = 'file:/tmp/rapidkit-npm';
     expect(buildNpxRapidkitArgs(['adopt', '--help'])).toEqual([
       '--yes',
@@ -128,18 +136,20 @@ describe('platformCapabilities', () => {
 
   it('normalizes simple display commands back to the execution wrapper', () => {
     expect(toPinnedRapidkitExecutionCommand('npx workspai doctor workspace')).toBe(
-      'npx --yes --package workspai workspai doctor workspace'
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai doctor workspace`
     );
     expect(
       toPinnedRapidkitExecutionCommand('Run npx workspai add module free/ai/agent_runtime')
-    ).toBe('Run npx --yes --package workspai workspai add module free/ai/agent_runtime');
+    ).toBe(
+      `Run npx --yes --package ${verifiedWorkspaiPackage} workspai add module free/ai/agent_runtime`
+    );
   });
 
   it('builds the explicit npm package contract for extension host calls', () => {
     expect(buildNpxRapidkitArgs(['doctor', 'workspace'])).toEqual([
       '--yes',
       '--package',
-      'workspai',
+      verifiedWorkspaiPackage,
       'workspai',
       'doctor',
       'workspace',
@@ -154,7 +164,7 @@ describe('platformCapabilities', () => {
         ...linuxInvocation.prefixArgs,
         '--yes',
         '--package',
-        'workspai',
+        verifiedWorkspaiPackage,
         'workspai',
         'workspace',
         'verify',
@@ -162,6 +172,7 @@ describe('platformCapabilities', () => {
       ],
       displayCommand: "npx workspai workspace verify 'my folder'",
       shell: false,
+      runtime: 'npm',
     });
 
     const windowsInvocation = resolvePackageRunnerInvocation('npx', 'win32');
@@ -171,7 +182,7 @@ describe('platformCapabilities', () => {
         ...windowsInvocation.prefixArgs,
         '--yes',
         '--package',
-        'workspai',
+        verifiedWorkspaiPackage,
         'workspai',
         'workspace',
         'verify',
@@ -179,6 +190,7 @@ describe('platformCapabilities', () => {
       ],
       displayCommand: 'npx workspai workspace verify "my folder"',
       shell: true,
+      runtime: 'npm',
     });
   });
 
@@ -236,20 +248,26 @@ describe('platformCapabilities', () => {
     for (const scenario of noSpaceScenarios) {
       for (const platform of platforms) {
         expect(buildRapidkitCommand(scenario, platform)).toBe(
-          `npx --yes --package workspai workspai ${scenario.join(' ')}`
+          `npx --yes --package ${verifiedWorkspaiPackage} workspai ${scenario.join(' ')}`
         );
       }
     }
 
     expect(
       buildRapidkitCommand(['workspace', 'policy', 'set', 'team name', 'strict'], 'linux')
-    ).toBe("npx --yes --package workspai workspai workspace policy set 'team name' strict");
+    ).toBe(
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai workspace policy set 'team name' strict`
+    );
     expect(
       buildRapidkitCommand(['workspace', 'policy', 'set', 'team name', 'strict'], 'darwin')
-    ).toBe("npx --yes --package workspai workspai workspace policy set 'team name' strict");
+    ).toBe(
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai workspace policy set 'team name' strict`
+    );
     expect(
       buildRapidkitCommand(['workspace', 'policy', 'set', 'team name', 'strict'], 'win32')
-    ).toBe('npx --yes --package workspai workspai workspace policy set "team name" strict');
+    ).toBe(
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai workspace policy set "team name" strict`
+    );
   });
 
   it('quotes snapshot command arguments without changing the CLI contract', () => {
@@ -259,7 +277,7 @@ describe('platformCapabilities', () => {
         'linux'
       )
     ).toBe(
-      'npx --yes --package workspai workspai snapshot create ' +
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai snapshot create ` +
         `'before upgrade' --reason 'owner'"'"'s release prep'`
     );
 
@@ -269,7 +287,7 @@ describe('platformCapabilities', () => {
         'win32'
       )
     ).toBe(
-      'npx --yes --package workspai workspai snapshot restore ' +
+      `npx --yes --package ${verifiedWorkspaiPackage} workspai snapshot restore ` +
         '"before upgrade" --force --reason "rollback & verify"'
     );
   });

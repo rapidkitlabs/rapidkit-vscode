@@ -11,11 +11,6 @@ on:
         description: 'Commit SHA tested by extension-smoke-matrix and used in the VSIX artifact name'
         required: true
         type: string
-      workspai_cli_version:
-        description: 'Published Workspai CLI version required by this extension release'
-        required: true
-        default: '0.56.0'
-        type: string
       publish_target:
         description: 'Use dry-run to verify gates without publishing'
         required: true
@@ -54,8 +49,10 @@ jobs:
       - name: Install dependencies
         run: corepack npm ci
 
-      - name: Verify target Workspai CLI package is published
-        run: npm view workspai@${{ inputs.workspai_cli_version }} version
+      - name: Resolve and verify the pinned Workspai CLI package
+        run: |
+          CLI_VERSION=$(node -p "require('./contracts/extension-cli-release-policy.v1.json').verifiedCliVersion")
+          npm view "workspai@${CLI_VERSION}" version
 
       - name: Validate Discord release announcement
         run: npm run release:discord:check

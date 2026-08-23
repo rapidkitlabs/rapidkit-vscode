@@ -56,9 +56,9 @@ describe('Studio Agent Workspai tool registry', () => {
       'run-workspace-command',
       'inspect-remediation-plan',
       'execute-remediation-step',
-      'inspect-dependency-security',
       'verify-blocker',
     ]);
+    expect(registry.get('inspect-dependency-security')).toBeUndefined();
     const commandTool = registry.get('run-governed-command');
     expect(commandTool?.inputSchema).toMatchObject({
       properties: {
@@ -233,12 +233,16 @@ describe('Studio Agent Workspai tool registry', () => {
       workspacePath: '/workspace',
       projectPath: '/workspace/web',
     });
-    expect(registry.get('repair-dependency-security')).toBeUndefined();
-    expect(registry.get('upgrade-dependency-security')).toBeUndefined();
-    expect(registry.get('complete-dependency-transaction')).toBeUndefined();
-    expect(host.repairDependencySecurity).not.toHaveBeenCalled();
-    expect(host.upgradeDependencySecurity).not.toHaveBeenCalled();
-    expect(host.completeDependencyTransaction).not.toHaveBeenCalled();
+    await registry.get('repair-dependency-security')?.execute({ projectName: 'web' }, context);
+    await registry
+      .get('upgrade-dependency-security')
+      ?.execute({ projectName: 'web', packageName: 'postcss' }, context);
+    await registry
+      .get('complete-dependency-transaction')
+      ?.execute({ projectNames: ['web'], changedPaths: ['web/package-lock.json'] }, context);
+    expect(host.repairDependencySecurity).toHaveBeenCalled();
+    expect(host.upgradeDependencySecurity).toHaveBeenCalled();
+    expect(host.completeDependencyTransaction).toHaveBeenCalled();
     expect(host.verify).toHaveBeenCalledWith(
       expect.objectContaining({
         cardId: 'readiness',

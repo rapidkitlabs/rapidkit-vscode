@@ -80,9 +80,9 @@ describe('Studio Agent repair ownership contract', () => {
     expect(session).toContain("terminalReason: 'cli-repair-closure-missing'");
     expect(session).not.toContain("recovery: 'post-mutation-chain'");
     expect(session).not.toContain("recovery: 'dependency-upgrade-transaction'");
-    expect(assistantModeContract).not.toContain("'repair-dependency-security',");
-    expect(assistantModeContract).not.toContain("'upgrade-dependency-security',");
-    expect(assistantModeContract).not.toContain("'complete-dependency-transaction',");
+    expect(assistantModeContract).toContain("'repair-dependency-security',");
+    expect(assistantModeContract).toContain("'upgrade-dependency-security',");
+    expect(assistantModeContract).toContain("'complete-dependency-transaction',");
     expect(autonomousRuntime).toContain(
       'Studio cannot execute mutating workspace commands directly.'
     );

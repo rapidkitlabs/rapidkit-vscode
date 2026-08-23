@@ -95,7 +95,7 @@ function validatePackageScripts(repoRoot, errors) {
     lint: 'corepack npm run check:english-text && eslint src --ext ts',
     test: 'vitest run',
     'package:ci':
-      'corepack npm run check:english-text && corepack npm run build && node scripts/vsce-package-runner.mjs package --no-dependencies --out rapidkit-vscode-${npm_package_version}.vsix',
+      'corepack npm run check:cli-release-policy && corepack npm run check:english-text && node scripts/package-vsix-variants.mjs --release-only && corepack npm run smoke:cli-first-run',
     'smoke:vsix-artifact':
       'node scripts/inspect-vsix-artifact.mjs --artifact rapidkit-vscode-${npm_package_version}.vsix',
     'release:audit-gate': 'node scripts/npm-audit-gate.mjs --level high',
@@ -141,11 +141,7 @@ function validateNpmBaseline(repoRoot, matrix, errors, options = {}) {
   const extensionCompatibility = readJson(extensionCompatibilityPath);
   const extensionReleasePolicy = readJson(extensionReleasePolicyPath);
   const extensionMinimum = extensionReleasePolicy.minimumCliVersion;
-  if (matrix.npmTruthBaseline !== extensionReleasePolicy.verifiedCliVersion) {
-    errors.push(
-      `Matrix npmTruthBaseline ${matrix.npmTruthBaseline} does not match extension verified CLI ${extensionReleasePolicy.verifiedCliVersion}.`
-    );
-  }
+  const verifiedBaseline = extensionReleasePolicy.verifiedCliVersion;
 
   if (!fs.existsSync(npmPackagePath) || !fs.existsSync(npmCompatibilityPath)) {
     if (options.requireCanonical) {
@@ -159,9 +155,9 @@ function validateNpmBaseline(repoRoot, matrix, errors, options = {}) {
 
   const npmVersion = readJson(npmPackagePath).version;
   const npmCompatibility = readJson(npmCompatibilityPath);
-  if (compareSemver(npmVersion, matrix.npmTruthBaseline) < 0) {
+  if (compareSemver(npmVersion, verifiedBaseline) < 0) {
     errors.push(
-      `Canonical CLI ${npmVersion} is below extension verified baseline ${matrix.npmTruthBaseline}.`
+      `Canonical CLI ${npmVersion} is below extension verified baseline ${verifiedBaseline}.`
     );
   }
   if (
@@ -170,9 +166,9 @@ function validateNpmBaseline(repoRoot, matrix, errors, options = {}) {
   ) {
     errors.push('Extension published schema inventory does not match the canonical CLI contract.');
   }
-  if (compareSemver(matrix.npmTruthBaseline, extensionMinimum) < 0) {
+  if (compareSemver(verifiedBaseline, extensionMinimum) < 0) {
     errors.push(
-      `Matrix npmTruthBaseline ${matrix.npmTruthBaseline} is below extension minimum ${extensionMinimum}.`
+      `Extension verified CLI ${verifiedBaseline} is below extension minimum ${extensionMinimum}.`
     );
   }
 }

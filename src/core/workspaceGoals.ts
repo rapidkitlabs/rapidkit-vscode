@@ -773,7 +773,7 @@ export async function runGoalCommand(input: {
   label: string;
 }): Promise<GoalCommandResult> {
   if (!(await gateGoalCli(input.workspacePath))) {
-    return { ok: false, error: 'The linked Workspai CLI does not support governed Goals.' };
+    return { ok: false, error: 'The active Workspai runtime does not support governed Goals.' };
   }
   const { runEvidenceCliCommand } = await import('./evidenceCommandRunner.js');
   const command = await runEvidenceCliCommand({

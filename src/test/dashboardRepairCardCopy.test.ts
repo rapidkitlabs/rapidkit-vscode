@@ -31,6 +31,16 @@ describe('dashboard repair card copy', () => {
     expect(
       simplifyRepairFinding('Stale report: .workspai/reports/workspace-intelligence-history.json')
     ).toBe('workspace-intelligence-history.json is out of date.');
+    expect(
+      simplifyRepairFinding(
+        'project.fullstack-app.init: Workspace run evidence for fullstack-app is stale: generated at 2026-08-22T21:04:30.224Z, before impact 2026-08-22T21:06:10.257Z.'
+      )
+    ).toBe('Run evidence for fullstack-app (init) is out of date.');
+    expect(
+      simplifyRepairFinding(
+        'workspace.doctor: Doctor evidence is stale: generated at 2026-08-22T21:06:10.387Z, before impact 2026-08-22T21:13:08.092Z.'
+      )
+    ).toBe('Doctor evidence is out of date.');
     expect(simplifyRepairFinding('doctorRemediationPlan')).toBe(
       'Supporting doctor remediation plan evidence is missing.'
     );
@@ -49,7 +59,7 @@ describe('dashboard repair card copy', () => {
 
     expect(copy).toEqual({
       issue: 'Dependencies are not installed for api.',
-      guidance: 'This issue blocks verification or release.',
+      guidance: 'Resolve this item before verification.',
       remainingFindingCount: 1,
     });
   });
@@ -73,7 +83,7 @@ describe('dashboard repair card copy', () => {
         blockers: ['Review the dependency trend'],
         blocking: false,
       }).guidance
-    ).toBe('This does not currently block release, but it should be reviewed.');
+    ).toBe('Review this item when convenient.');
   });
 
   it('keeps every blocked card visible in the compact priority view', () => {
@@ -109,5 +119,28 @@ describe('dashboard repair card copy', () => {
 
     expect(visible.filter((entry) => entry.blocking)).toHaveLength(4);
     expect(visible).toContain(activeMissing);
+  });
+
+  it('keeps derived explanation cards out of the causal repair queue', () => {
+    const verify = card({
+      id: 'workspaceVerify',
+      label: 'Workspace Verify',
+      status: 'fail',
+      blocking: true,
+    });
+    const explain = card({
+      id: 'workspaceExplain',
+      label: 'Workspace Explain',
+      status: 'fail',
+      blocking: true,
+    });
+    const why = card({
+      id: 'workspaceWhy',
+      label: 'Workspace Why',
+      status: 'fail',
+      blocking: true,
+    });
+
+    expect(selectRepairVisibleCards([verify, explain, why], verify, 'guided', 2)).toEqual([verify]);
   });
 });

@@ -5,6 +5,7 @@ import type {
   FrontendScaffoldFramework,
   ScaffoldFramework,
 } from '@/types';
+import createContract from '@workspai-contracts/create-planner-capabilities.v1.json';
 
 export const BACKEND_STARTERS: Array<{
   framework: BackendScaffoldFramework;
@@ -87,25 +88,20 @@ export type WorkspaceBootstrapProfile =
 export function defaultBootstrapProfileForFramework(
   framework: ScaffoldFramework
 ): WorkspaceBootstrapProfile {
-  if (
-    isFrontendScaffoldFramework(framework) ||
-    framework === 'nestjs' ||
-    framework === 'electron' ||
-    framework === 'vscode-extension'
-  ) {
-    return 'node-only';
-  }
-  if (framework === 'go') {
-    return 'go-only';
-  }
-  if (framework === 'springboot') {
-    return 'java-only';
-  }
-  if (framework === 'dotnet') {
-    return 'dotnet-only';
-  }
-  if (framework === 'rust' || framework === 'tauri' || framework === 'laravel') {
-    return 'minimal';
-  }
-  return 'python-only';
+  const entries = [
+    ...createContract.nativeCreate,
+    ...createContract.officialCreate.filter((entry) => entry.canExecuteCreate),
+  ] as Array<{ plannerFramework: string; runtime: string }>;
+  const runtime = entries.find((entry) => entry.plannerFramework === framework)?.runtime;
+  return (
+    (
+      {
+        python: 'python-only',
+        node: 'node-only',
+        go: 'go-only',
+        java: 'java-only',
+        dotnet: 'dotnet-only',
+      } as Partial<Record<string, WorkspaceBootstrapProfile>>
+    )[runtime ?? ''] ?? 'minimal'
+  );
 }

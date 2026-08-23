@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 import type { StudioBlockerHandoffView } from '@/lib/studioBlockerHandoff';
 
 type StudioRepairPreludeProps = {
@@ -17,6 +15,7 @@ type StudioRepairPreludeProps = {
   onStart: () => void;
   onOpenSetup?: () => void;
   onStop: () => void;
+  controlsVisible?: boolean;
 };
 
 export function StudioRepairPrelude({
@@ -34,8 +33,8 @@ export function StudioRepairPrelude({
   onStart,
   onOpenSetup,
   onStop,
+  controlsVisible = true,
 }: StudioRepairPreludeProps) {
-  const [showDecisionOptions, setShowDecisionOptions] = useState(false);
   const scopeLabel = handoff.scope === 'project' ? 'project evidence' : 'workspace evidence';
   const connectionFailure = terminalReason === 'cli-repair-contract-mismatch';
   const providerFailure = terminalReason === 'ai-provider-unavailable';
@@ -100,7 +99,7 @@ export function StudioRepairPrelude({
                       ? 'A required runtime tool could not be launched'
                       : `${scopeLabel} · verification required`}
           </span>
-          {reviewRequired ? (
+          {reviewRequired && controlsVisible ? (
             <>
               <p>{reviewMessage || 'Studio needs an explicit engineering decision to continue.'}</p>
               {toolchainFailure ? (
@@ -137,46 +136,14 @@ export function StudioRepairPrelude({
                   role="group"
                   aria-label="Studio engineering decision controls"
                 >
-                  <button
-                    type="button"
-                    className="ws-sidebar__inline"
-                    onClick={() => {
-                      if (decisionOptions.length > 0 && onDecision) {
-                        setShowDecisionOptions((current) => !current);
-                        return;
-                      }
-                      onReview?.();
-                    }}
-                    aria-expanded={showDecisionOptions}
-                  >
+                  <button type="button" className="ws-sidebar__inline" onClick={() => onReview?.()}>
                     Choose how to continue
                   </button>
                 </div>
               ) : null}
-              {showDecisionOptions && decisionOptions.length > 0 && onDecision ? (
-                <div
-                  className="ws-sidebar__repair-decision-options"
-                  role="group"
-                  aria-label="Available CLI repair decisions"
-                >
-                  {decisionOptions.map((decision) => (
-                    <button
-                      type="button"
-                      className="ws-sidebar__inline"
-                      key={decision}
-                      onClick={() => onDecision(decision, transactionId)}
-                    >
-                      {decision
-                        .split('-')
-                        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-                        .join(' ')}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
             </>
           ) : null}
-          {!completed && !reviewRequired ? (
+          {!completed && !reviewRequired && controlsVisible ? (
             <div
               className="ws-sidebar__repair-controls"
               role="group"

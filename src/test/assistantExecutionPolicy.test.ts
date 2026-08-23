@@ -7,7 +7,7 @@ import {
 
 describe('Assistant execution policy', () => {
   it.each([
-    ['agent', 'question', 'evidence-answer', 'ask'],
+    ['agent', 'question', 'evidence-answer', 'agent'],
     ['agent', 'engineering-task', 'autonomous-change', 'agent'],
     ['agent', 'goal', 'autonomous-change', 'agent'],
     ['ask', 'question', 'evidence-answer', 'ask'],
@@ -77,7 +77,7 @@ describe('Assistant execution policy', () => {
     expect(policy.suggestion).toBeUndefined();
   });
 
-  it('rejects a persisted policy that attempts to widen its canonical tool mode', () => {
+  it('rejects a persisted Agent question policy that silently narrows the selected mode', () => {
     expect(
       parseAssistantExecutionPolicy(
         {
@@ -85,8 +85,8 @@ describe('Assistant execution policy', () => {
           selectedMode: 'agent',
           requestIntent: 'question',
           routeConfidence: 'high',
-          profile: 'autonomous-change',
-          toolMode: 'agent',
+          profile: 'evidence-answer',
+          toolMode: 'ask',
         },
         'agent'
       )

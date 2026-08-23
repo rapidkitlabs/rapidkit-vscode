@@ -155,4 +155,17 @@ describe('gateCompatibleCliVersion', () => {
       'Open Setup Recovery'
     );
   });
+
+  it('supports a presentation-free compatibility probe for composed gates', async () => {
+    mockedRun.mockResolvedValueOnce({ stdout: '0.1.0', stderr: '', exitCode: 0 });
+
+    await expect(
+      gateCompatibleCliVersion({
+        cwd: '/tmp/ws',
+        featureLabel: 'Dashboard Evidence',
+        presentError: false,
+      })
+    ).resolves.toBe(false);
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
 });

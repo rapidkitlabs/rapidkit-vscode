@@ -48,40 +48,45 @@ describe('welcomePanelEvidenceWatcher', () => {
     watcherRecords.splice(0);
   });
 
-  it('watches report and foundation artifacts for open and managed workspaces', () => {
-    const scheduled: Array<string | undefined> = [];
+  it('watches every governed artifact for open, managed, and linked project scopes', () => {
+    const scheduled: Array<{ filePath?: string; workspacePathHint?: string }> = [];
     const disposables: Array<{ dispose: () => void }> = [];
-    const controller = registerWelcomePanelDoctorEvidenceWatcher(disposables, (filePath) =>
-      scheduled.push(filePath)
+    const controller = registerWelcomePanelDoctorEvidenceWatcher(
+      disposables,
+      (filePath, workspacePathHint) => scheduled.push({ filePath, workspacePathHint })
     );
 
-    expect(watcherRecords).toHaveLength(2);
-    controller.watchWorkspace('/tmp/managed-workspace');
-    expect(watcherRecords).toHaveLength(4);
+    expect(watcherRecords).toHaveLength(1);
+    controller.watchWorkspace('/tmp/managed-workspace', ['/external/linked-project']);
+    expect(watcherRecords).toHaveLength(3);
 
-    watcherRecords[2].change?.({
+    watcherRecords[1].change?.({
       fsPath: '/tmp/managed-workspace/.workspai/reports/workspace-explain-last-run.json',
     });
-    watcherRecords[3].delete?.({
-      fsPath: '/tmp/managed-workspace/.workspai/workspace.contract.json',
+    watcherRecords[2].delete?.({
+      fsPath: '/external/linked-project/.workspai/adopt-readiness.json',
     });
 
     expect(scheduled).toEqual([
-      '/tmp/managed-workspace/.workspai/reports/workspace-explain-last-run.json',
-      '/tmp/managed-workspace/.workspai/workspace.contract.json',
+      {
+        filePath: '/tmp/managed-workspace/.workspai/reports/workspace-explain-last-run.json',
+        workspacePathHint: '/tmp/managed-workspace',
+      },
+      {
+        filePath: '/external/linked-project/.workspai/adopt-readiness.json',
+        workspacePathHint: '/tmp/managed-workspace',
+      },
     ]);
 
-    controller.watchWorkspace('/tmp/managed-workspace');
-    expect(watcherRecords).toHaveLength(4);
+    controller.watchWorkspace('/tmp/managed-workspace', ['/external/linked-project']);
+    expect(watcherRecords).toHaveLength(3);
     controller.watchWorkspace('/tmp/another-workspace');
-    expect(watcherRecords).toHaveLength(6);
+    expect(watcherRecords).toHaveLength(4);
+    expect(watcherRecords[1].dispose).toHaveBeenCalledTimes(1);
     expect(watcherRecords[2].dispose).toHaveBeenCalledTimes(1);
-    expect(watcherRecords[3].dispose).toHaveBeenCalledTimes(1);
 
     controller.dispose();
     expect(watcherRecords[0].dispose).toHaveBeenCalledTimes(1);
-    expect(watcherRecords[1].dispose).toHaveBeenCalledTimes(1);
-    expect(watcherRecords[4].dispose).toHaveBeenCalledTimes(1);
-    expect(watcherRecords[5].dispose).toHaveBeenCalledTimes(1);
+    expect(watcherRecords[3].dispose).toHaveBeenCalledTimes(1);
   });
 });

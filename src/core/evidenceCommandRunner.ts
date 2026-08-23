@@ -79,6 +79,7 @@ export async function runEvidenceCliCommand(options: {
     cwd: options.workspacePath,
     env: {
       ...process.env,
+      ...execution.env,
       ...options.env,
     },
     shell: execution.shell,

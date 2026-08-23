@@ -108,14 +108,7 @@ export function DashboardSubNav({
           >
             <span className="ws-dashboard-sub-nav__tab-content">
               <Icon size={12} aria-hidden="true" />
-              <span className="ws-dashboard-sub-nav__label-group">
-                <span className="ws-dashboard-sub-nav__label">{section.label}</span>
-                {section.scope ? (
-                  <span className="ws-dashboard-sub-nav__scope" aria-hidden="true">
-                    {section.scope}
-                  </span>
-                ) : null}
-              </span>
+              <span className="ws-dashboard-sub-nav__label">{section.label}</span>
               {showArtifactBadge ? (
                 <span
                   className="ws-dashboard-sub-nav__count"

@@ -630,7 +630,11 @@ function semanticProgressFingerprint(
     input: action.input,
     ok: result.ok,
     changed: result.changed,
-    evidenceGeneration: result.evidenceGeneration,
+    // Evidence generation identifies a physical producer run, not semantic
+    // progress. Re-running the same producer may legitimately write a new
+    // timestamp/fingerprint while leaving the exact blocker unchanged. If the
+    // generation were part of this identity, an agent could alternate Verify
+    // and discovery forever while the causal-loop breaker kept resetting.
     blockerSignature: result.blockerSignature,
     cardBlocking: result.cardBlocking,
     nextAction: output?.nextAction,
@@ -2116,13 +2120,13 @@ export class StudioAgentSession {
     const transactionState = cliRepairTransactionState(result);
     const proposalRejected = toolOutputRecord(result)?.proposalRejected === true;
     const rolledBackOrRejected = transactionState === 'rolled-back' || proposalRejected === true;
-    const evidenceAdvanced =
+    const causalStateAdvanced =
       Boolean(result.changed) ||
+      // Rollback/rejection is a real state transition: the checkpoint restores
+      // source ownership and a fresh inspection of the same path is required.
+      // Unlike producer timestamps, this transition is bounded by the CLI
+      // transaction and therefore may open one new causal epoch safely.
       rolledBackOrRejected ||
-      (tool.activity !== 'change' &&
-        this.latestEvidenceGeneration !== undefined &&
-        Boolean(result.evidenceGeneration) &&
-        result.evidenceGeneration !== this.latestEvidenceGeneration) ||
       (this.latestBlockerSignature !== undefined &&
         Boolean(result.blockerSignature) &&
         result.blockerSignature !== this.latestBlockerSignature);
@@ -2173,7 +2177,7 @@ export class StudioAgentSession {
       this.sourceActionRequired = false;
       this.proposalRecoveryInspectionRequired = false;
     }
-    if (evidenceAdvanced) {
+    if (causalStateAdvanced) {
       this.causalEpoch += 1;
     }
     this.recentObservations.push({

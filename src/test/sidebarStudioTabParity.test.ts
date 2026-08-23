@@ -93,7 +93,9 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     expect(provider).toContain('.slice(-120)');
     expect(secondary).toContain("eventType === 'model.message'");
     expect(secondary).toContain("eventType === 'model.checkpoint'");
-    expect(secondary).toContain('canUndo: changedFiles && Boolean(transactionId)');
+    expect(secondary).toContain(
+      'canUndo: changedFiles && transactionClosed && Boolean(transactionId)'
+    );
     expect(secondary).toContain('progress.transactionId === transactionId');
     expect(actionProgress).toContain('progress.canUndo && progress.transactionId && onUndo');
     expect(actionProgress).toContain('onUndo(progress.transactionId!)');
@@ -319,11 +321,11 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     expect(provider).toContain('session.steer');
     expect(provider).toContain('session.cancel');
     expect(provider).toContain('sidebarStudioEvidencePulse');
-    expect(provider).toContain("'.workspai/**/*'");
+    expect(provider).toContain("'{.workspai,.rapidkit}/**/*'");
     expect(provider).toContain('evidenceGeneration: repairEvidence.evidenceFingerprint');
     expect(provider).toContain('_ensureStudioEvidenceWatcher(handoff, sessionId)');
-    expect(provider).toContain('^\\.workspai\\/repair\\/inbox');
-    expect(provider).toContain('^\\.workspai\\/repair\\/engine\\.lock');
+    expect(provider).toContain('\\.workspai\\/repair\\/inbox');
+    expect(provider).toContain('\\.workspai\\/repair\\/engine\\.lock');
     expect(provider).not.toContain('projectPath: step.projectPath || scope.projectPath');
     expect(provider).not.toContain('private async _runStudioVerifyContinuation');
     expect(provider).not.toContain('applyDoctorRemediationStep');
@@ -391,6 +393,7 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     const sidebarCss = read('webview-ui/src/sidebar/sidebar.css');
     expect(sidebarCss).not.toContain('.ws-sidebar__studio-action-timeline');
     const repairPrelude = read('webview-ui/src/sidebar/StudioRepairPrelude.tsx');
+    const decisionBar = read('webview-ui/src/sidebar/StudioDecisionBar.tsx');
     expect(repairPrelude).toContain('Working on the repair');
     expect(repairPrelude).toContain('Start repair');
     expect(repairPrelude).toContain('Resume repair');
@@ -402,8 +405,11 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     expect(repairPrelude).toContain('Toolchain setup required');
     expect(repairPrelude).toContain('Open setup');
     expect(repairPrelude).toContain('Retry repair');
-    expect(repairPrelude).toContain('ws-sidebar__repair-decision-options');
-    expect(repairPrelude).toContain('onDecision(decision, transactionId)');
+    expect(decisionBar).toContain('ws-sidebar__decision-bar');
+    expect(decisionBar).toContain('onDecision(decision, transactionId)');
+    expect(decisionBar).toContain('Approve and continue');
+    expect(decisionBar).toContain('Create a new plan');
+    expect(decisionBar).toContain('Repair manually');
     expect(repairPrelude).toContain('explicit engineering decision');
     expect(repairPrelude).toContain('verification required');
     expect(repairPrelude).not.toContain('ws-sidebar__repair-avatar');

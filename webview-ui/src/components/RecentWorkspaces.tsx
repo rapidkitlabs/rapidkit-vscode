@@ -17,6 +17,7 @@ import {
   Activity,
   ShieldCheck,
   Database,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { Workspace } from '@/types';
@@ -191,24 +192,20 @@ export function RecentWorkspaces({
                 <div
                   key={workspace.path}
                   className={`ws-card${isBusy ? ' ws-card--busy' : ''}`}
-                  onClick={() => !isBusy && onSelect(workspace)}
-                  onKeyDown={(event) => {
-                    if (isBusy) {
-                      return;
-                    }
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      onSelect(workspace);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={isBusy ? -1 : 0}
-                  aria-label={`Open workspace ${workspace.name}`}
                   aria-busy={isBusy}
                 >
                   <div className="ws-row-top">
                     <div className="ws-name-row">
-                      <span className="ws-name">{workspace.name}</span>
+                      <button
+                        type="button"
+                        className="ws-workspace-open"
+                        disabled={isBusy}
+                        onClick={() => onSelect(workspace)}
+                        aria-label={`Open workspace ${workspace.name}`}
+                      >
+                        <span className="ws-name">{workspace.name}</span>
+                        <FolderOpen size={12} aria-hidden="true" />
+                      </button>
                     </div>
 
                     {/* Busy spinner — replaces action buttons while an action is running */}
@@ -284,114 +281,119 @@ export function RecentWorkspaces({
                     {/* Status icon - always visible */}
                     {!shouldShowUpgrade && !isBusy && getStatusIcon(workspace.coreStatus)}
 
-                    {/* Always-visible inline actions on the right */}
+                    {/* One primary action stays visible; secondary actions live in overflow. */}
                     {!isBusy && (
-                      <span className="ws-inline-actions">
-                        {onAnalyze && (
+                      <details className="ws-workspace-actions">
+                        <summary aria-label={`More actions for ${workspace.name}`}>
+                          <MoreHorizontal size={14} aria-hidden="true" />
+                        </summary>
+                        <div
+                          className="ws-workspace-actions__menu"
+                          role="group"
+                          aria-label={`Actions for ${workspace.name}`}
+                        >
+                          {onAnalyze && (
+                            <button
+                              className="ws-inline-action ws-inline-action--analyze"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onAnalyze(workspace);
+                              }}
+                              title="Analyze workspace in Incident Studio"
+                              aria-label={`Analyze ${workspace.name} in Incident Studio`}
+                            >
+                              <Activity size={12} />
+                            </button>
+                          )}
+                          {onAI && (
+                            <button
+                              className="ws-inline-action ws-inline-action--ai"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onAI(workspace);
+                              }}
+                              title={WORKSPAI_AI_ASSISTANT_WORKSPACE_TITLE}
+                              aria-label={`AI actions for ${workspace.name}`}
+                            >
+                              <Sparkles size={12} />
+                            </button>
+                          )}
+                          {onCheckHealth && (
+                            <button
+                              className="ws-inline-action ws-inline-action--doctor"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                withBusy(workspace.path, () => onCheckHealth(workspace));
+                              }}
+                              title="Check Workspace Health (Doctor)"
+                              aria-label={`Check health of ${workspace.name}`}
+                            >
+                              <Stethoscope size={12} />
+                            </button>
+                          )}
+                          {onBootstrap && workspace.complianceStatus === 'failing' && (
+                            <button
+                              className="ws-inline-action ws-inline-action--bootstrap"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                withBusy(workspace.path, () => onBootstrap(workspace));
+                              }}
+                              title="Fix bootstrap compliance (npx workspai bootstrap)"
+                              aria-label={`Bootstrap ${workspace.name}`}
+                            >
+                              <ShieldCheck size={12} />
+                            </button>
+                          )}
+                          {onMirrorSync && workspace.mirrorStatus === 'stale' && (
+                            <button
+                              className="ws-inline-action ws-inline-action--mirror"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                withBusy(workspace.path, () => onMirrorSync(workspace));
+                              }}
+                              title="Sync stale mirror (npx workspai mirror sync)"
+                              aria-label={`Sync mirror for ${workspace.name}`}
+                            >
+                              <Database size={12} />
+                            </button>
+                          )}
+                          {onExport && (
+                            <button
+                              className="ws-inline-action ws-inline-action--export"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                withBusy(workspace.path, () => onExport(workspace));
+                              }}
+                              title="Export Workspace"
+                              aria-label={`Export workspace ${workspace.name}`}
+                            >
+                              <Upload size={12} />
+                            </button>
+                          )}
+                          {shouldShowUpgrade && (
+                            <button
+                              className="ws-inline-action ws-inline-action--upgrade"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                withBusy(workspace.path, () => onUpgrade!(workspace));
+                              }}
+                              title={`Upgrade to v${workspace.coreLatestVersion}`}
+                              aria-label={`Upgrade ${workspace.name} to v${workspace.coreLatestVersion}`}
+                            >
+                              <ArrowUpCircle size={12} />
+                            </button>
+                          )}
                           <button
-                            className="ws-inline-action ws-inline-action--analyze"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onAnalyze(workspace);
-                            }}
-                            title="Analyze workspace in Incident Studio"
-                            aria-label={`Analyze ${workspace.name} in Incident Studio`}
+                            className="ws-inline-action ws-inline-action--remove"
+                            onClick={() => onRemove(workspace)}
+                            title="Remove from list"
+                            aria-label={`Remove ${workspace.name} from list`}
                           >
-                            <Activity size={12} />
+                            <X size={12} />
                           </button>
-                        )}
-                        {onAI && (
-                          <button
-                            className="ws-inline-action ws-inline-action--ai"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onAI(workspace);
-                            }}
-                            title={WORKSPAI_AI_ASSISTANT_WORKSPACE_TITLE}
-                            aria-label={`AI actions for ${workspace.name}`}
-                          >
-                            <Sparkles size={12} />
-                          </button>
-                        )}
-                        {onCheckHealth && (
-                          <button
-                            className="ws-inline-action ws-inline-action--doctor"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              withBusy(workspace.path, () => onCheckHealth(workspace));
-                            }}
-                            title="Check Workspace Health (Doctor)"
-                            aria-label={`Check health of ${workspace.name}`}
-                          >
-                            <Stethoscope size={12} />
-                          </button>
-                        )}
-                        {onBootstrap && workspace.complianceStatus === 'failing' && (
-                          <button
-                            className="ws-inline-action ws-inline-action--bootstrap"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              withBusy(workspace.path, () => onBootstrap(workspace));
-                            }}
-                            title="Fix bootstrap compliance (npx workspai bootstrap)"
-                            aria-label={`Bootstrap ${workspace.name}`}
-                          >
-                            <ShieldCheck size={12} />
-                          </button>
-                        )}
-                        {onMirrorSync && workspace.mirrorStatus === 'stale' && (
-                          <button
-                            className="ws-inline-action ws-inline-action--mirror"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              withBusy(workspace.path, () => onMirrorSync(workspace));
-                            }}
-                            title="Sync stale mirror (npx workspai mirror sync)"
-                            aria-label={`Sync mirror for ${workspace.name}`}
-                          >
-                            <Database size={12} />
-                          </button>
-                        )}
-                        {onExport && (
-                          <button
-                            className="ws-inline-action ws-inline-action--export"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              withBusy(workspace.path, () => onExport(workspace));
-                            }}
-                            title="Export Workspace"
-                            aria-label={`Export workspace ${workspace.name}`}
-                          >
-                            <Upload size={12} />
-                          </button>
-                        )}
-                        {shouldShowUpgrade && (
-                          <button
-                            className="ws-inline-action ws-inline-action--upgrade"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              withBusy(workspace.path, () => onUpgrade!(workspace));
-                            }}
-                            title={`Upgrade to v${workspace.coreLatestVersion}`}
-                            aria-label={`Upgrade ${workspace.name} to v${workspace.coreLatestVersion}`}
-                          >
-                            <ArrowUpCircle size={12} />
-                          </button>
-                        )}
-                      </span>
+                        </div>
+                      </details>
                     )}
-
-                    <button
-                      className="ws-close ws-hover-show"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemove(workspace);
-                      }}
-                      title="Remove from list"
-                      aria-label={`Remove ${workspace.name} from list`}
-                    >
-                      <X size={12} />
-                    </button>
                   </div>
                   {/* <div className="ws-row-bottom">
                                         {workspace.path}

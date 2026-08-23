@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Circle, Loader2, Minus } from 'lucide-react';
 import {
   studioFileChangeLineCounts,
   type SidebarStudioActionProgressView,
@@ -10,6 +10,7 @@ type StudioActionProgressProps = {
   progress: SidebarStudioActionProgressView;
   repairBubble?: boolean;
   historical?: boolean;
+  busy?: boolean;
   onNextAction?: (action: NonNullable<SidebarStudioActionProgressView['nextAction']>) => void;
   onOpenFile?: (relativePath: string) => void;
   onOpenDiff?: (relativePath: string, transactionId: string) => void;
@@ -79,6 +80,7 @@ export function StudioActionProgress({
   progress,
   repairBubble = false,
   historical = false,
+  busy = false,
   onNextAction,
   onOpenFile,
   onOpenDiff,
@@ -116,6 +118,16 @@ export function StudioActionProgress({
     hasNextAction && repairBubble && !progress.requiresApproval && !historical
   );
   const transactionRestored = progress.transactionState === 'rolled-back';
+
+  if (historical) {
+    return (
+      <div className="ws-sidebar__studio-history-row" data-status={progress.status} role="listitem">
+        <span aria-hidden="true">{statusIcon(progress.status)}</span>
+        <strong>{progress.title}</strong>
+        <small>{copy.label}</small>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -189,13 +201,15 @@ export function StudioActionProgress({
               {progress.validationStages.map((stage) => (
                 <li key={stage.id} data-status={stage.status}>
                   <span aria-hidden="true">
-                    {stage.status === 'passed'
-                      ? '✓'
-                      : stage.status === 'failed' || stage.status === 'blocked'
-                        ? '!'
-                        : stage.status === 'running'
-                          ? '•'
-                          : '–'}
+                    {stage.status === 'passed' ? (
+                      <CheckCircle2 size={12} strokeWidth={1.9} />
+                    ) : stage.status === 'failed' || stage.status === 'blocked' ? (
+                      <AlertTriangle size={12} strokeWidth={1.9} />
+                    ) : stage.status === 'running' ? (
+                      <Circle size={12} strokeWidth={1.9} />
+                    ) : (
+                      <Minus size={12} strokeWidth={1.9} />
+                    )}
                   </span>
                   <div>
                     <strong>{validationStageLabel(stage)}</strong>
@@ -273,7 +287,7 @@ export function StudioActionProgress({
                         className="ws-sidebar__studio-file-preview"
                         open={!historical && progress.status !== 'running'}
                       >
-                        <summary>Diff</summary>
+                        <summary>Preview</summary>
                         <StudioDiffView
                           lines={file.diffLines}
                           label={`Diff for ${file.relativePath}`}
@@ -286,10 +300,11 @@ export function StudioActionProgress({
             </ul>
           </section>
         ) : null}
-        {progress.canUndo && progress.transactionId && onUndo ? (
+        {progress.canUndo && progress.transactionId && onUndo && !historical ? (
           <button
             type="button"
             className="ws-sidebar__inline"
+            disabled={busy}
             onClick={() => onUndo(progress.transactionId!)}
           >
             Undo

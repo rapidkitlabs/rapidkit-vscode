@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ComposerShell } from './composer/ComposerShell';
 import { ChatSessionBar } from './composer/ChatSessionBar';
 import { CreateTargetSelector, type CreateTarget } from './composer/CreateTargetSelector';
@@ -10,13 +10,19 @@ import { ManualWorkspaceDrawer, type ManualWorkspaceInput } from './drawers/Manu
 import { SidebarMessage } from './SidebarMessage';
 import type { SidebarModel } from './sidebarModels';
 import type { SidebarScope } from './sidebarTypes';
-import type { CreateMessage, CreationPlan, CreateSession } from './createTypes';
+import type {
+  CreateGuidanceAction,
+  CreateMessage,
+  CreationPlan,
+  CreateSession,
+} from './createTypes';
 import type { ChatSession } from './sidebarSessions';
 import {
   resolveCreatePlaceholder,
   stackLaneLabel,
   type CreationStackLane,
 } from '@/lib/creationPresets';
+import { resolveCreateTargetAfterScopeChange } from '@/lib/createTargetState';
 
 interface CreateTabProps {
   active: boolean;
@@ -36,7 +42,7 @@ interface CreateTabProps {
   initialDrawer?: CreateDrawerId;
   initialDrawerKey?: number;
   onSubmitPrompt: (prompt: string, stackFocus: string, target: CreateTarget) => void;
-  onApprovePlan: (plan: CreationPlan) => void;
+  onApprovePlan: (plan: CreationPlan, sessionId: string) => void;
   onRevisePlan: () => void;
   onManualCreate: (
     input: ManualWorkspaceInput | { mode: 'project'; name: string; framework: string }
@@ -44,12 +50,15 @@ interface CreateTabProps {
   onAdoptProject: () => void;
   onImportProject: () => void;
   onImportWorkspace: () => void;
+  onContinueInAgent: (request: string) => void;
   onBootstrapWorkspace: (input: {
     workspacePath: string;
     workspaceName?: string;
     profile?: string;
   }) => void;
   onFocusView: (target: 'workspaces' | 'projects') => void;
+  onOpenSetup: () => void;
+  onCancelPlanning: () => void;
 }
 
 export function CreateTab(props: CreateTabProps) {
@@ -58,6 +67,7 @@ export function CreateTab(props: CreateTabProps) {
   const [stackLane, setStackLane] = useState<CreationStackLane>('balanced');
   const contextualTarget: CreateTarget = scope.workspacePath ? 'project' : 'workspace';
   const [createTarget, setCreateTarget] = useState<CreateTarget>(contextualTarget);
+  const createTargetExplicitRef = useRef(false);
   const [drawer, setDrawer] = useState<CreateDrawerId>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -65,8 +75,20 @@ export function CreateTab(props: CreateTabProps) {
     const activeSession = props.sessions.find(
       (session) => session.sessionId === props.activeSessionId
     );
-    setCreateTarget(activeSession?.target ?? contextualTarget);
+    setCreateTarget((currentTarget) =>
+      resolveCreateTargetAfterScopeChange({
+        currentTarget,
+        contextualTarget,
+        activeSessionTarget: activeSession?.target,
+        userSelectedTarget: createTargetExplicitRef.current,
+      })
+    );
   }, [contextualTarget, props.activeSessionId, props.sessions]);
+
+  const selectCreateTarget = (target: CreateTarget) => {
+    createTargetExplicitRef.current = true;
+    setCreateTarget(target);
+  };
 
   useEffect(() => {
     if (!active || !props.initialDrawer || !props.initialDrawerKey) {
@@ -87,6 +109,30 @@ export function CreateTab(props: CreateTabProps) {
     closeDrawer();
   };
 
+  const handleGuidanceAction = (action: CreateGuidanceAction, request: string) => {
+    if (action === 'plan-workspace' || action === 'plan-project') {
+      const target = action === 'plan-workspace' ? 'workspace' : 'project';
+      selectCreateTarget(target);
+      props.onSubmitPrompt(request, stackLaneLabel(stackLane), target);
+      return;
+    }
+    if (action === 'adopt-project') {
+      props.onAdoptProject();
+      return;
+    }
+    if (action === 'import-project') {
+      props.onImportProject();
+      return;
+    }
+    if (action === 'import-workspace') {
+      props.onImportWorkspace();
+      return;
+    }
+    if (action === 'continue-in-agent') {
+      props.onContinueInAgent(request);
+    }
+  };
+
   const openFromAdd = (next: CreateDrawerId) => {
     setDrawer(next);
   };
@@ -104,6 +150,7 @@ export function CreateTab(props: CreateTabProps) {
   const startNewSession = () => {
     props.onNewSession();
     setPrompt('');
+    createTargetExplicitRef.current = false;
     setCreateTarget(contextualTarget);
   };
 
@@ -113,15 +160,15 @@ export function CreateTab(props: CreateTabProps) {
         open={drawer === 'add'}
         target={createTarget}
         stackLane={stackLane}
-        onTargetChange={setCreateTarget}
+        onTargetChange={selectCreateTarget}
         onStackLaneChange={setStackLane}
         onClose={closeDrawer}
         onOpenWorkspace={() => {
-          setCreateTarget('workspace');
+          selectCreateTarget('workspace');
           openFromAdd('workspace');
         }}
         onOpenProject={() => {
-          setCreateTarget('project');
+          selectCreateTarget('project');
           openFromAdd('project');
         }}
         onAdoptProject={props.onAdoptProject}
@@ -159,6 +206,7 @@ export function CreateTab(props: CreateTabProps) {
         onSelectSession={(sessionId) => {
           const session = props.sessions.find((entry) => entry.sessionId === sessionId);
           if (session) {
+            createTargetExplicitRef.current = false;
             setCreateTarget(session.target);
           }
           props.onSelectSession(sessionId);
@@ -201,6 +249,23 @@ export function CreateTab(props: CreateTabProps) {
     createTarget,
     scope.workspaceName
   );
+  const planningActive = activeCreateSession?.status === 'planning';
+  const redraftActivePlan = () => {
+    const request = [...messages]
+      .reverse()
+      .find(
+        (message): message is Extract<CreateMessage, { kind: 'text' }> =>
+          message.kind === 'text' && message.role === 'user'
+      );
+    if (!request || busy) {
+      return;
+    }
+    props.onSubmitPrompt(
+      request.text,
+      stackLaneLabel(stackLane),
+      activeCreateSession?.target ?? createTarget
+    );
+  };
 
   return (
     <section
@@ -219,8 +284,38 @@ export function CreateTab(props: CreateTabProps) {
 
       <div className="ws-sidebar__stream" aria-live="polite">
         {messages.length === 0 ? (
-          <div className="ws-sidebar__empty-canvas" aria-hidden="true">
-            <span className="ws-sidebar__empty-hint">Describe what you want to build</span>
+          <div className="ws-sidebar__create-empty">
+            <div>
+              <strong>What do you want to build?</strong>
+              <span>
+                Describe the outcome. Workspai will propose the workspace and stack first.
+              </span>
+            </div>
+            <div className="ws-sidebar__create-starters" aria-label="Creation starters">
+              <button
+                type="button"
+                className="ws-sidebar__inline ws-sidebar__inline--primary"
+                onClick={() => {
+                  selectCreateTarget('workspace');
+                  setPrompt('Create a workspace for my product');
+                }}
+              >
+                New workspace
+              </button>
+              <button
+                type="button"
+                className="ws-sidebar__inline"
+                onClick={() => {
+                  selectCreateTarget('project');
+                  setPrompt('Create a project in this workspace');
+                }}
+              >
+                New project
+              </button>
+              <button type="button" className="ws-sidebar__inline" onClick={() => setDrawer('add')}>
+                More options
+              </button>
+            </div>
           </div>
         ) : null}
         {messages.map((message, index) => (
@@ -232,11 +327,14 @@ export function CreateTab(props: CreateTabProps) {
               index === messages.length - 1 &&
               (message.kind === 'thinking' || message.kind === 'progress')
             }
-            onApprove={props.onApprovePlan}
+            onApprove={(plan) => props.onApprovePlan(plan, props.activeSessionId ?? '')}
             onRevise={props.onRevisePlan}
             onFocus={props.onFocusView}
             onCreateManual={() => setDrawer('workspace')}
             onBootstrapWorkspace={props.onBootstrapWorkspace}
+            onGuidanceAction={handleGuidanceAction}
+            onOpenSetup={props.onOpenSetup}
+            onRedraft={redraftActivePlan}
           />
         ))}
       </div>
@@ -245,8 +343,10 @@ export function CreateTab(props: CreateTabProps) {
         value={prompt}
         onChange={setPrompt}
         onSubmit={submitPrompt}
-        placeholder={composerPlaceholder}
+        placeholder={busy && !planningActive ? 'Creating safely…' : composerPlaceholder}
         disabled={busy}
+        running={planningActive}
+        onCancel={planningActive ? props.onCancelPlanning : undefined}
         models={models}
         selectedModelId={selectedModelId}
         onSelectModel={onSelectModel}
@@ -255,7 +355,11 @@ export function CreateTab(props: CreateTabProps) {
         addLabel="Create options"
         drawer={drawerNode}
         modeSelector={
-          <CreateTargetSelector value={createTarget} onChange={setCreateTarget} disabled={busy} />
+          <CreateTargetSelector
+            value={createTarget}
+            onChange={selectCreateTarget}
+            disabled={busy}
+          />
         }
       />
     </section>
@@ -290,6 +394,9 @@ function CreateMessageView({
   onFocus,
   onCreateManual,
   onBootstrapWorkspace,
+  onGuidanceAction,
+  onOpenSetup,
+  onRedraft,
 }: {
   message: CreateMessage;
   agentActive?: boolean;
@@ -302,6 +409,9 @@ function CreateMessageView({
     workspaceName?: string;
     profile?: string;
   }) => void;
+  onGuidanceAction: (action: CreateGuidanceAction, request: string) => void;
+  onOpenSetup: () => void;
+  onRedraft: () => void;
 }) {
   const role = message.role === 'user' ? 'user' : 'ai';
 
@@ -309,7 +419,16 @@ function CreateMessageView({
     <SidebarMessage role={role}>
       {renderCreateBody(
         message,
-        { onApprove, onRevise, onFocus, onCreateManual, onBootstrapWorkspace },
+        {
+          onApprove,
+          onRevise,
+          onFocus,
+          onCreateManual,
+          onBootstrapWorkspace,
+          onGuidanceAction,
+          onOpenSetup,
+          onRedraft,
+        },
         agentActive
       )}
     </SidebarMessage>
@@ -328,6 +447,9 @@ function renderCreateBody(
       workspaceName?: string;
       profile?: string;
     }) => void;
+    onGuidanceAction: (action: CreateGuidanceAction, request: string) => void;
+    onOpenSetup: () => void;
+    onRedraft: () => void;
   },
   agentActive = false
 ) {
@@ -363,6 +485,33 @@ function renderCreateBody(
           ) : null}
         </>
       );
+    case 'guidance': {
+      const actionLabels: Partial<Record<CreateGuidanceAction, string>> = {
+        'plan-workspace': 'Plan a workspace',
+        'plan-project': 'Plan a project',
+        'adopt-project': 'Choose project folder',
+        'import-project': 'Import project',
+        'import-workspace': 'Import workspace',
+        'continue-in-agent': 'Continue in Agent',
+      };
+      const actionLabel = actionLabels[message.action];
+      return (
+        <>
+          <p>{message.response}</p>
+          {actionLabel ? (
+            <div className="ws-sidebar__inline-actions">
+              <button
+                type="button"
+                className="ws-sidebar__inline"
+                onClick={() => actions.onGuidanceAction(message.action, message.request)}
+              >
+                {actionLabel}
+              </button>
+            </div>
+          ) : null}
+        </>
+      );
+    }
     case 'plan': {
       const plan = message.plan;
       const modules =
@@ -377,9 +526,19 @@ function renderCreateBody(
               Local planner — AI was unavailable; review the stack before continuing.
             </p>
           ) : null}
-          <div className="ws-sidebar__plan">
-            <PlanItem label="Profile" value={plan.profile} />
-            <PlanItem label="Workspace" value={plan.workspaceName} />
+          <div className="ws-sidebar__plan ws-sidebar__artifact-card">
+            <PlanItem
+              label="Target"
+              value={plan.type === 'project' ? 'New project' : 'New workspace and first project'}
+            />
+            {plan.type === 'project' ? (
+              <PlanItem label="Destination" value={`${plan.workspaceName} · active workspace`} />
+            ) : (
+              <>
+                <PlanItem label="Profile" value={plan.profile} />
+                <PlanItem label="Workspace" value={`${plan.workspaceName} · will be created`} />
+              </>
+            )}
             <PlanItem
               label="Project"
               value={`${plan.projectName} · ${plan.framework} · ${plan.kit}`}
@@ -396,7 +555,7 @@ function renderCreateBody(
             <div className="ws-sidebar__inline-actions">
               <button
                 type="button"
-                className="ws-sidebar__inline"
+                className="ws-sidebar__inline ws-sidebar__inline--primary"
                 onClick={() => actions.onApprove(plan)}
               >
                 Approve and continue
@@ -413,7 +572,13 @@ function renderCreateBody(
       const projects = message.projects ?? [];
       return (
         <>
-          <strong>Workspace and project are ready.</strong>
+          <div className="ws-sidebar__creation-receipt" role="status">
+            <Check size={14} strokeWidth={2.2} aria-hidden="true" />
+            <div>
+              <strong>Creation complete</strong>
+              <span>Workspace Intelligence is synced and the created projects are registered.</span>
+            </div>
+          </div>
           <div className="ws-sidebar__inline-actions">
             <button
               type="button"
@@ -431,7 +596,7 @@ function renderCreateBody(
             </button>
           </div>
           {projects.length > 0 ? (
-            <div className="ws-sidebar__plan">
+            <div className="ws-sidebar__plan ws-sidebar__artifact-card">
               {projects.map((p, i) => (
                 <PlanItem
                   key={i}
@@ -456,7 +621,15 @@ function renderCreateBody(
           : undefined;
       return (
         <>
-          <strong>{message.mode === 'project' ? 'Project created.' : 'Workspace created.'}</strong>
+          <div className="ws-sidebar__creation-receipt" role="status">
+            <Check size={14} strokeWidth={2.2} aria-hidden="true" />
+            <div>
+              <strong>
+                {message.mode === 'project' ? 'Project created' : 'Workspace created'}
+              </strong>
+              <span>Created through the governed Workspai creation flow.</span>
+            </div>
+          </div>
           {message.summary ? <p>{message.summary}</p> : null}
           {workspaceLabel || projectLabel ? (
             <p className="ws-sidebar__path-hint">
@@ -478,7 +651,7 @@ function renderCreateBody(
                   })
                 }
               >
-                Bootstrap workspace
+                Initialize dependencies
               </button>
             ) : null}
             <button
@@ -512,6 +685,45 @@ function renderCreateBody(
         <>
           <strong>Creation stopped.</strong>
           <p>{message.error}</p>
+          {message.failureCode === 'workspace-selection-required' ? (
+            <div className="ws-sidebar__inline-actions">
+              <button
+                type="button"
+                className="ws-sidebar__inline ws-sidebar__inline--primary"
+                onClick={() => actions.onFocus('workspaces')}
+              >
+                Select workspace
+              </button>
+            </div>
+          ) : message.failureCode?.startsWith('plan-') ? (
+            <div className="ws-sidebar__inline-actions">
+              <button
+                type="button"
+                className="ws-sidebar__inline ws-sidebar__inline--primary"
+                onClick={actions.onRedraft}
+              >
+                Draft again
+              </button>
+            </div>
+          ) : null}
+          {message.retryable && message.retryPlan ? (
+            <div className="ws-sidebar__inline-actions">
+              <button
+                type="button"
+                className="ws-sidebar__inline"
+                onClick={() => actions.onApprove(message.retryPlan as CreationPlan)}
+              >
+                Retry creation
+              </button>
+            </div>
+          ) : null}
+          {message.setupRequired ? (
+            <div className="ws-sidebar__inline-actions">
+              <button type="button" className="ws-sidebar__inline" onClick={actions.onOpenSetup}>
+                Open setup
+              </button>
+            </div>
+          ) : null}
         </>
       );
     default:

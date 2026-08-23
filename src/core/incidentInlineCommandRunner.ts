@@ -62,6 +62,7 @@ export type RapidkitExecutionPlan = {
   cwd: string;
   displayCommand: string;
   shell?: boolean;
+  env?: NodeJS.ProcessEnv;
 };
 
 function tokenizeCommandArgs(input: string): string[] {
@@ -298,6 +299,7 @@ export async function resolveRapidkitExecutionPlan(
       cwd: effectiveCwd,
       displayCommand: execution.displayCommand,
       shell: execution.shell,
+      env: execution.env,
     };
   }
 
@@ -347,6 +349,7 @@ export async function resolveRapidkitExecutionPlan(
     cwd: effectiveCwd,
     displayCommand: execution.displayCommand,
     shell: execution.shell,
+    env: execution.env,
   };
 }
 
@@ -358,6 +361,7 @@ export async function execRapidkitExecutionPlan(plan: RapidkitExecutionPlan): Pr
   const { execa } = await import('execa');
   const result = await execa(plan.executable, plan.args, {
     cwd: plan.cwd,
+    env: { ...process.env, ...plan.env },
     shell: plan.shell ?? false,
     timeout: 60_000,
     reject: false,

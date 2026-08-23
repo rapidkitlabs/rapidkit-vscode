@@ -1086,6 +1086,43 @@ describe('CLI-owned Workspace Repair client', () => {
     expect((hydrated.data.output as { fileChanges: typeof fileChanges }).fileChanges).toEqual(
       fileChanges
     );
+    expect((hydrated.data.output as { transaction: { state: string } }).transaction.state).toBe(
+      'closed'
+    );
+  });
+
+  it('hydrates authoritative rollback state even when a persisted event cached live changes', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-repair-hydrate-'));
+    const transactionId = 'repair-hydrated-rollback-0001';
+    const artifact = transaction(transactionId, 'rolled-back');
+    await fs.outputJson(
+      path.join(
+        workspacePath,
+        '.workspai',
+        'repair',
+        'transactions',
+        transactionId,
+        'transaction.json'
+      ),
+      artifact
+    );
+
+    const hydrated = await hydrateStudioRepairEventFileChanges({
+      workspacePath,
+      event: {
+        type: 'tool.completed',
+        data: {
+          output: {
+            transaction: { transactionId, state: 'closed' },
+            fileChanges: [{ relativePath: 'src/a.ts', status: 'modified' }],
+          },
+        },
+      },
+    });
+
+    expect((hydrated.data.output as { transaction: { state: string } }).transaction.state).toBe(
+      'rolled-back'
+    );
   });
 
   it('opens a linked-project receipt through its portable project-relative display path', async () => {

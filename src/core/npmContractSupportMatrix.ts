@@ -579,7 +579,7 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
     mode: 'runtime-consumed',
     extensionSurface: 'CLI version probe and setup compatibility',
     usage:
-      'Guards structured version output used to compare the linked CLI against extension-cli-compatibility.v1.',
+      'Guards structured version output used to compare the active runtime against extension-cli-compatibility.v1.',
   },
   {
     contractPath: 'workspace-archive-capabilities.v1.json',

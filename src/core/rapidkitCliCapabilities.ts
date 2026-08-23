@@ -4,6 +4,7 @@ import {
   clearRuntimeCommandSurfaceCache,
   fetchRuntimeCommandSurface,
 } from './runtimeCommandSurface';
+import { resolveBundledCliRuntime } from './bundledCliRuntime';
 
 /**
  * Canonical workspace intelligence chain the extension depends on. Detection is
@@ -195,14 +196,19 @@ export async function probeRootCliCapability(
 
 async function showCliCapabilityGate(
   featureLabel: string,
-  missingFeatures: string[]
+  missingFeatures: string[],
+  options?: { presentError?: boolean }
 ): Promise<boolean> {
   if (missingFeatures.length === 0) {
     return true;
   }
 
+  if (options?.presentError === false) {
+    return false;
+  }
+
   const choice = await vscode.window.showErrorMessage(
-    `${featureLabel} is blocked because your linked Workspai CLI does not advertise required capabilities: ${missingFeatures.join(', ')}. Verify with \`workspai commands --json\`, link or install the latest Workspai package, then reload the window.`,
+    `${featureLabel} is blocked because the active Workspai runtime does not advertise required capabilities: ${missingFeatures.join(', ')}. Verify with \`workspai commands --json\`, then reload the window or open Setup.`,
     'Open Setup'
   );
 
@@ -215,64 +221,71 @@ async function showCliCapabilityGate(
 
 export async function gateWorkspaceIntelligenceCli(
   featureLabel: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeWorkspaceIntelligenceCliCapabilities({ cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, probe.missingFeatures);
+  return showCliCapabilityGate(featureLabel, probe.missingFeatures, options);
 }
 
 export async function gateCreateFrontendCli(
   featureLabel: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
+  // Packaged Create executes through this integrity-checked runtime. Re-probing
+  // a second process between workspace and project creation creates a TOCTOU
+  // failure boundary and can incorrectly reject a runtime that just created
+  // the canonical workspace successfully.
+  if (resolveBundledCliRuntime()) {
+    return true;
+  }
   const probe = await probeCreateFrontendCliCapabilities({ cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, ['create frontend']);
+  return showCliCapabilityGate(featureLabel, ['create frontend'], options);
 }
 
 export async function gateAdoptCli(
   featureLabel: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeAdoptCliCapabilities({ cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, ['adopt']);
+  return showCliCapabilityGate(featureLabel, ['adopt'], options);
 }
 
 export async function gateImportCli(
   featureLabel: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeImportCliCapabilities({ cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, ['import']);
+  return showCliCapabilityGate(featureLabel, ['import'], options);
 }
 
 export async function gateTopLevelRapidkitCli(
   featureLabel: string,
   commandId: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeTopLevelCliCapability(commandId, { cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, [topLevelFeatureLabel(commandId)]);
+  return showCliCapabilityGate(featureLabel, [topLevelFeatureLabel(commandId)], options);
 }
 
 export async function gateWorkspaceSubcommandCli(
   featureLabel: string,
   subcommand: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeWorkspaceSubcommandCliCapability(subcommand, {
     cwd: options?.cwd,
@@ -280,43 +293,43 @@ export async function gateWorkspaceSubcommandCli(
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, [workspaceFeatureLabel(subcommand)]);
+  return showCliCapabilityGate(featureLabel, [workspaceFeatureLabel(subcommand)], options);
 }
 
 export async function gateProjectScopedRapidkitCli(
   featureLabel: string,
   commandId: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeProjectScopedCliCapability(commandId, { cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, [`project ${commandId}`]);
+  return showCliCapabilityGate(featureLabel, [`project ${commandId}`], options);
 }
 
 export async function gateCoreBackedRapidkitCli(
   featureLabel: string,
   commandId: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeCoreBackedCliCapability(commandId, { cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, [topLevelFeatureLabel(commandId)]);
+  return showCliCapabilityGate(featureLabel, [topLevelFeatureLabel(commandId)], options);
 }
 
 export async function gateRootRapidkitCli(
   featureLabel: string,
   commandId: string,
-  options?: { cwd?: string }
+  options?: { cwd?: string; presentError?: boolean }
 ): Promise<boolean> {
   const probe = await probeRootCliCapability(commandId, { cwd: options?.cwd });
   if (probe.available) {
     return true;
   }
-  return showCliCapabilityGate(featureLabel, [topLevelFeatureLabel(commandId)]);
+  return showCliCapabilityGate(featureLabel, [topLevelFeatureLabel(commandId)], options);
 }
 
 /** Test/diagnostic helper: drop any cached command-surface resolution. */

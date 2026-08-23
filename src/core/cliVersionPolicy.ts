@@ -153,9 +153,9 @@ export function isCliVersionCompatible(detectedVersion: string | null): boolean 
 export function formatCliVersionMismatchMessage(assessment: CliVersionAssessment): string {
   switch (assessment.reason) {
     case 'below-minimum':
-      return `The linked Workspai CLI (v${assessment.detectedVersion}) is older than the minimum supported version (v${assessment.minimumVersion}). Update with \`npm i -g workspai@latest\` (or re-link the local package) and reload the window.`;
+      return `The active Workspai runtime (v${assessment.detectedVersion}) is older than the minimum supported version (v${assessment.minimumVersion}). Update or reinstall the extension runtime, then reload the window.`;
     case 'missing':
-      return `Could not detect the Workspai CLI version. Install or link workspai (minimum v${assessment.minimumVersion}) and reload the window.`;
+      return `Could not validate the active Workspai runtime (minimum v${assessment.minimumVersion}). Open Setup to verify the bundled runtime or development fallback, then reload the window.`;
     case 'unparseable':
       return `Could not parse the Workspai CLI version "${assessment.detectedVersion}". Workspai requires at least v${assessment.minimumVersion}.`;
     case 'ok':

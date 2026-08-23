@@ -1252,6 +1252,16 @@ async function buildHandoffCards(workspacePath: string): Promise<DashboardEviden
       blockers,
       incidentStudioTarget: 'release',
     });
+  } else {
+    cards.push(
+      missingCard(
+        'share',
+        'Share bundle',
+        'No share bundle yet. Run workspace share when a portable handoff is needed.',
+        'workspace',
+        'release'
+      )
+    );
   }
 
   const snapshotRaw = await readJsonIfExists(path.join(reportsDir, 'snapshot-last-run.json'));
@@ -1273,6 +1283,16 @@ async function buildHandoffCards(workspacePath: string): Promise<DashboardEviden
       blockers,
       incidentStudioTarget: 'release',
     });
+  } else {
+    cards.push(
+      missingCard(
+        'snapshot',
+        'Recovery Snapshot',
+        'No recovery snapshot yet. Create one before a high-risk workspace change.',
+        'workspace',
+        'release'
+      )
+    );
   }
 
   const archiveManifestPath = await resolveWorkspaceArchiveManifestPath(workspacePath);
@@ -2626,9 +2646,16 @@ export async function buildDashboardEvidenceBundle(input?: {
     }
 
     const importReadinessCard = await buildImportReadinessCard(projectPath, projectName);
-    if (importReadinessCard) {
-      cards.push(importReadinessCard);
-    }
+    cards.push(
+      importReadinessCard ??
+        missingCard(
+          'importReadiness',
+          'Import Readiness',
+          'No import readiness evidence exists for the selected project.',
+          'project',
+          'doctor'
+        )
+    );
   }
 
   const analyzeArtifact = await readJsonArtifact(path.join(reportsDir, 'analyze-last-run.json'));
@@ -2886,7 +2913,10 @@ export function resolveCardForReportKind(
     case 'doctor-fix-result':
       return findEvidenceCardById(bundle, 'doctor');
     case 'artifact-remediation-plan':
-      return findEvidenceCardById(bundle, 'remediationPlan');
+      // The artifact remediation plan orchestrates multiple causal cards. It
+      // is not itself a dashboard card; its write invalidates the complete
+      // evidence snapshot through the dashboard evidence watcher.
+      return undefined;
     case 'archive-manifest':
       return findEvidenceCardById(bundle, 'archive');
     case 'mirror-ops':

@@ -109,7 +109,7 @@ function toSnapshot(parsed: RawCommandCapabilities): RuntimeCommandSurfaceSnapsh
 }
 
 /**
- * Resolve the runtime command surface from the linked Workspai CLI via
+ * Resolve the runtime command surface from the active Workspai runtime via
  * `workspai commands --json`. Returns `null` when the CLI cannot be reached,
  * exits non-zero, or does not publish the `rapidkit-command-capabilities-v1`
  * surface (e.g. an older CLI) — callers treat that as "capability unavailable".
@@ -135,6 +135,7 @@ export async function fetchRuntimeCommandSurface(options?: {
     const execution = buildRapidkitExecutionSpec(['commands', '--json']);
     const result = await run(execution.command, execution.args, {
       cwd,
+      env: execution.env,
       shell: execution.shell,
       timeout: 20_000,
     });

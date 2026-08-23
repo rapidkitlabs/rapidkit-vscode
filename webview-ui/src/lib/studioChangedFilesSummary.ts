@@ -67,6 +67,12 @@ export function buildStudioChangedFilesSummary(
       rolledBackTransactions.add(transactionId);
       continue;
     }
+    // A durable transaction is reviewable and undoable only after the CLI has
+    // closed it. Applied/running/failed snapshots are intermediate control
+    // state and must never survive hydration as a live change summary.
+    if (entry.transactionState !== 'closed') {
+      continue;
+    }
     liveTransactionOrder.set(transactionId, order);
     for (const file of entry.fileChanges) {
       const relativePath = file.relativePath.trim();

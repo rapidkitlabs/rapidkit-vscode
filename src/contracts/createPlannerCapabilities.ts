@@ -1,8 +1,31 @@
 import contract from './create-planner-capabilities.v1.json';
+import {
+  listExecutableScaffoldFrameworks,
+  listExecutableScaffoldKits,
+} from '../core/scaffoldKits.js';
 
 export type CreatePlannerLane = 'native' | 'official' | 'existing';
 
 export type CreatePlannerStatus = 'available' | 'planned';
+
+export type WorkspaceCreateProfile =
+  | 'minimal'
+  | 'python-only'
+  | 'node-only'
+  | 'go-only'
+  | 'java-only'
+  | 'dotnet-only'
+  | 'polyglot'
+  | 'enterprise';
+
+type WorkspaceProfileCapability = {
+  id: WorkspaceCreateProfile;
+  runtimePolicy: 'single-detected' | 'bounded' | 'multi-runtime';
+  runtimeFamilies: string[];
+  setupRuntimeFamilies: string[];
+  pythonEngineAtCreate: 'skipped' | 'optional-default-install';
+  pythonEngineAtBootstrap: 'disabled' | 'on-demand';
+};
 
 export type CreatePlannerCapability = {
   lane: CreatePlannerLane;
@@ -158,6 +181,39 @@ export function resolveCreateCapabilityFromPrompt(
   }
 
   return undefined;
+}
+
+/**
+ * Return the executable create surface advertised to model-driven routers.
+ * Keeping this projection beside the canonical capability contract prevents
+ * prompts and UI guidance from claiming support that the runtime cannot execute.
+ */
+export function listExecutableCreateTargets(): string[] {
+  return listExecutableScaffoldFrameworks();
+}
+
+export function listExecutableCreateKits(): string[] {
+  return listExecutableScaffoldKits();
+}
+
+export function listWorkspaceCreateProfiles(): WorkspaceProfileCapability[] {
+  return (contract.workspaceProfiles as WorkspaceProfileCapability[]).map((profile) => ({
+    ...profile,
+    runtimeFamilies: [...profile.runtimeFamilies],
+    setupRuntimeFamilies: [...profile.setupRuntimeFamilies],
+  }));
+}
+
+export function resolveWorkspaceCreateProfile(
+  profile: string | undefined
+): WorkspaceProfileCapability | undefined {
+  return listWorkspaceCreateProfiles().find((candidate) => candidate.id === profile);
+}
+
+export function profileInstallsPythonEngineAtCreate(profile: string | undefined): boolean {
+  return (
+    resolveWorkspaceCreateProfile(profile)?.pythonEngineAtCreate === 'optional-default-install'
+  );
 }
 
 export const CREATE_PLANNER_CAPABILITIES_SCHEMA_VERSION = contract.schemaVersion;

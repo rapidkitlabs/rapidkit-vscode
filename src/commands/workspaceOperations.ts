@@ -13,6 +13,10 @@ import {
   appendWorkspaceCommandRefresh,
   confirmWorkspaceCommandSafety,
 } from '../core/workspaceCommandSafety';
+import {
+  listWorkspaceCreateProfiles,
+  type WorkspaceCreateProfile,
+} from '../contracts/createPlannerCapabilities';
 
 type WorkspaceExplorerLike = {
   getSelectedWorkspace?: () => { path: string; name?: string } | null | undefined;
@@ -65,97 +69,85 @@ function summarizeWorkspaceContractHealth(input: {
 type WorkspaceHealthAction = 'check' | 'fix' | 'compliance' | 'version' | 'upgrade';
 type WorkspaceRunStage = 'init' | 'test' | 'build' | 'start';
 type WorkspaceAutopilotMode = 'audit' | 'safe-fix' | 'enforce';
-type WorkspaceBootstrapProfile =
-  | 'minimal'
-  | 'python-only'
-  | 'node-only'
-  | 'go-only'
-  | 'java-only'
-  | 'dotnet-only'
-  | 'polyglot'
-  | 'enterprise';
+type WorkspaceBootstrapProfile = WorkspaceCreateProfile;
 type WorkspaceSnapshotAction = 'create' | 'list' | 'inspect' | 'restore';
 type WorkspaceContractAction = 'init' | 'inspect' | 'verify' | 'graph' | 'open';
 
 type ProfileQuickPickItem = vscode.QuickPickItem & { value: WorkspaceBootstrapProfile };
 
-const WORKSPACE_BOOTSTRAP_PROFILE_OPTIONS: ProfileQuickPickItem[] = [
-  {
-    label: '$(zap) minimal',
-    description: 'Foundation artifacts only (fastest)',
-    value: 'minimal',
-  },
-  {
+const WORKSPACE_BOOTSTRAP_PROFILE_LABELS: Record<
+  WorkspaceBootstrapProfile,
+  Pick<ProfileQuickPickItem, 'label' | 'description'>
+> = {
+  minimal: { label: '$(zap) minimal', description: 'Foundation artifacts only (fastest)' },
+  'python-only': {
     label: '$(symbol-namespace) Python runtime',
     description: 'Python + Poetry bootstrap',
-    value: 'python-only',
   },
-  {
+  'node-only': {
     label: '$(symbol-event) Node.js runtime',
     description: 'Node.js runtime bootstrap (no Python needed)',
-    value: 'node-only',
   },
-  {
+  'go-only': {
     label: '$(go) Go runtime',
     description: 'Go runtime bootstrap (no Python needed)',
-    value: 'go-only',
   },
-  {
+  'java-only': {
     label: '$(symbol-class) Java runtime',
     description: 'Java + Spring Boot runtime bootstrap',
-    value: 'java-only',
   },
-  {
+  'dotnet-only': {
     label: '$(symbol-interface) .NET runtime',
     description: '.NET runtime bootstrap for ASP.NET Core services',
-    value: 'dotnet-only',
   },
-  {
+  polyglot: {
     label: '$(layers) polyglot',
     description: 'Python + Node + Go + Java + .NET — multi-runtime workspace',
-    value: 'polyglot',
   },
-  {
+  enterprise: {
     label: '$(shield) enterprise',
-    description: 'Polyglot + .NET + governance + Sigstore verification',
-    value: 'enterprise',
+    description: 'Polyglot + governance + Sigstore verification',
   },
-];
+};
+
+const WORKSPACE_BOOTSTRAP_PROFILE_OPTIONS: ProfileQuickPickItem[] =
+  listWorkspaceCreateProfiles().map((profile) => ({
+    ...WORKSPACE_BOOTSTRAP_PROFILE_LABELS[profile.id],
+    value: profile.id,
+  }));
 
 const WORKSPACE_BOOTSTRAP_PROFILES = new Set(
-  WORKSPACE_BOOTSTRAP_PROFILE_OPTIONS.map((option) => option.value)
+  listWorkspaceCreateProfiles().map((profile) => profile.id)
 );
 
-const PROFILE_SETUP_RUNTIMES: Record<WorkspaceBootstrapProfile, string[]> = {
-  minimal: [],
-  'python-only': ['python'],
-  'node-only': ['node'],
-  'go-only': ['go'],
-  'java-only': ['java'],
-  'dotnet-only': ['dotnet'],
-  polyglot: ['python', 'node', 'go', 'java', 'dotnet'],
-  enterprise: ['python', 'node', 'go', 'java', 'dotnet'],
-};
+const PROFILE_SETUP_RUNTIMES = Object.fromEntries(
+  listWorkspaceCreateProfiles().map((profile) => [profile.id, profile.setupRuntimeFamilies])
+) as Record<WorkspaceBootstrapProfile, string[]>;
 
 async function readWorkspaceBootstrapProfile(
   workspacePath: string
 ): Promise<WorkspaceBootstrapProfile | undefined> {
-  const manifestPath = path.join(workspacePath, '.rapidkit', 'workspace.json');
-  try {
-    const fsBootstrap = await import('fs-extra');
-    if (!(await fsBootstrap.default.pathExists(manifestPath))) {
-      return undefined;
+  const manifestPaths = [
+    path.join(workspacePath, '.workspai', 'workspace.json'),
+    path.join(workspacePath, '.rapidkit', 'workspace.json'),
+  ];
+  const fsBootstrap = await import('fs-extra');
+  for (const manifestPath of manifestPaths) {
+    try {
+      if (!(await fsBootstrap.default.pathExists(manifestPath))) {
+        continue;
+      }
+      const manifest = await fsBootstrap.default.readJSON(manifestPath);
+      const profile = manifest?.profile;
+      if (
+        typeof profile === 'string' &&
+        WORKSPACE_BOOTSTRAP_PROFILES.has(profile as WorkspaceBootstrapProfile)
+      ) {
+        return profile as WorkspaceBootstrapProfile;
+      }
+    } catch {
+      continue;
     }
-    const manifest = await fsBootstrap.default.readJSON(manifestPath);
-    const profile = manifest?.profile;
-    if (
-      typeof profile === 'string' &&
-      WORKSPACE_BOOTSTRAP_PROFILES.has(profile as WorkspaceBootstrapProfile)
-    ) {
-      return profile as WorkspaceBootstrapProfile;
-    }
-  } catch {
-    return undefined;
   }
   return undefined;
 }
@@ -1127,26 +1119,8 @@ export function registerWorkspaceOperationsCommands(options: {
         return;
       }
 
-      const manifestPath = path.join(workspacePath, '.rapidkit', 'workspace.json');
-      try {
-        const fsBootstrap = await import('fs-extra');
-        if (await fsBootstrap.default.pathExists(manifestPath)) {
-          const manifest = await fsBootstrap.default.readJSON(manifestPath);
-          manifest.profile = selectedProfile;
-          await fsBootstrap.default.writeJSON(manifestPath, manifest, { spaces: 2 });
-        }
-      } catch (error) {
-        logger.warn('Failed to update workspace profile in manifest', {
-          code: 'WORKSPACE_MANIFEST_PROFILE_UPDATE_FAILED',
-          workspacePath: toSafePathHint(workspacePath),
-          manifestPath: toSafePathHint(manifestPath),
-          error: error instanceof Error ? error.message : String(error),
-          isRecoverable: true,
-        });
-      }
-
       runRapidkitCommandsInTerminal({
-        name: `Workspai: Bootstrap — ${wsName}`,
+        name: `Workspai: Initialize Dependencies — ${wsName}`,
         cwd: workspacePath,
         commands: [['bootstrap', '--profile', selectedProfile]],
       });
@@ -1949,11 +1923,15 @@ export function registerWorkspaceOperationsCommands(options: {
               progress.report({ increment: 0, message: 'Starting health check...' });
 
               try {
-                runRapidkitCommandsInTerminal({
+                const started = await runRapidkitCommandsInTerminal({
                   name: `Workspai: Doctor - ${workspaceName}`,
                   cwd: workspacePath,
                   commands: [['doctor', 'workspace']],
                 });
+                if (!started) {
+                  progress.report({ increment: 100, message: 'Blocked by runtime validation' });
+                  return;
+                }
                 progress.report({ increment: 50, message: 'Running diagnostics...' });
                 progress.report({ increment: 100, message: 'Complete!' });
 
@@ -1989,11 +1967,15 @@ export function registerWorkspaceOperationsCommands(options: {
               progress.report({ increment: 0, message: 'Starting doctor --fix...' });
 
               try {
-                runRapidkitCommandsInTerminal({
+                const started = await runRapidkitCommandsInTerminal({
                   name: `Workspai: Doctor Fix - ${workspaceName}`,
                   cwd: workspacePath,
                   commands: [['doctor', 'workspace', '--fix']],
                 });
+                if (!started) {
+                  progress.report({ increment: 100, message: 'Blocked by runtime validation' });
+                  return;
+                }
                 progress.report({ increment: 50, message: 'Applying safe fixes...' });
                 progress.report({ increment: 100, message: 'Complete!' });
 

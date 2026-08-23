@@ -77,7 +77,7 @@ export function StudioChangedFilesSummary({
                 comparableCount === 1 ? 'file' : 'files'
               }.`}
             >
-              Review
+              Review all
             </button>
           ) : null}
         </div>

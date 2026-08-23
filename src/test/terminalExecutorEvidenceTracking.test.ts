@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { createdTerminals, createTerminalMock } = vi.hoisted(() => ({
+const { bundledRuntimeMock, createdTerminals, createTerminalMock } = vi.hoisted(() => ({
+  bundledRuntimeMock: vi.fn(),
   createdTerminals: [] as any[],
   createTerminalMock: vi.fn((options: { name: string; env?: Record<string, string> }) => {
     const terminal = {
@@ -12,6 +13,10 @@ const { createdTerminals, createTerminalMock } = vi.hoisted(() => ({
     createdTerminals.push(terminal);
     return terminal;
   }),
+}));
+
+vi.mock('../core/bundledCliRuntime', () => ({
+  resolveBundledCliRuntime: bundledRuntimeMock,
 }));
 
 vi.mock('vscode', () => ({
@@ -27,6 +32,8 @@ describe('terminalExecutor evidence tracking', () => {
   beforeEach(() => {
     createdTerminals.length = 0;
     createTerminalMock.mockClear();
+    bundledRuntimeMock.mockReset();
+    bundledRuntimeMock.mockReturnValue(null);
   });
 
   it('records workspace path for workspace evidence commands created through the executor', () => {
@@ -58,5 +65,35 @@ describe('terminalExecutor evidence tracking', () => {
       expect.stringContaining('/workspaces/team-ws/api')
     );
     expect(resolveWorkspacePathForEvidenceTerminal(terminal)).toBeUndefined();
+  });
+
+  it('shows a short Workspai command while binding the terminal to the embedded runtime', () => {
+    bundledRuntimeMock.mockReturnValue({
+      command: '/opt/vscode/code',
+      entry: '/opt/workspai/runtime/launcher.cjs',
+      terminalBin: '/opt/workspai/runtime/terminal-bin',
+      terminalCommand: 'workspai',
+    });
+
+    runRapidkitCommandsInTerminal({
+      name: 'Workspai: Doctor - team-ws',
+      cwd: '/workspaces/team-ws',
+      env: { PATH: '/usr/local/bin:/usr/bin' },
+      commands: [['doctor', 'workspace', '--fix']],
+    });
+
+    expect(createdTerminals[0].env).toEqual({
+      PATH: '/opt/workspai/runtime/terminal-bin:/usr/local/bin:/usr/bin',
+      RAPIDKIT_LOG_FORMAT: 'json',
+      WORKSPAI_EXTENSION_CLI_ENTRY: '/opt/workspai/runtime/launcher.cjs',
+      WORKSPAI_EXTENSION_NODE: '/opt/vscode/code',
+    });
+    expect(createdTerminals[0].sendText).toHaveBeenNthCalledWith(
+      2,
+      'workspai doctor workspace --fix'
+    );
+    expect(createdTerminals[0].sendText).not.toHaveBeenCalledWith(
+      expect.stringContaining('npx --yes --package')
+    );
   });
 });
