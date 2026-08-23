@@ -38,6 +38,35 @@ function expectLockedManifestToMatch(
   }
 }
 
+function expectExactDependenciesToResolve(
+  manifest: PackageManifest,
+  lockedPackages: Record<string, PackageManifest>,
+  ownerPath: string,
+  label: string
+): void {
+  for (const field of dependencyFields) {
+    for (const [dependencyName, requestedVersion] of Object.entries(manifest[field] ?? {})) {
+      if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(requestedVersion)) {
+        continue;
+      }
+
+      const localPath = ownerPath
+        ? `${ownerPath}/node_modules/${dependencyName}`
+        : `node_modules/${dependencyName}`;
+      const hoistedPath = `node_modules/${dependencyName}`;
+      const resolved = lockedPackages[localPath] ?? lockedPackages[hoistedPath];
+
+      expect(
+        resolved,
+        `${label} ${dependencyName}@${requestedVersion} is not locked`
+      ).toBeDefined();
+      expect(resolved?.version, `${label} ${dependencyName} resolved-version drift`).toBe(
+        requestedVersion
+      );
+    }
+  }
+}
+
 describe('package-lock integrity', () => {
   it('keeps root and workspace manifests synchronized with every committed lockfile', () => {
     const rootManifest = readPackageManifest(path.join(repoRoot, 'package.json'));
@@ -46,6 +75,7 @@ describe('package-lock integrity', () => {
     ) as { packages?: Record<string, PackageManifest> };
 
     expectLockedManifestToMatch(rootManifest, rootLock.packages?.[''], 'root package');
+    expectExactDependenciesToResolve(rootManifest, rootLock.packages ?? {}, '', 'root package');
 
     for (const workspacePath of ['webview-ui']) {
       const workspaceManifest = readPackageManifest(
@@ -63,6 +93,22 @@ describe('package-lock integrity', () => {
       expectLockedManifestToMatch(
         workspaceManifest,
         workspaceLock.packages?.[''],
+        `${workspacePath} package`
+      );
+      expect(
+        workspaceManifest.devDependencies?.esbuild,
+        `${workspacePath} must pin its release-critical bundler exactly`
+      ).toMatch(/^\d+\.\d+\.\d+$/u);
+      expectExactDependenciesToResolve(
+        workspaceManifest,
+        rootLock.packages ?? {},
+        workspacePath,
+        `${workspacePath} root-lock projection`
+      );
+      expectExactDependenciesToResolve(
+        workspaceManifest,
+        workspaceLock.packages ?? {},
+        '',
         `${workspacePath} package`
       );
     }
