@@ -29,7 +29,10 @@ import { HomeImportAdoptHandoff } from '@/components/HomeImportAdoptHandoff';
 import { DashboardEvidenceArtifactsSection } from '@/components/DashboardEvidenceArtifactsSection';
 import { DashboardRepairPanel } from '@/components/DashboardRepairPanel';
 import { WorkspaceGraphExplorer } from '@/components/WorkspaceGraphExplorer';
-import type { WorkspaceGraphProjection } from '@workspai-contracts/workspaceGraphProjection';
+import {
+  isWorkspaceGraphProjection,
+  type WorkspaceGraphProjection,
+} from '@workspai-contracts/workspaceGraphProjection';
 import type {
   WorkspaceGraphRecordingFrameInput,
   WorkspaceGraphRecordingState,
@@ -121,6 +124,10 @@ import {
   buildDashboardCommandPayload,
   buildDashboardDispatchMessages,
 } from '@/lib/dashboardDispatch';
+import {
+  shouldAcceptWorkspaceGraphLiveUpdate,
+  type WorkspaceGraphLiveCursor,
+} from '@/lib/workspaceGraphLiveGuard';
 import { dashboardWorkspaceScope } from '@/lib/dashboardScopePolicy';
 
 function normalizeAvailableModels(
@@ -289,6 +296,8 @@ export function App() {
     null
   );
   const [workspaceGraphStreamStatus, setWorkspaceGraphStreamStatus] = useState('stopped');
+  const [workspaceGraphStreamDetail, setWorkspaceGraphStreamDetail] = useState<string | null>(null);
+  const workspaceGraphLiveCursorRef = useRef<WorkspaceGraphLiveCursor | null>(null);
   const [workspaceGraphStreamStats, setWorkspaceGraphStreamStats] = useState<{
     received: number;
     emitted: number;
@@ -1093,7 +1102,23 @@ export function App() {
         }
         case 'workspaceGraphProjectionLive': {
           const projection = message.data?.projection as WorkspaceGraphProjection | undefined;
-          if (projection?.schemaVersion === 'workspace-graph-projection.v1') {
+          const workspacePath =
+            typeof message.data?.workspacePath === 'string' ? message.data.workspacePath : '';
+          const sessionId =
+            typeof message.data?.sessionId === 'string' ? message.data.sessionId : '';
+          const generation = Number(message.data?.generation);
+          const revision = Number(message.data?.revision);
+          const activeWorkspacePath = workspaceStatusRef.current.workspacePath ?? '';
+          const incomingCursor = { workspacePath, sessionId, generation, revision };
+          if (
+            isWorkspaceGraphProjection(projection) &&
+            shouldAcceptWorkspaceGraphLiveUpdate({
+              activeWorkspacePath,
+              incoming: incomingCursor,
+              current: workspaceGraphLiveCursorRef.current,
+            })
+          ) {
+            workspaceGraphLiveCursorRef.current = incomingCursor;
             setLiveWorkspaceGraph(projection);
           }
           const streamStats = message.data?.streamStats;
@@ -1109,6 +1134,11 @@ export function App() {
         case 'workspaceGraphStreamStatus':
           setWorkspaceGraphStreamStatus(
             typeof message.data?.status === 'string' ? message.data.status : 'error'
+          );
+          setWorkspaceGraphStreamDetail(
+            typeof message.data?.detail === 'string' && message.data.detail.trim()
+              ? message.data.detail.trim()
+              : null
           );
           break;
         case 'workspaceGraphMemorySample': {
@@ -1482,10 +1512,13 @@ export function App() {
   useEffect(() => {
     const workspacePath = workspaceStatus.workspacePath;
     if (dashboardSection !== 'graph' || !workspacePath) {
+      workspaceGraphLiveCursorRef.current = null;
       setLiveWorkspaceGraph(null);
       vscode.postMessage('stopWorkspaceGraphStream');
       return;
     }
+    workspaceGraphLiveCursorRef.current = null;
+    setLiveWorkspaceGraph(null);
     vscode.postMessage('startWorkspaceGraphStream', { workspacePath });
     return () => vscode.postMessage('stopWorkspaceGraphStream');
   }, [dashboardSection, workspaceStatus.workspacePath]);
@@ -2021,13 +2054,16 @@ export function App() {
                   evidence={effectiveDashboardEvidence}
                   liveGraph={liveWorkspaceGraph}
                   streamStatus={workspaceGraphStreamStatus}
+                  streamDetail={workspaceGraphStreamDetail}
                   streamStats={workspaceGraphStreamStats}
                   memorySample={workspaceGraphMemorySample}
                   recordingState={workspaceGraphRecordingState}
                   workspacePath={workspaceStatus.workspacePath}
                   hasWorkspace={hasActiveWorkspace}
                   onRefresh={() => handleDashboardCommand('workspaceModel')}
-                  onSearchCanonical={() => handleDashboardCommand('workspaceGraphSearch')}
+                  onSearchCanonical={(query) =>
+                    handleDashboardCommand('workspaceGraphSearch', query ? { query } : undefined)
+                  }
                   onExport={(format) =>
                     handleDashboardCommand(
                       format === 'jsonld'
@@ -2037,6 +2073,8 @@ export function App() {
                           : 'workspaceGraphExportGexf'
                     )
                   }
+                  onExportGif={(input) => vscode.postMessage('exportWorkspaceGraphGif', input)}
+                  onExportVideo={(input) => vscode.postMessage('exportWorkspaceGraphVideo', input)}
                   onRevealArtifact={(artifactPath) =>
                     vscode.postMessage('revealEvidence', {
                       path: artifactPath,

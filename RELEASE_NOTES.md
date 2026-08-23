@@ -1,5 +1,48 @@
 # Release Notes
 
+## v0.44.0 (August 23, 2026)
+
+### Governed repair convergence and immersive workspace graph
+
+Workspai for VS Code 0.44.0 is validated against Workspai CLI 0.64.0. This
+release closes the repair loop around canonical CLI producers and turns the
+proof-backed Workspace Graph into a live, explorable, presentation-ready 3D
+surface.
+
+Highlights:
+
+- Missing or stale lifecycle evidence is routed to the exact project-scoped
+  Workspai producer before Verify continues. Workspai commands use the bundled
+  governed command registry; project-native tools remain separately bounded.
+- Studio source fingerprints exclude generated evidence and dependency output,
+  so autonomous diagnostics remain safe in new repositories and workspaces
+  without an initial Git commit.
+- Dashboard cards and Studio consume validated, coalesced graph generations and
+  reject corrupt, incomplete, stale, or cross-scope stream updates.
+- The Graph opens in 3D with persistent three-axis orbit, automatic motion, and
+  deterministic Architecture, Globe, Brain, Constellation, and Workspai
+  projections over the same canonical entities and relationships.
+- The Workspai projection follows the official logo geometry, while Brain and
+  Constellation use readable semantic layouts instead of decorative random
+  placement.
+- Governed export supports adaptive-palette GIF and high-quality H.264 MP4 with
+  user-selected pace, full multi-angle coverage, dashboard-matched framing, and
+  the selected graph projection.
+- Dense Graph controls and evidence detail are compacted so the interactive
+  visualization remains visible near the top of the dashboard.
+
+Compatibility:
+
+- VS Code 1.106.0+
+- Workspai CLI 0.64.0+
+- RapidKit Core 0.6.0 only for Python-backed kits/modules
+
+[Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.44.0/releases/RELEASE_NOTES_v0.44.0.md)
+
+Release posture: `governed-repair-and-immersive-graph-intelligence`
+
+Publication status: published.
+
 ## v0.43.0 (August 22, 2026)
 
 ### Conversational Create and embedded CLI authority

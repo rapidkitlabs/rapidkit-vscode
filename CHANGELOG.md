@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-08-23
+
+### Added
+
+- Added deterministic 360° Workspace Graph GIF export. The extension freezes
+  the current bounded graph revision, captures a 60-frame multi-axis 3D path
+  with depth and architecture-ring cues, encodes a seamless looping GIF locally,
+  and saves it through a governed VS Code dialog.
+- Upgraded the Graph camera from two-axis yaw/pitch movement to a persistent
+  three-axis orbit with roll. Circular pointer gestures rotate the graph plane,
+  while Shift-drag and Q/E provide explicit roll control.
+- Made 3D the default Graph view and expanded GIF capture to a smooth 60-frame
+  multi-axis camera path: two complete azimuth revolutions, complementary upper
+  and lower elevations, and restrained bidirectional roll. Export no longer
+  inherits a single fixed viewing latitude from the interactive camera.
+- Raised Graph GIF output to a presentation-ready 960×540 canvas and slowed the
+  complete orbit to six seconds. Every frame now fits the full projected graph
+  into a safe margin, while collision-aware labels, quieter depth edges, and a
+  subtle branded backdrop keep exports readable across documentation and social
+  platforms.
+- Added persistent Architecture, Globe, Brain, and Constellation 3D projections.
+  Each preset deterministically reprojects the same bounded canonical entities
+  and relationships, and 360° GIF export now captures the workspace-selected
+  shape instead of reverting to a separate export layout.
+- Replaced the fixed RGB332 GIF palette with a frame-derived adaptive palette,
+  perceptual color matching, and restrained ordered dithering. Dark VS Code
+  surfaces, antialiased nodes, labels, and graph accent colors now remain much
+  closer to the live dashboard, while the 360° orbit uses a calm 12-second
+  presentation pace.
+- Rebuilt the Brain projection as an anatomical semantic silhouette: a folded
+  elongated cortex with separated hemispheres, a corrugated lower-rear
+  cerebellum, and a tapered control-plane stem. Brain-specific gyral guides now
+  replace architecture rings, and its default camera opens on a recognizable
+  side profile while retaining full three-axis orbit and GIF capture.
+- Added an export-time GIF pace selector with Fast (6s), Standard (8.4s), Calm
+  (12s), and Slow (18s) loops. The selected delay is bound to the immutable
+  capture request while all presets retain the same 60-angle coverage.
+- Matched GIF framing more closely to the live dashboard by reducing capture
+  padding from 12% to a still-safe 6%, giving dense nodes more effective pixels.
+  Ordered dithering is now limited to brighter chromatic pixels so neutral dark
+  surfaces remain smooth instead of acquiring a visible texture.
+- Added HQ 360° MP4 export for dashboard-faithful output. The selected semantic
+  shape and pace are rendered through the same deterministic 60-angle camera,
+  then encoded directly from true-color canvas frames through a high-bitrate
+  H.264 pipeline with deterministic timestamps and MP4 fast-start. The extension
+  validates the MP4 container, workspace scope, and 64 MB limit before presenting
+  a governed save dialog.
+- Rebuilt Constellation as deterministic project asterisms distributed through
+  real 3D depth instead of random clusters on a planar ring. Added a Workspai
+  projection sampled from the official SVG silhouette, including its detached
+  signal square, official purple-to-teal color progression, front-facing camera,
+  semantic outline, persisted selection, and identical dashboard/GIF/MP4 layout.
+- Matched the capture backdrop to the live 3D surface: the same centered cyan
+  glow, lower-left violet accent, dark editor base, and restrained edge vignette
+  are now rasterized into GIF and HQ video frames instead of using the earlier
+  stronger blue export-only treatment.
+- Enabled dashboard Auto Orbit by default and raised its rotation rate by about
+  44% for a more legible sense of depth, while preserving the operating-system
+  reduced-motion preference.
+- Moved Graph quality, coverage, provider, binding, and diagnostics detail behind
+  one compact evidence summary so the interactive graph remains above the
+  initial dashboard fold without removing governed detail.
+
+### Fixed
+
+- Made 360° GIF export visibly acknowledge every click, including WebGL2
+  fallback, frame progress, encoding, validation, and save failures. The Export
+  menu no longer exposes a silently disabled GIF action.
+- Removed WebGL2 as a functional dependency for 3D Graph and GIF export. VS Code
+  windows without GPU-backed WebGL now use the same radial layout, three-axis
+  camera, depth sorting, labels, orbit guides, and capture pipeline through a
+  Canvas2D software renderer.
+
+- Routed missing or stale project lifecycle evidence through project-scoped
+  governed `init`, `test`, `build`, and `start` producers before Verify, so
+  Sidebar Studio, card handoff, and native Chat advance the causal queue from
+  fresh CLI artifacts instead of falling back to generic commands.
+- Reserved `run-workspace-command` for project-native tools. Workspai commands
+  are rejected across package runners and must use the registered command
+  surface backed by the bundled CLI runtime.
+- Made source fingerprints independent of Workspai reports, repair state,
+  generated caches, dependencies, and build output. Autonomous diagnostics now
+  work in repositories without a first commit and no longer stop on large
+  `.workspai/cache` files or evidence refreshes.
+
 ## [0.43.0] - 2026-08-22
 
 ### Added

@@ -21,6 +21,8 @@ import type {
   WorkspaceGraphRecordingFrameInput,
   WorkspaceGraphRecordingStartInput,
   WorkspaceGraphRecordingStopInput,
+  WorkspaceGraphGifExportInput,
+  WorkspaceGraphVideoExportInput,
 } from '../../contracts/workspaceGraphRecording.js';
 
 export type DashboardLifecycleMessageHost = {
@@ -35,6 +37,8 @@ export type DashboardLifecycleMessageHost = {
   appendWorkspaceGraphRecordingFrame?: (input: WorkspaceGraphRecordingFrameInput) => Promise<void>;
   stopWorkspaceGraphRecording?: (input: WorkspaceGraphRecordingStopInput) => Promise<void>;
   openWorkspaceGraphRecording?: () => Promise<void>;
+  exportWorkspaceGraphGif?: (input: WorkspaceGraphGifExportInput) => Promise<void>;
+  exportWorkspaceGraphVideo?: (input: WorkspaceGraphVideoExportInput) => Promise<void>;
   postDashboardEvidenceRefreshFailed?: (input: {
     reason: string;
     cardIds?: DashboardEvidenceRefreshContext['cardIds'];
@@ -59,6 +63,8 @@ const DASHBOARD_LIFECYCLE_WEBVIEW_COMMANDS = new Set([
   'appendWorkspaceGraphRecordingFrame',
   'stopWorkspaceGraphRecording',
   'openWorkspaceGraphRecording',
+  'exportWorkspaceGraphGif',
+  'exportWorkspaceGraphVideo',
 ]);
 
 function failureMessage(error: unknown): string {
@@ -164,7 +170,7 @@ export async function tryDispatchDashboardLifecycleWebviewMessage(
       if (sessionId) {
         await host.stopWorkspaceGraphRecording?.({
           sessionId,
-          webmDataUrl: readStringField(payload, 'webmDataUrl'),
+          mp4DataUrl: readStringField(payload, 'mp4DataUrl'),
         });
       }
       break;
@@ -172,6 +178,60 @@ export async function tryDispatchDashboardLifecycleWebviewMessage(
     case 'openWorkspaceGraphRecording':
       await host.openWorkspaceGraphRecording?.();
       break;
+    case 'exportWorkspaceGraphGif': {
+      const payload = getWebviewMessageDataRecord({ command, data });
+      const workspacePath = readTrimmedStringField(payload, 'workspacePath');
+      const revision = readTrimmedStringField(payload, 'revision');
+      const gifDataUrl = readStringField(payload, 'gifDataUrl');
+      const width = readNumberField(payload, 'width');
+      const height = readNumberField(payload, 'height');
+      const frameCount = readNumberField(payload, 'frameCount');
+      if (workspacePath && revision && gifDataUrl && width && height && frameCount) {
+        try {
+          await host.exportWorkspaceGraphGif?.({
+            workspacePath,
+            revision,
+            gifDataUrl,
+            width,
+            height,
+            frameCount,
+          });
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Workspace Graph GIF export failed: ${failureMessage(error)}`
+          );
+        }
+      }
+      break;
+    }
+    case 'exportWorkspaceGraphVideo': {
+      const payload = getWebviewMessageDataRecord({ command, data });
+      const workspacePath = readTrimmedStringField(payload, 'workspacePath');
+      const revision = readTrimmedStringField(payload, 'revision');
+      const mp4DataUrl = readStringField(payload, 'mp4DataUrl');
+      const width = readNumberField(payload, 'width');
+      const height = readNumberField(payload, 'height');
+      const frameCount = readNumberField(payload, 'frameCount');
+      const durationMs = readNumberField(payload, 'durationMs');
+      if (workspacePath && revision && mp4DataUrl && width && height && frameCount && durationMs) {
+        try {
+          await host.exportWorkspaceGraphVideo?.({
+            workspacePath,
+            revision,
+            mp4DataUrl,
+            width,
+            height,
+            frameCount,
+            durationMs,
+          });
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Workspace Graph HQ video export failed: ${failureMessage(error)}`
+          );
+        }
+      }
+      break;
+    }
     case 'requestDashboardEvidence': {
       const payload = getWebviewMessageDataRecord({ command, data });
       await sendDashboardEvidenceOrPostFailure(host, {

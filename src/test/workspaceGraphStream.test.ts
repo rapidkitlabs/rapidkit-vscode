@@ -137,4 +137,75 @@ describe('workspace graph stream reducer', () => {
       payload: { replay: true },
     });
   });
+
+  it('upserts newly discovered providers from CLI deltas', () => {
+    const hydrated = applyWorkspaceGraphStreamEvent(null, snapshot);
+    if (hydrated.status !== 'applied') throw new Error('fixture hydration failed');
+    const result = applyWorkspaceGraphStreamEvent(
+      hydrated.state,
+      event(
+        'graph.delta',
+        {
+          entitiesAdded: [],
+          entitiesUpdated: [],
+          entitiesRemoved: [],
+          relationsAdded: [],
+          relationsUpdated: [],
+          relationsRemoved: [],
+          proofsAdded: [],
+          proofsUpdated: [],
+          proofsRemoved: [],
+          providersUpdated: [{ id: 'openapi', status: 'passed' }],
+          diagnostics: [],
+        },
+        {
+          baseRevision: 1,
+          revision: 2,
+          baseModelHash: hash('a'),
+          baseGraphHash: hash('b'),
+          graphHash: hash('d'),
+        }
+      )
+    );
+    expect(result.status).toBe('applied');
+    if (result.status === 'applied') expect(result.state.providers.has('openapi')).toBe(true);
+  });
+
+  it('applies quality and proof invalidation events instead of silently ignoring them', () => {
+    const proofSnapshot = event('graph.snapshot', {
+      graph: {
+        entities: [{ id: 'project:a', proofIds: ['proof:a'] }],
+        relations: [],
+        proofs: [{ id: 'proof:a' }],
+        providers: [],
+        quality: { entityCount: 1 },
+        diagnostics: [],
+      },
+    });
+    const hydrated = applyWorkspaceGraphStreamEvent(null, proofSnapshot);
+    if (hydrated.status !== 'applied') throw new Error('fixture hydration failed');
+    const quality = applyWorkspaceGraphStreamEvent(
+      hydrated.state,
+      event(
+        'graph.quality-changed',
+        { quality: { entityCount: 2 }, diagnostics: [] },
+        { revision: 2 }
+      )
+    );
+    expect(quality.status).toBe('applied');
+    if (quality.status !== 'applied') return;
+    const invalidated = applyWorkspaceGraphStreamEvent(
+      quality.state,
+      event(
+        'graph.proof-invalidated',
+        { proofIds: ['proof:a'], reason: 'source changed' },
+        { revision: 3 }
+      )
+    );
+    expect(invalidated.status).toBe('applied');
+    if (invalidated.status === 'applied') {
+      expect(invalidated.state.proofs.has('proof:a')).toBe(false);
+      expect(invalidated.state.entities.get('project:a')?.proofIds).toEqual([]);
+    }
+  });
 });

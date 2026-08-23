@@ -187,6 +187,18 @@ function normalizedExecutableName(executable: string): string {
     .replace(/\.cmd$|\.exe$/i, '');
 }
 
+const WORKSPAI_PACKAGE_TOKEN = /^(?:workspai|wspai)(?:@[^\s]+)?$/i;
+
+function invokesWorkspaiCli(executableName: string, args: readonly string[]): boolean {
+  if (executableName === 'workspai' || executableName === 'wspai') {
+    return true;
+  }
+  if (!['npx', 'pnpx', 'bunx', 'npm', 'pnpm', 'yarn', 'bun'].includes(executableName)) {
+    return false;
+  }
+  return args.some((arg) => WORKSPAI_PACKAGE_TOKEN.test(arg.trim()));
+}
+
 function validateToken(token: string, label: string): void {
   if (!token || token.length > 2_000 || /[\0\r\n]/.test(token)) {
     throw new Error(`Studio workspace command ${label} is invalid.`);
@@ -360,6 +372,11 @@ export function resolveStudioWorkspaceCommandPlan(input: {
   }
 
   const executableName = normalizedExecutableName(request.executable);
+  if (invokesWorkspaiCli(executableName, request.args)) {
+    throw new Error(
+      'Workspai commands are not allowed through run-workspace-command. Use run-governed-command so the registered command, selected scope, bundled CLI runtime, evidence refresh, and verification remain controller-owned.'
+    );
+  }
   const projectLocalExecutable = /^\.{1,2}[\\/]/.test(request.executable);
   if (path.isAbsolute(request.executable)) {
     throw new Error('Absolute executable paths are not allowed in autonomous workspace commands.');
@@ -382,17 +399,11 @@ export function resolveStudioWorkspaceCommandPlan(input: {
     args: request.args,
   });
 
-  const workspaiCommand =
-    ['workspai', 'wspai'].includes(executableName) ||
-    (['npx', 'pnpx', 'bunx'].includes(executableName) &&
-      request.args.some((arg) => arg === 'workspai' || arg === 'wspai'));
-  // Canonical producers can legitimately model large polyglot workspaces for
-  // several minutes. A generic diagnostic keeps the tighter budget, while a
-  // local Workspai invocation receives the same upper bound as Studio's
-  // governed producers. This prevents a timeout from surfacing as the
-  // misleading "no exit code" failure.
+  // Project validation can legitimately run for several minutes. Workspai
+  // producers never reach this generic executor; the governed registry and
+  // bundled runtime own their independent lifecycle budget.
   const longRunningPurpose = ['test', 'build', 'dependency'].includes(request.purpose);
-  const defaultTimeoutMs = workspaiCommand || longRunningPurpose ? 600_000 : 120_000;
+  const defaultTimeoutMs = longRunningPurpose ? 600_000 : 120_000;
   const timeoutMs = Math.min(Math.max(request.timeoutMs ?? defaultTimeoutMs, 1_000), 600_000);
   return {
     executable: request.executable,

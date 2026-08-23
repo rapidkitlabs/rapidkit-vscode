@@ -15,9 +15,9 @@ pngFixture.writeUInt32BE(1280, 16);
 pngFixture.writeUInt32BE(720, 20);
 pngFixture.write('IEND', 37, 'ascii');
 const PNG = `data:image/png;base64,${pngFixture.toString('base64')}`;
-const WEBM = `data:video/webm;base64,${Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x00]).toString(
-  'base64'
-)}`;
+const MP4 = `data:video/mp4;base64,${Buffer.from([
+  0x00, 0x00, 0x00, 0x0c, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
+]).toString('base64')}`;
 
 function projection(revision: string, entityIds: string[]): WorkspaceGraphProjection {
   return {
@@ -108,9 +108,9 @@ describe('Workspace Graph recording', () => {
     expect(duplicate.frameCount).toBe(2);
     expect(duplicate.message).toContain('Duplicate revision');
 
-    const completed = await manager.stop({ sessionId, webmDataUrl: WEBM });
+    const completed = await manager.stop({ sessionId, mp4DataUrl: MP4 });
     expect(completed).toMatchObject({ status: 'ready', frameCount: 2 });
-    expect(completed.webmPath).toMatch(/graph-story\.webm$/);
+    expect(completed.mp4Path).toMatch(/graph-story\.mp4$/);
     const manifest = JSON.parse(await fs.readFile(completed.manifestPath as string, 'utf8')) as {
       schemaVersion: string;
       status: string;
@@ -125,7 +125,7 @@ describe('Workspace Graph recording', () => {
       outputs: {
         manifest: 'recording.json',
         frames: 'frames',
-        webm: 'graph-story.webm',
+        mp4: 'graph-story.mp4',
       },
     });
     expect(manifest.frames.map((entry: { path: string }) => entry.path)).toEqual([

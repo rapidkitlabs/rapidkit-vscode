@@ -17,7 +17,8 @@ export class WorkspaceGraphProjectionCoalescer<T> {
 
   public constructor(
     private readonly emit: (value: T, stats: WorkspaceGraphProjectionCoalescerStats) => void,
-    private readonly intervalMs = 80
+    private readonly intervalMs = 80,
+    private readonly mergePending?: (current: T, incoming: T) => T
   ) {}
 
   public push(value: T): void {
@@ -28,7 +29,10 @@ export class WorkspaceGraphProjectionCoalescer<T> {
     if (this.hasPending) {
       this.statsValue.coalesced += 1;
     }
-    this.pending = value;
+    this.pending =
+      this.hasPending && this.pending && this.mergePending
+        ? this.mergePending(this.pending, value)
+        : value;
     this.hasPending = true;
     if (!this.timer) {
       this.timer = setTimeout(() => this.flush(), this.intervalMs);

@@ -50,7 +50,9 @@ describe('Workspace Graph dashboard UX', () => {
     expect(source).toContain('Record');
     expect(source).toContain('captureWorkspaceGraphSurface');
     expect(source).toContain('describeWorkspaceGraphRecordingChange');
-    expect(source).toContain('WorkspaceGraphWebmRecorder');
+    expect(source).toContain('WorkspaceGraphMp4Recorder');
+    expect(source).toContain('HQ 360° MP4');
+    expect(source).toContain('onExportVideo');
     expect(source).toContain('stableFrameDelayMs');
     expect(source).not.toContain('readFile');
     expect(source).not.toContain('child_process');

@@ -2423,14 +2423,15 @@
 /* Workspace Graph Explorer — projection state only; canonical semantics stay in the CLI. */
 .workspace-graph-explorer {
   display: grid;
-  gap: 12px;
-  padding: 14px 16px 28px;
+  gap: 8px;
+  padding: 10px 12px 24px;
 }
 
 .workspace-graph-explorer__header,
 .workspace-graph-explorer__toolbar,
 .workspace-graph-explorer__quality,
 .workspace-graph-explorer__coverage,
+.workspace-graph-explorer__insights,
 .workspace-graph-explorer__intelligence,
 .workspace-graph-explorer__body {
   border: 1px solid var(--vscode-panel-border);
@@ -2442,7 +2443,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 15px 16px;
+  padding: 10px 12px;
   border-radius: 10px;
 }
 
@@ -2453,14 +2454,20 @@
 }
 
 .workspace-graph-explorer__header h2 {
-  margin-top: 3px;
-  font-size: 17px;
+  margin-top: 2px;
+  font-size: 16px;
 }
 
 .workspace-graph-explorer__header p {
-  margin-top: 5px;
+  margin-top: 3px;
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
+}
+
+.workspace-graph-explorer__header small {
+  margin-right: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
 }
 
 .workspace-graph-explorer__eyebrow {
@@ -2495,6 +2502,39 @@
   gap: 7px;
   padding: 8px;
   border-radius: 8px;
+}
+
+.workspace-graph-explorer__insights {
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.workspace-graph-explorer__insights > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.workspace-graph-explorer__insights > summary span {
+  color: var(--vscode-foreground);
+  font-weight: 650;
+}
+
+.workspace-graph-explorer__insights > summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-graph-explorer__insights-content {
+  display: grid;
+  gap: 8px;
+  padding: 0 8px 8px;
 }
 
 .workspace-graph-explorer__search {
@@ -2644,7 +2684,7 @@
   top: calc(100% + 4px);
   right: 0;
   display: grid;
-  min-width: 110px;
+  min-width: 150px;
   padding: 5px;
   border: 1px solid var(--vscode-widget-border);
   border-radius: 6px;
@@ -2661,6 +2701,30 @@
 .workspace-graph-explorer__export button:hover {
   background: var(--vscode-menu-selectionBackground);
   color: var(--vscode-menu-selectionForeground);
+}
+
+.workspace-graph-explorer__gif-pace {
+  display: grid;
+  gap: 4px;
+  margin: 3px 4px 5px;
+  padding: 6px;
+  border-top: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+  border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+  color: var(--vscode-menu-foreground);
+  font-size: 10px;
+}
+
+.workspace-graph-explorer__gif-pace span {
+  color: var(--vscode-descriptionForeground);
+}
+
+.workspace-graph-explorer__gif-pace select {
+  min-height: 25px;
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  font-size: 10px;
 }
 
 .workspace-graph-explorer__quality {
@@ -2881,6 +2945,42 @@
   pointer-events: none;
 }
 
+.workspace-graph-webgl__hint {
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  bottom: 10px;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 72%, transparent);
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.workspace-graph-gif-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 34%, var(--vscode-panel-border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 70%, transparent);
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.workspace-graph-gif-status button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .workspace-graph-webgl canvas:active {
   cursor: grabbing;
 }
@@ -2920,6 +3020,26 @@
   color: var(--vscode-button-secondaryForeground);
   font: inherit;
   cursor: pointer;
+}
+
+.workspace-graph-webgl__chrome label {
+  display: inline-flex;
+}
+
+.workspace-graph-webgl__chrome select {
+  max-width: 112px;
+  padding: 3px 22px 3px 8px;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-graph-webgl__chrome select:focus-visible {
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder);
 }
 
 .workspace-graph-explorer__body.is-presentation .workspace-graph-webgl {

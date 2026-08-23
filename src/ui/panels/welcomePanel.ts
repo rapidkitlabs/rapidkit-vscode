@@ -95,6 +95,7 @@ import {
   tryDispatchIncidentStudioWebviewMessage,
   type IncidentStudioWebviewMessageHost,
 } from './welcomePanelIncidentStudioMessages';
+
 import {
   dispatchWelcomePanelWebviewMessage,
   runWelcomePanelOptionalMessageLane,
@@ -173,6 +174,22 @@ import {
   type WelcomePanelChatBrainHostFactoryBindings,
 } from './welcomePanelChatBrainHostFactories';
 import { type IncidentWorkspaceGraphSnapshot } from './welcomePanel.shared.js';
+
+function sanitizeWorkspaceGraphStreamDetail(
+  detail?: string,
+  workspacePath?: string | null
+): string | undefined {
+  if (!detail?.trim()) {
+    return undefined;
+  }
+  let sanitized = detail.trim();
+  if (workspacePath) {
+    sanitized = sanitized.split(workspacePath).join('$WORKSPACE');
+  }
+  return sanitized
+    .replace(/\b[A-Za-z]:[\\/][^\s,;)'"<>]+/g, '$LOCAL_PATH')
+    .replace(/(^|[\s("'=])\/(?!\/)[^\s,;)'"<>]+/g, '$1$LOCAL_PATH');
+}
 
 type MessagePayload = Record<string, unknown>;
 export class WelcomePanel {
@@ -1109,9 +1126,12 @@ export class WelcomePanel {
       ...buildWelcomePanelDashboardLifecycleMessageHost(this._dashboardHostBindings(), () =>
         this._dashboardEvidenceHost()
       ),
-      startWorkspaceGraphStream: (workspacePath) =>
-        this._workspaceGraphStreamSupervisor.start(workspacePath),
+      startWorkspaceGraphStream: (workspacePath) => {
+        this._workspaceGraphStreamPath = path.resolve(workspacePath);
+        this._workspaceGraphStreamSupervisor.start(workspacePath);
+      },
       stopWorkspaceGraphStream: () => {
+        this._workspaceGraphStreamPath = null;
         this._workspaceGraphProjectionCoalescer.clear();
         this._workspaceGraphStreamSupervisor.stop();
       },
@@ -1169,6 +1189,95 @@ export class WelcomePanel {
         if (outputPath) {
           await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(outputPath));
         }
+      },
+      exportWorkspaceGraphGif: async (input) => {
+        const selectedWorkspacePath = this._resolveTelemetryWorkspacePath();
+        if (
+          !selectedWorkspacePath ||
+          path.resolve(selectedWorkspacePath) !== path.resolve(input.workspacePath)
+        ) {
+          throw new Error('GIF export target does not match the selected Workspai workspace.');
+        }
+        const prefix = 'data:image/gif;base64,';
+        if (!input.gifDataUrl.startsWith(prefix)) {
+          throw new Error('The Webview did not provide a valid GIF payload.');
+        }
+        const gif = Buffer.from(input.gifDataUrl.slice(prefix.length), 'base64');
+        if (gif.length < 14 || gif.subarray(0, 6).toString('ascii') !== 'GIF89a') {
+          throw new Error('The generated graph export is not a valid GIF89a stream.');
+        }
+        if (gif.length > 32 * 1024 * 1024) {
+          throw new Error('The generated graph GIF exceeds the 32 MB export limit.');
+        }
+        const revision = input.revision.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 48);
+        const outputUri = await vscode.window.showSaveDialog({
+          title: 'Export Workspace Graph 360° GIF',
+          saveLabel: 'Export GIF',
+          defaultUri: vscode.Uri.file(
+            path.join(input.workspacePath, `workspace-graph-360-${revision || 'latest'}.gif`)
+          ),
+          filters: { 'Animated GIF': ['gif'] },
+        });
+        if (!outputUri) {
+          return;
+        }
+        await vscode.workspace.fs.writeFile(outputUri, gif);
+        void vscode.window
+          .showInformationMessage(
+            `Exported ${input.frameCount}-frame Workspace Graph GIF (${input.width}×${input.height}).`,
+            'Reveal'
+          )
+          .then((selection) => {
+            if (selection === 'Reveal') {
+              void vscode.commands.executeCommand('revealFileInOS', outputUri);
+            }
+          });
+      },
+      exportWorkspaceGraphVideo: async (input) => {
+        const selectedWorkspacePath = this._resolveTelemetryWorkspacePath();
+        if (
+          !selectedWorkspacePath ||
+          path.resolve(selectedWorkspacePath) !== path.resolve(input.workspacePath)
+        ) {
+          throw new Error('HQ video export target does not match the selected Workspai workspace.');
+        }
+        const prefixPattern = /^data:video\/mp4(?:;codecs=[^;,]+)?;base64,/i;
+        const match = input.mp4DataUrl.match(prefixPattern);
+        if (!match) {
+          throw new Error('The Webview did not provide a valid MP4 payload.');
+        }
+        const mp4 = Buffer.from(input.mp4DataUrl.slice(match[0].length), 'base64');
+        if (mp4.length < 12 || mp4.subarray(4, 8).toString('ascii') !== 'ftyp') {
+          throw new Error(
+            'The generated HQ graph export is not a valid ISO Base Media MP4 stream.'
+          );
+        }
+        if (mp4.length > 64 * 1024 * 1024) {
+          throw new Error('The generated HQ graph video exceeds the 64 MB export limit.');
+        }
+        const revision = input.revision.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 48);
+        const outputUri = await vscode.window.showSaveDialog({
+          title: 'Export Workspace Graph HQ 360° Video',
+          saveLabel: 'Export MP4',
+          defaultUri: vscode.Uri.file(
+            path.join(input.workspacePath, `workspace-graph-360-hq-${revision || 'latest'}.mp4`)
+          ),
+          filters: { 'MP4 Video': ['mp4'] },
+        });
+        if (!outputUri) {
+          return;
+        }
+        await vscode.workspace.fs.writeFile(outputUri, mp4);
+        void vscode.window
+          .showInformationMessage(
+            `Exported true-color Workspace Graph video (${input.width}×${input.height}, ${(input.durationMs / 1000).toFixed(1)}s).`,
+            'Reveal'
+          )
+          .then((selection) => {
+            if (selection === 'Reveal') {
+              void vscode.commands.executeCommand('revealFileInOS', outputUri);
+            }
+          });
       },
     };
   }
@@ -1313,17 +1422,52 @@ export class WelcomePanel {
   private _systemGraphWatcherByPath = new Map<string, ProjectSystemGraphWatcherHandle>();
   private _dashboardEvidenceSendGeneration = 0;
   private _dashboardEvidenceWatcher?: WelcomePanelEvidenceWatcher;
+  private _workspaceGraphStreamPath: string | null = null;
   private readonly _workspaceGraphProjectionCoalescer = new WorkspaceGraphProjectionCoalescer<{
     event: WorkspaceGraphStreamEnvelope;
     state: WorkspaceGraphStreamState;
-  }>(({ event, state }, streamStats) => {
+    focusEntityIds: string[];
+  }>(
+    ({ state, focusEntityIds }, streamStats) => {
+      const projection = buildWorkspaceGraphProjection(
+        {
+          schemaVersion: 'workspace-knowledge-graph.v1',
+          generatedAt: new Date().toISOString(),
+          source: state.source ?? { hash: state.modelHash },
+          workspace: state.workspace ?? {},
+          projectTopology: state.projectTopology ?? {},
+          entities: [...state.entities.values()],
+          relations: [...state.relations.values()],
+          proofs: [...state.proofs.values()],
+          providers: [...state.providers.values()],
+          quality: state.quality,
+          diagnostics: state.diagnostics,
+        },
+        { focusEntityIds, revision: state.graphHash }
+      );
+      this._postWebviewMessage('workspaceGraphProjectionLive', {
+        projection,
+        revision: state.revision,
+        generation: state.generation,
+        sessionId: state.sessionId,
+        workspacePath: this._workspaceGraphStreamPath,
+        streamStats,
+      });
+    },
+    80,
+    (current, incoming) => ({
+      ...incoming,
+      focusEntityIds: [...new Set([...current.focusEntityIds, ...incoming.focusEntityIds])],
+    })
+  );
+  private _workspaceGraphFocusIds(event: WorkspaceGraphStreamEnvelope): string[] {
     const changedRecords = [
       event.payload.entitiesAdded,
       event.payload.entitiesUpdated,
       event.payload.relationsAdded,
       event.payload.relationsUpdated,
     ].flatMap((value) => (Array.isArray(value) ? value : []));
-    const focusEntityIds = changedRecords.flatMap((value) => {
+    return changedRecords.flatMap((value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return [];
       }
@@ -1332,33 +1476,20 @@ export class WelcomePanel {
         (entry): entry is string => typeof entry === 'string' && entry.length > 0
       );
     });
-    const projection = buildWorkspaceGraphProjection(
-      {
-        schemaVersion: 'workspace-knowledge-graph.v1',
-        generatedAt: new Date().toISOString(),
-        source: { hash: state.graphHash },
-        entities: [...state.entities.values()],
-        relations: [...state.relations.values()],
-        proofs: [...state.proofs.values()],
-        providers: [...state.providers.values()],
-        quality: state.quality,
-        diagnostics: state.diagnostics,
-      },
-      { focusEntityIds }
-    );
-    this._postWebviewMessage('workspaceGraphProjectionLive', {
-      projection,
-      revision: state.revision,
-      generation: state.generation,
-      sessionId: state.sessionId,
-      streamStats,
-    });
-  });
+  }
   private readonly _workspaceGraphRecordingManager = new WorkspaceGraphRecordingManager();
   private readonly _workspaceGraphStreamSupervisor = new WorkspaceGraphStreamSupervisor({
-    onEvent: (event, state) => this._workspaceGraphProjectionCoalescer.push({ event, state }),
+    onEvent: (event, state) =>
+      this._workspaceGraphProjectionCoalescer.push({
+        event,
+        state,
+        focusEntityIds: this._workspaceGraphFocusIds(event),
+      }),
     onStatus: (status, detail) =>
-      this._postWebviewMessage('workspaceGraphStreamStatus', { status, detail }),
+      this._postWebviewMessage('workspaceGraphStreamStatus', {
+        status,
+        detail: sanitizeWorkspaceGraphStreamDetail(detail, this._workspaceGraphStreamPath),
+      }),
     onMemorySample: (sample) => this._postWebviewMessage('workspaceGraphMemorySample', sample),
   });
   private _doctorTelemetryRefreshController = createDoctorTelemetryRefreshController({

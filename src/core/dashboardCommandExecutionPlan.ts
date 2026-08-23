@@ -57,6 +57,41 @@ export function preserveAllAgentConsumersForStudioRefresh(cliArgs: readonly stri
   return args;
 }
 
+const STUDIO_PROJECT_LIFECYCLE_COMMAND_IDS = new Set([
+  'workspaceRunInit',
+  'workspaceRunTest',
+  'workspaceRunBuild',
+  'workspaceRunStart',
+]);
+
+/** Bind lifecycle evidence production to the causal project selected by the
+ * CLI handoff. The model selects a registered command id, never an arbitrary
+ * scope string or a raw Workspai invocation. */
+export function bindStudioGovernedCommandScope(input: {
+  commandId: string;
+  cliArgs: readonly string[];
+  projectName?: string;
+  requireProjectScope?: boolean;
+}): string[] {
+  const args = [...input.cliArgs];
+  if (!STUDIO_PROJECT_LIFECYCLE_COMMAND_IDS.has(input.commandId)) {
+    return args;
+  }
+  const projectName = input.projectName?.trim();
+  if (!projectName && input.requireProjectScope) {
+    throw new Error(
+      `${input.commandId} requires one canonical project target before Studio can produce lifecycle evidence.`
+    );
+  }
+  if (projectName) {
+    args.push('--scope', `project:${projectName}`);
+  }
+  if (!args.includes('--json')) {
+    args.push('--json');
+  }
+  return args;
+}
+
 export type StudioGovernedCommandAttempt = {
   blockerSignature?: string;
   evidenceGeneration: string;

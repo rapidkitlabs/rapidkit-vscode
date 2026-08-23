@@ -69,6 +69,35 @@ describe('Studio workspace source fingerprint', () => {
     expect(after?.diff).not.toContain('asset.bin');
     expect(after?.fingerprint).not.toBe(before?.fingerprint);
   });
+
+  it('works before the first commit and excludes Workspai control-plane state', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-unborn-fingerprint-'));
+    roots.push(root);
+    await exec('git', ['init'], { cwd: root });
+    await fs.outputFile(path.join(root, 'src/index.ts'), 'export const value = 1;\n');
+    await fs.outputFile(
+      path.join(root, '.workspai/cache/node/npm-cache/archive.bin'),
+      Buffer.alloc(17 * 1024 * 1024)
+    );
+    await fs.outputJson(path.join(root, '.workspai/reports/workspace-run-last.json'), {
+      generatedAt: '2026-08-23T00:00:00.000Z',
+    });
+
+    const before = await fingerprintStudioWorkspaceSourceState({ workspacePath: root });
+    expect(before).not.toBeNull();
+    expect(before?.status).toContain('src/index.ts');
+    expect(before?.status).not.toContain('.workspai');
+
+    await fs.outputJson(path.join(root, '.workspai/reports/workspace-run-last.json'), {
+      generatedAt: '2026-08-23T00:01:00.000Z',
+    });
+    const evidenceRefresh = await fingerprintStudioWorkspaceSourceState({ workspacePath: root });
+    expect(evidenceRefresh?.fingerprint).toBe(before?.fingerprint);
+
+    await fs.writeFile(path.join(root, 'src/index.ts'), 'export const value = 2;\n');
+    const sourceEdit = await fingerprintStudioWorkspaceSourceState({ workspacePath: root });
+    expect(sourceEdit?.fingerprint).not.toBe(before?.fingerprint);
+  });
 });
 
 describe('Studio workspace search planning', () => {

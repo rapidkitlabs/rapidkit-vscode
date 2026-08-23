@@ -413,6 +413,8 @@ describe('welcomePanelDashboardLifecycleMessages', () => {
     const appendWorkspaceGraphRecordingFrame = vi.fn(async () => undefined);
     const stopWorkspaceGraphRecording = vi.fn(async () => undefined);
     const openWorkspaceGraphRecording = vi.fn(async () => undefined);
+    const exportWorkspaceGraphGif = vi.fn(async () => undefined);
+    const exportWorkspaceGraphVideo = vi.fn(async () => undefined);
     const host = {
       context: {} as never,
       sendDashboardEvidence: vi.fn(),
@@ -422,6 +424,8 @@ describe('welcomePanelDashboardLifecycleMessages', () => {
       appendWorkspaceGraphRecordingFrame,
       stopWorkspaceGraphRecording,
       openWorkspaceGraphRecording,
+      exportWorkspaceGraphGif,
+      exportWorkspaceGraphVideo,
     };
 
     await tryDispatchDashboardLifecycleWebviewMessage(host, 'startWorkspaceGraphRecording', {
@@ -453,6 +457,23 @@ describe('welcomePanelDashboardLifecycleMessages', () => {
       sessionId: 'session-1',
     });
     await tryDispatchDashboardLifecycleWebviewMessage(host, 'openWorkspaceGraphRecording', {});
+    await tryDispatchDashboardLifecycleWebviewMessage(host, 'exportWorkspaceGraphGif', {
+      workspacePath: '/ws',
+      revision: 'revision-1',
+      gifDataUrl: 'data:image/gif;base64,R0lGODlh',
+      width: 720,
+      height: 405,
+      frameCount: 36,
+    });
+    await tryDispatchDashboardLifecycleWebviewMessage(host, 'exportWorkspaceGraphVideo', {
+      workspacePath: '/ws',
+      revision: 'revision-1',
+      mp4DataUrl: 'data:video/mp4;codecs=avc1;base64,AAAAHGZ0eXBpc29t',
+      width: 960,
+      height: 540,
+      frameCount: 60,
+      durationMs: 12_000,
+    });
 
     expect(startWorkspaceGraphRecording).toHaveBeenCalledWith({
       workspacePath: '/ws',
@@ -469,9 +490,26 @@ describe('welcomePanelDashboardLifecycleMessages', () => {
     );
     expect(stopWorkspaceGraphRecording).toHaveBeenCalledWith({
       sessionId: 'session-1',
-      webmDataUrl: undefined,
+      mp4DataUrl: undefined,
     });
     expect(openWorkspaceGraphRecording).toHaveBeenCalledOnce();
+    expect(exportWorkspaceGraphGif).toHaveBeenCalledWith({
+      workspacePath: '/ws',
+      revision: 'revision-1',
+      gifDataUrl: 'data:image/gif;base64,R0lGODlh',
+      width: 720,
+      height: 405,
+      frameCount: 36,
+    });
+    expect(exportWorkspaceGraphVideo).toHaveBeenCalledWith({
+      workspacePath: '/ws',
+      revision: 'revision-1',
+      mp4DataUrl: 'data:video/mp4;codecs=avc1;base64,AAAAHGZ0eXBpc29t',
+      width: 960,
+      height: 540,
+      frameCount: 60,
+      durationMs: 12_000,
+    });
   });
 });
 

@@ -33,7 +33,7 @@ type RecordingManifest = {
   outputs: {
     manifest: string;
     frames: string;
-    webm?: string;
+    mp4?: string;
   };
   limits: typeof DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS;
   retainedBytes: number;
@@ -50,7 +50,7 @@ type ActiveRecording = {
 };
 
 const PNG_PREFIX = 'data:image/png;base64,';
-const WEBM_PATTERN = /^data:video\/webm(?:;codecs=[^;,]+)?;base64,/i;
+const MP4_PATTERN = /^data:video\/mp4(?:;codecs=[^;,]+)?;base64,/i;
 
 function decodeDataUrl(
   value: string,
@@ -125,7 +125,7 @@ function publicState(
   status: WorkspaceGraphRecordingState['status'],
   input?: {
     completedAt?: string;
-    webmPath?: string;
+    mp4Path?: string;
     message?: string;
   }
 ): WorkspaceGraphRecordingState {
@@ -142,7 +142,7 @@ function publicState(
     maxRetainedBytes: DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS.maxRetainedBytes,
     outputPath: active.rootPath,
     manifestPath: active.manifestPath,
-    webmPath: input?.webmPath,
+    mp4Path: input?.mp4Path,
     message: input?.message,
   };
 }
@@ -329,20 +329,23 @@ export class WorkspaceGraphRecordingManager {
     input: WorkspaceGraphRecordingStopInput
   ): Promise<WorkspaceGraphRecordingState> {
     const active = this.requireActive(input.sessionId);
-    let webmPath: string | undefined;
-    if (input.webmDataUrl) {
-      const webm = decodeDataUrl(
-        input.webmDataUrl,
-        WEBM_PATTERN,
-        DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS.maxWebmBytes,
-        [0x1a, 0x45, 0xdf, 0xa3]
+    let mp4Path: string | undefined;
+    if (input.mp4DataUrl) {
+      const mp4 = decodeDataUrl(
+        input.mp4DataUrl,
+        MP4_PATTERN,
+        DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS.maxMp4Bytes,
+        []
       );
-      if (webm.byteLength > DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS.maxWebmBytes) {
-        throw new Error('Workspace Graph WebM exceeds the output byte budget.');
+      if (mp4.byteLength < 12 || mp4.subarray(4, 8).toString('ascii') !== 'ftyp') {
+        throw new Error('Workspace Graph MP4 does not contain a valid ftyp box.');
       }
-      webmPath = path.join(active.rootPath, 'graph-story.webm');
-      await fs.writeFile(webmPath, webm, { flag: 'wx' });
-      active.manifest.outputs.webm = 'graph-story.webm';
+      if (mp4.byteLength > DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS.maxMp4Bytes) {
+        throw new Error('Workspace Graph MP4 exceeds the output byte budget.');
+      }
+      mp4Path = path.join(active.rootPath, 'graph-story.mp4');
+      await fs.writeFile(mp4Path, mp4, { flag: 'wx' });
+      active.manifest.outputs.mp4 = 'graph-story.mp4';
     }
     const completedAt = new Date().toISOString();
     active.manifest.status = 'completed';
@@ -350,7 +353,7 @@ export class WorkspaceGraphRecordingManager {
     await writeManifest(active);
     const state = publicState(active, 'ready', {
       completedAt,
-      webmPath,
+      mp4Path,
       message: active.manifest.frames.length
         ? `Graph story ready with ${active.manifest.frames.length} meaningful revision(s).`
         : 'Recording completed without a meaningful graph revision.',

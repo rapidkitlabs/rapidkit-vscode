@@ -8,12 +8,16 @@ import {
   runStudioWorkspaceCommand,
 } from './studioWorkspaceCommand.js';
 import { buildStudioUntrackedFileDiffs } from './studioWorkspaceChangeReview.js';
+import { isStudioModelOwnedSourcePath } from './studioWorkspacePathPolicy.js';
 
 const STUDIO_WORKSPACE_FILE_EXCLUDE =
   '{**/.git/**,**/node_modules/**,**/vendor/**,**/dist/**,**/build/**,**/target/**,**/.venv/**,**/.workspai/cache/**,**/.workspai/snapshots/**,**/*.tmp}';
 const MAX_FINGERPRINT_FILES = 2_000;
 const MAX_FINGERPRINT_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FINGERPRINT_TOTAL_BYTES = 128 * 1024 * 1024;
+
+export const STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE =
+  'Studio could not establish a bounded source fingerprint. Workspai control-plane artifacts and generated caches are excluded automatically; inspect oversized or unsupported source files before autonomous command execution.';
 
 export async function discoverStudioWorkspaceFiles(input: {
   workspacePath: string;
@@ -167,10 +171,6 @@ export async function fingerprintStudioWorkspaceSourceState(input: {
   workspacePath: string;
   projectPath?: string;
 }): Promise<{ fingerprint: string; status: string; diff: string } | null> {
-  const snapshot = await inspectStudioWorkspaceChanges(input);
-  if (snapshot.statusExitCode !== 0 || snapshot.diffExitCode !== 0) {
-    return null;
-  }
   const sourceRoot = input.projectPath?.trim() || input.workspacePath;
   const changedPathCommands = [
     ['diff', '--name-only', '-z'],
@@ -194,8 +194,19 @@ export async function fingerprintStudioWorkspaceSourceState(input: {
     ...new Set(
       changedPathResults.flatMap((result) => result.stdout.split('\0').filter(Boolean)).sort()
     ),
-  ];
+  ].filter(isStudioModelOwnedSourcePath);
   if (changedPaths.length > MAX_FINGERPRINT_FILES) {
+    return null;
+  }
+
+  // Fingerprint application source only. Workspai evidence, repair ledgers,
+  // caches, dependency trees, and build outputs are controller/generated
+  // state; a producer refresh must never masquerade as a source mutation.
+  const snapshot =
+    changedPaths.length > 0
+      ? await inspectStudioWorkspaceChanges({ ...input, paths: changedPaths })
+      : { status: '', diff: '', statusExitCode: 0, diffExitCode: 0 };
+  if (snapshot.statusExitCode !== 0 || snapshot.diffExitCode !== 0) {
     return null;
   }
 

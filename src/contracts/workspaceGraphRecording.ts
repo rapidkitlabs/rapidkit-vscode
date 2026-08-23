@@ -46,7 +46,7 @@ export type WorkspaceGraphRecordingState = {
   maxRetainedBytes: number;
   outputPath?: string;
   manifestPath?: string;
-  webmPath?: string;
+  mp4Path?: string;
   message?: string;
 };
 
@@ -58,14 +58,33 @@ export type WorkspaceGraphRecordingStartInput = {
 
 export type WorkspaceGraphRecordingStopInput = {
   sessionId: string;
-  webmDataUrl?: string;
+  mp4DataUrl?: string;
+};
+
+export type WorkspaceGraphGifExportInput = {
+  workspacePath: string;
+  revision: string;
+  gifDataUrl: string;
+  width: number;
+  height: number;
+  frameCount: number;
+};
+
+export type WorkspaceGraphVideoExportInput = {
+  workspacePath: string;
+  revision: string;
+  mp4DataUrl: string;
+  width: number;
+  height: number;
+  frameCount: number;
+  durationMs: number;
 };
 
 export const DEFAULT_WORKSPACE_GRAPH_RECORDING_LIMITS = Object.freeze({
   maxFrames: 180,
   maxFrameBytes: 6 * 1024 * 1024,
   maxRetainedBytes: 64 * 1024 * 1024,
-  maxWebmBytes: 32 * 1024 * 1024,
+  maxMp4Bytes: 64 * 1024 * 1024,
   maxDurationMs: 10 * 60 * 1000,
   stableFrameDelayMs: 420,
 });

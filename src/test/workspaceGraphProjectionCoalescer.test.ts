@@ -27,4 +27,24 @@ describe('WorkspaceGraphProjectionCoalescer', () => {
     vi.advanceTimersByTime(100);
     expect(emit).not.toHaveBeenCalled();
   });
+
+  it('can preserve accumulated focus metadata while retaining the newest graph state', () => {
+    vi.useFakeTimers();
+    const emit = vi.fn();
+    const coalescer = new WorkspaceGraphProjectionCoalescer(
+      emit,
+      50,
+      (current: { revision: number; ids: string[] }, incoming) => ({
+        ...incoming,
+        ids: [...new Set([...current.ids, ...incoming.ids])],
+      })
+    );
+    coalescer.push({ revision: 1, ids: ['a'] });
+    coalescer.push({ revision: 2, ids: ['b'] });
+    vi.advanceTimersByTime(50);
+    expect(emit).toHaveBeenCalledWith(
+      { revision: 2, ids: ['a', 'b'] },
+      expect.objectContaining({ coalesced: 1 })
+    );
+  });
 });

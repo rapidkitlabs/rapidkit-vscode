@@ -24,6 +24,8 @@ import {
   type WorkspaceGraphRecordingStartInput,
   type WorkspaceGraphRecordingState,
   type WorkspaceGraphRecordingStopInput,
+  type WorkspaceGraphGifExportInput,
+  type WorkspaceGraphVideoExportInput,
 } from '@workspai-contracts/workspaceGraphRecording';
 import {
   detectWorkspaceGraphRendererCapabilities,
@@ -32,11 +34,13 @@ import {
 import {
   captureWorkspaceGraphSurface,
   describeWorkspaceGraphRecordingChange,
-  WorkspaceGraphWebmRecorder,
+  WorkspaceGraphMp4Recorder,
 } from '@/lib/workspaceGraphRecording';
+import { workspaceGraphProjectScopeIds } from '@/lib/workspaceGraphScope';
 import { WorkspaiEmptyState } from './WorkspaiEmptyState';
 import { WorkspaceGraphCanvas } from './WorkspaceGraphCanvas';
 import { WorkspaceGraphWebgl } from './WorkspaceGraphWebgl';
+import { WORKSPACE_GRAPH_GIF_DEFAULTS, WORKSPACE_GRAPH_GIF_PACES } from '@/lib/workspaceGraphGif';
 
 type GraphMode = 'explore' | 'architecture';
 type GraphView = 'map' | '3d' | 'list';
@@ -130,6 +134,7 @@ export function WorkspaceGraphExplorer({
   evidence,
   liveGraph,
   streamStatus,
+  streamDetail,
   streamStats,
   memorySample,
   recordingState,
@@ -138,6 +143,8 @@ export function WorkspaceGraphExplorer({
   onRefresh,
   onSearchCanonical,
   onExport,
+  onExportGif,
+  onExportVideo,
   onRevealArtifact,
   onStartRecording,
   onAppendRecordingFrame,
@@ -147,6 +154,7 @@ export function WorkspaceGraphExplorer({
   evidence: DashboardEvidencePayload | null;
   liveGraph?: WorkspaceGraphProjection | null;
   streamStatus?: string;
+  streamDetail?: string | null;
   streamStats?: { received: number; emitted: number; coalesced: number } | null;
   memorySample?: {
     estimatedBytes: number;
@@ -158,8 +166,10 @@ export function WorkspaceGraphExplorer({
   workspacePath?: string;
   hasWorkspace: boolean;
   onRefresh: () => void;
-  onSearchCanonical: () => void;
+  onSearchCanonical: (query: string) => void;
   onExport: (format: 'jsonld' | 'graphml' | 'gexf') => void;
+  onExportGif: (input: WorkspaceGraphGifExportInput) => void;
+  onExportVideo: (input: WorkspaceGraphVideoExportInput) => void;
   onRevealArtifact: (path: string) => void;
   onStartRecording: (input: WorkspaceGraphRecordingStartInput) => void;
   onAppendRecordingFrame: (input: WorkspaceGraphRecordingFrameInput) => void;
@@ -183,23 +193,42 @@ export function WorkspaceGraphExplorer({
   const [project, setProject] = useState('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isolatedId, setIsolatedId] = useState<string | null>(null);
-  const [view, setView] = useState<GraphView>('map');
+  const [view, setView] = useState<GraphView>('3d');
   const [presentation, setPresentation] = useState(false);
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [recordingLocallyStopping, setRecordingLocallyStopping] = useState(false);
   const [recordingCaptureError, setRecordingCaptureError] = useState<string | null>(null);
+  const [gifExportRequest, setGifExportRequest] = useState<{
+    id: number;
+    revision: string;
+    delayCentiseconds: number;
+  } | null>(null);
+  const [videoExportRequest, setVideoExportRequest] = useState<{
+    id: number;
+    revision: string;
+    delayCentiseconds: number;
+  } | null>(null);
+  const [gifDelayCentiseconds, setGifDelayCentiseconds] = useState<number>(
+    WORKSPACE_GRAPH_GIF_DEFAULTS.delayCentiseconds
+  );
+  const orbitExportActive = Boolean(gifExportRequest || videoExportRequest);
+  const [gifExportMessage, setGifExportMessage] = useState<string | null>(null);
   const captureRootRef = useRef<HTMLDivElement | null>(null);
   const capturedGraphRef = useRef<WorkspaceGraphProjection | null>(null);
   const captureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const captureInFlightRef = useRef<Promise<void>>(Promise.resolve());
-  const webmRecorderRef = useRef<WorkspaceGraphWebmRecorder | null>(null);
+  const mp4RecorderRef = useRef<Promise<WorkspaceGraphMp4Recorder | null> | null>(null);
   const activeRecordingSessionRef = useRef<string | null>(null);
   const onAppendRecordingFrameRef = useRef(onAppendRecordingFrame);
   const onStopRecordingRef = useRef(onStopRecording);
   onAppendRecordingFrameRef.current = onAppendRecordingFrame;
   onStopRecordingRef.current = onStopRecording;
   const [rendererCapabilities] = useState(detectWorkspaceGraphRendererCapabilities);
-  const fallbackToMap = useCallback(() => setView('map'), []);
+  const fallbackToMap = useCallback(() => {
+    setView('map');
+    setGifExportRequest(null);
+    setGifExportMessage('VS Code could not initialize either 3D rendering backend.');
+  }, []);
   const renderer = resolveWorkspaceGraphRenderer(
     view === '3d' ? 'webgl3d' : view === 'map' ? 'canvas2d' : 'list',
     rendererCapabilities
@@ -232,16 +261,20 @@ export function WorkspaceGraphExplorer({
     }
     return ids;
   }, [graph, isolatedId]);
+  const projectScopeIds = useMemo(
+    () => (graph && project !== 'all' ? workspaceGraphProjectScopeIds(graph, project) : null),
+    [graph, project]
+  );
   const entities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return (graph?.entities ?? []).filter((entity) => {
       if (neighborhoodIds && !neighborhoodIds.has(entity.id)) return false;
       if (mode === 'architecture' && !ARCHITECTURE_KINDS.has(entity.kind)) return false;
       if (kind !== 'all' && entity.kind !== kind) return false;
-      if (project !== 'all' && entity.projectId !== project && entity.id !== project) return false;
+      if (projectScopeIds && !projectScopeIds.has(entity.id)) return false;
       return !normalizedQuery || entitySearchText(entity).includes(normalizedQuery);
     });
-  }, [graph, kind, mode, neighborhoodIds, project, query]);
+  }, [graph, kind, mode, neighborhoodIds, projectScopeIds, query]);
   const visibleIds = useMemo(() => new Set(entities.map((entity) => entity.id)), [entities]);
   const relations = useMemo(
     () =>
@@ -301,12 +334,19 @@ export function WorkspaceGraphExplorer({
     recordingState?.status === 'stopping';
 
   useEffect(() => {
+    if (selectedId && !graph?.entities.some((entity) => entity.id === selectedId)) {
+      setSelectedId(null);
+      setIsolatedId(null);
+    }
+  }, [graph, selectedId]);
+
+  useEffect(() => {
     const sessionId = recordingState?.sessionId;
     if (recordingState?.status === 'recording' && sessionId) {
       if (activeRecordingSessionRef.current !== sessionId) {
         activeRecordingSessionRef.current = sessionId;
         capturedGraphRef.current = null;
-        webmRecorderRef.current = WorkspaceGraphWebmRecorder.create();
+        mp4RecorderRef.current = WorkspaceGraphMp4Recorder.create();
         setPresentation(true);
         setRecordingCaptureError(null);
         setRecordingLocallyStopping(false);
@@ -350,7 +390,8 @@ export function WorkspaceGraphExplorer({
             return;
           }
           const frame = await captureWorkspaceGraphSurface(root);
-          await webmRecorderRef.current?.addFrame(frame.pngDataUrl);
+          const recorder = await mp4RecorderRef.current;
+          await recorder?.addFrame(frame.pngDataUrl);
           onAppendRecordingFrameRef.current({
             sessionId: recordingState.sessionId as string,
             revision: graph.revision,
@@ -388,13 +429,13 @@ export function WorkspaceGraphExplorer({
       ) {
         setRecordingLocallyStopping(true);
         void captureInFlightRef.current
-          .then(() => webmRecorderRef.current?.stop())
-          .then((webmDataUrl) => {
+          .then(async () => (await mp4RecorderRef.current)?.stop())
+          .then((mp4DataUrl) => {
             onStopRecording({
               sessionId: recordingState.sessionId as string,
-              webmDataUrl,
+              mp4DataUrl,
             });
-            webmRecorderRef.current = null;
+            mp4RecorderRef.current = null;
           });
       }
     };
@@ -423,10 +464,10 @@ export function WorkspaceGraphExplorer({
         clearTimeout(captureTimerRef.current);
       }
       void captureInFlightRef.current
-        .then(() => webmRecorderRef.current?.stop())
-        .then((webmDataUrl) => {
-          onStopRecordingRef.current({ sessionId, webmDataUrl });
-          webmRecorderRef.current = null;
+        .then(async () => (await mp4RecorderRef.current)?.stop())
+        .then((mp4DataUrl) => {
+          onStopRecordingRef.current({ sessionId, mp4DataUrl });
+          mp4RecorderRef.current = null;
         });
     };
   }, [recordingState?.sessionId, recordingState?.status]);
@@ -437,9 +478,9 @@ export function WorkspaceGraphExplorer({
     }
     setRecordingLocallyStopping(true);
     await captureInFlightRef.current;
-    const webmDataUrl = await webmRecorderRef.current?.stop().catch(() => undefined);
-    webmRecorderRef.current = null;
-    onStopRecording({ sessionId: recordingState.sessionId, webmDataUrl });
+    const mp4DataUrl = await (await mp4RecorderRef.current)?.stop().catch(() => undefined);
+    mp4RecorderRef.current = null;
+    onStopRecording({ sessionId: recordingState.sessionId, mp4DataUrl });
   }, [onStopRecording, recordingLocallyStopping, recordingState?.sessionId]);
 
   if (!hasWorkspace) {
@@ -486,12 +527,14 @@ export function WorkspaceGraphExplorer({
             {graph.total.entities} entities · {graph.total.relations} relationships ·{' '}
             {graph.total.proofs} proofs
           </p>
+          {graph.generatedAt ? <small>Generated · {graph.generatedAt}</small> : null}
           {streamStatus ? (
             <small>
               Live stream · {streamStatus}
               {streamStats?.coalesced ? ` · ${streamStats.coalesced} burst updates merged` : ''}
             </small>
           ) : null}
+          {streamDetail ? <small title={streamDetail}>Stream detail · {streamDetail}</small> : null}
         </div>
         <div className="workspace-graph-explorer__revision" title={graph.revision}>
           <ShieldCheck size={14} />
@@ -566,11 +609,14 @@ export function WorkspaceGraphExplorer({
               type="button"
               className={view === value ? 'is-active' : ''}
               aria-pressed={view === value}
-              disabled={value === '3d' && !rendererCapabilities.webgl2}
+              disabled={
+                orbitExportActive ||
+                (value === '3d' && !rendererCapabilities.webgl2 && !rendererCapabilities.canvas2d)
+              }
               onClick={() => setView(value)}
               title={
                 value === '3d' && !rendererCapabilities.webgl2
-                  ? '3D requires WebGL2 in the VS Code window'
+                  ? 'Using the software 3D renderer because WebGL2 is unavailable'
                   : undefined
               }
             >
@@ -581,7 +627,7 @@ export function WorkspaceGraphExplorer({
         <button
           type="button"
           className="ws-btn"
-          onClick={onSearchCanonical}
+          onClick={() => onSearchCanonical(query.trim())}
           title="Run bounded canonical graph search"
         >
           <FileSearch size={13} /> Search source
@@ -653,9 +699,81 @@ export function WorkspaceGraphExplorer({
             <button type="button" onClick={() => onExport('gexf')}>
               GEXF
             </button>
+            <label className="workspace-graph-explorer__gif-pace">
+              <span>GIF speed</span>
+              <select
+                value={gifDelayCentiseconds}
+                disabled={orbitExportActive}
+                onChange={(event) => setGifDelayCentiseconds(Number(event.target.value))}
+                aria-label="GIF orbit speed"
+              >
+                {WORKSPACE_GRAPH_GIF_PACES.map((pace) => (
+                  <option key={pace.id} value={pace.delayCentiseconds}>
+                    {pace.label} · {pace.durationSeconds}s
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={orbitExportActive}
+              onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open');
+                if (!rendererCapabilities.webgl2 && !rendererCapabilities.canvas2d) {
+                  setGifExportMessage(
+                    '360° GIF needs Canvas or WebGL support, but VS Code disabled both renderers.'
+                  );
+                  return;
+                }
+                setView('3d');
+                setGifExportMessage('Preparing the frozen graph revision for multi-axis capture…');
+                setGifExportRequest({
+                  id: Date.now(),
+                  revision: graph.revision,
+                  delayCentiseconds: gifDelayCentiseconds,
+                });
+              }}
+              title="Export the current bounded graph as a seamless 360° orbit"
+            >
+              {gifExportRequest ? 'Capturing GIF…' : '360° GIF'}
+            </button>
+            <button
+              type="button"
+              disabled={orbitExportActive}
+              onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open');
+                if (!rendererCapabilities.webgl2 && !rendererCapabilities.canvas2d) {
+                  setGifExportMessage(
+                    'HQ video needs Canvas or WebGL support, but VS Code disabled both renderers.'
+                  );
+                  return;
+                }
+                setView('3d');
+                setGifExportMessage('Preparing the true-color HQ 360° video…');
+                setVideoExportRequest({
+                  id: Date.now(),
+                  revision: graph.revision,
+                  delayCentiseconds: gifDelayCentiseconds,
+                });
+              }}
+              title="Export the selected 3D shape as a high-bitrate H.264 MP4 video"
+            >
+              {videoExportRequest ? 'Encoding HQ MP4…' : 'HQ 360° MP4'}
+            </button>
           </div>
         </details>
       </div>
+
+      {gifExportMessage ? (
+        <div className="workspace-graph-gif-status" role="status">
+          <span>{gifExportMessage}</span>
+          {!orbitExportActive ? (
+            <button type="button" onClick={() => setGifExportMessage(null)} aria-label="Dismiss">
+              ×
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {recordingState?.status === 'ready' || recordingState?.status === 'error' || isRecording ? (
         <div
@@ -682,134 +800,178 @@ export function WorkspaceGraphExplorer({
         </div>
       ) : null}
 
-      <div className="workspace-graph-explorer__quality" aria-label="Graph quality">
-        <span>Entity proof {qualityPercent(graph.quality.entityProofCoverageRatio)}</span>
-        <span>Relation proof {qualityPercent(graph.quality.relationProofCoverageRatio)}</span>
-        <span>Provider success {qualityPercent(graph.quality.providerSuccessRatio)}</span>
-        <span>{graph.diagnostics.length} diagnostic(s)</span>
-        <span>{graph.quality.conflictCount ?? 0} conflict(s)</span>
-        <span>{graph.quality.unknownCount ?? 0} unknown(s)</span>
-        {memorySample ? (
-          <span
-            className={memorySample.exceeded ? 'is-danger' : ''}
-            title={`${Math.round(memorySample.utilizationRatio * 100)}% of the retained graph memory budget`}
-          >
-            Memory {formatMemory(memorySample.estimatedBytes)} /{' '}
-            {formatMemory(memorySample.budgetBytes)}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="workspace-graph-explorer__coverage" aria-label="Graph coverage summary">
-        <article>
-          <span>Language coverage</span>
-          <strong>{languages.length || '—'}</strong>
+      <details className="workspace-graph-explorer__insights">
+        <summary>
+          <span>Graph health and evidence</span>
           <small>
-            {languages.length ? languages.join(' · ') : 'No language entities reported'}
+            Entity proof {qualityPercent(graph.quality.entityProofCoverageRatio)} · Relation proof{' '}
+            {qualityPercent(graph.quality.relationProofCoverageRatio)} · {graph.diagnostics.length}{' '}
+            diagnostic(s)
           </small>
-        </article>
-        <article>
-          <span>Runtime topology</span>
-          <strong>{runtimeUnits}</strong>
-          <small>
-            {projects.length} project cluster(s) · {graph.source?.scopes.length ?? 0} indexed
-            scope(s)
-          </small>
-        </article>
-        <article>
-          <span>Provider health</span>
-          <strong>{graph.providers.length}</strong>
-          <small>
-            {providerStatus.get('passed') ?? 0} passed · {providerStatus.get('partial') ?? 0}{' '}
-            partial · {providerStatus.get('skipped') ?? 0} skipped ·{' '}
-            {providerStatus.get('failed') ?? 0} failed
-          </small>
-        </article>
-        <article>
-          <span>Input fingerprint</span>
-          <strong>{graph.source?.strategy ?? 'not reported'}</strong>
-          <small>
-            {!graph.source?.scopes.length
-              ? 'No source scope metadata reported'
-              : graph.source.scopes.some((scope) => scope.truncated)
-                ? 'One or more source scopes are bounded'
-                : 'All reported source scopes are complete'}
-          </small>
-        </article>
-      </div>
-
-      {graph.providers.length > 0 || bindingCoverage.length > 0 || graph.diagnostics.length > 0 ? (
-        <details className="workspace-graph-explorer__intelligence">
-          <summary>Provider, binding, and diagnostic intelligence</summary>
-          <div className="workspace-graph-explorer__intelligence-grid">
-            {graph.providers.length > 0 ? (
-              <section>
-                <h3>Providers</h3>
-                {graph.providers.map((provider) => (
-                  <div key={provider.id} className={`is-${provider.status ?? 'unknown'}`}>
-                    <strong>{provider.id}</strong>
-                    <span>{provider.status ?? 'unknown'}</span>
-                    <small>
-                      {provider.discoveredEntities ?? 0} entities ·{' '}
-                      {provider.discoveredRelations ?? 0} relations · {provider.proofCount ?? 0}{' '}
-                      proofs
-                    </small>
-                    {provider.diagnostics.map((diagnostic) => (
-                      <small key={diagnostic}>{diagnostic}</small>
-                    ))}
-                  </div>
-                ))}
-              </section>
-            ) : null}
-            {bindingCoverage.length > 0 ? (
-              <section>
-                <h3>Semantic bindings</h3>
-                {bindingCoverage.map(([name, coverage]) => (
-                  <div key={name}>
-                    <strong>{readableMetricName(name)}</strong>
-                    <span>{qualityPercent(coverage.coverageRatio)}</span>
-                    <small>
-                      {coverage.boundCount}/{coverage.eligibleCount} bound · {coverage.unknownCount}{' '}
-                      unknown
-                    </small>
-                  </div>
-                ))}
-              </section>
-            ) : null}
-            {graph.source?.scopes.length ? (
-              <section>
-                <h3>Source scopes</h3>
-                {graph.source.scopes.map((scope) => (
-                  <div
-                    key={`${scope.kind}:${scope.id}`}
-                    className={scope.truncated ? 'is-warning' : ''}
-                  >
-                    <strong>{scope.id}</strong>
-                    <span>{scope.kind}</span>
-                    <small>
-                      {scope.strategy ?? 'unknown strategy'} · {scope.fileCount ?? 0}/
-                      {scope.fileLimit ?? '—'} files {scope.truncated ? '· bounded' : '· complete'}
-                    </small>
-                  </div>
-                ))}
-              </section>
-            ) : null}
-            {graph.diagnostics.length > 0 ? (
-              <section>
-                <h3>Diagnostics</h3>
-                {graph.diagnostics.map((diagnostic, index) => (
-                  <div key={`${diagnostic.code}:${index}`} className={`is-${diagnostic.severity}`}>
-                    <strong>{diagnostic.code}</strong>
-                    <span>{diagnostic.severity}</span>
-                    <small>{diagnostic.message}</small>
-                    {diagnostic.recommendation ? <small>{diagnostic.recommendation}</small> : null}
-                  </div>
-                ))}
-              </section>
+        </summary>
+        <div className="workspace-graph-explorer__insights-content">
+          <div className="workspace-graph-explorer__quality" aria-label="Graph quality">
+            <span>Entity proof {qualityPercent(graph.quality.entityProofCoverageRatio)}</span>
+            <span>Relation proof {qualityPercent(graph.quality.relationProofCoverageRatio)}</span>
+            <span>Provider success {qualityPercent(graph.quality.providerSuccessRatio)}</span>
+            <span>{graph.diagnostics.length} diagnostic(s)</span>
+            <span>{graph.quality.conflictCount ?? 0} conflict(s)</span>
+            <span>{graph.quality.unknownCount ?? 0} unknown(s)</span>
+            <span>Portable {graph.quality.portable === true ? 'yes' : 'unverified'}</span>
+            <span>
+              Secret values {graph.quality.secretValuesEmitted === false ? 'none' : 'unverified'}
+            </span>
+            {memorySample ? (
+              <span
+                className={memorySample.exceeded ? 'is-danger' : ''}
+                title={`${Math.round(memorySample.utilizationRatio * 100)}% of the retained graph memory budget`}
+              >
+                Memory {formatMemory(memorySample.estimatedBytes)} /{' '}
+                {formatMemory(memorySample.budgetBytes)}
+              </span>
             ) : null}
           </div>
-        </details>
-      ) : null}
+
+          <div className="workspace-graph-explorer__coverage" aria-label="Graph coverage summary">
+            <article>
+              <span>Language coverage</span>
+              <strong>{languages.length || '—'}</strong>
+              <small>
+                {languages.length ? languages.join(' · ') : 'No language entities reported'}
+              </small>
+            </article>
+            <article>
+              <span>Runtime topology</span>
+              <strong>{runtimeUnits}</strong>
+              <small>
+                {projects.length} project cluster(s) · {graph.source?.scopes.length ?? 0} indexed
+                scope(s)
+              </small>
+            </article>
+            <article>
+              <span>Provider health</span>
+              <strong>{graph.providers.length}</strong>
+              <small>
+                {providerStatus.get('passed') ?? 0} passed · {providerStatus.get('partial') ?? 0}{' '}
+                partial · {providerStatus.get('skipped') ?? 0} skipped ·{' '}
+                {providerStatus.get('failed') ?? 0} failed
+              </small>
+            </article>
+            <article>
+              <span>Input fingerprint</span>
+              <strong>{graph.source?.strategy ?? 'not reported'}</strong>
+              <small>
+                {!graph.source?.scopes.length
+                  ? 'No source scope metadata reported'
+                  : graph.source.scopes.some((scope) => scope.truncated)
+                    ? 'One or more source scopes are bounded'
+                    : 'All reported source scopes are complete'}
+              </small>
+            </article>
+          </div>
+
+          {graph.providers.length > 0 ||
+          bindingCoverage.length > 0 ||
+          graph.diagnostics.length > 0 ? (
+            <details className="workspace-graph-explorer__intelligence">
+              <summary>Provider, binding, and diagnostic intelligence</summary>
+              <div className="workspace-graph-explorer__intelligence-grid">
+                {graph.providers.length > 0 ? (
+                  <section>
+                    <h3>Providers</h3>
+                    {graph.providers.map((provider) => (
+                      <div key={provider.id} className={`is-${provider.status ?? 'unknown'}`}>
+                        <strong>{provider.id}</strong>
+                        <span>{provider.status ?? 'unknown'}</span>
+                        <small>
+                          {provider.discoveredEntities ?? 0} entities ·{' '}
+                          {provider.discoveredRelations ?? 0} relations · {provider.proofCount ?? 0}{' '}
+                          proofs
+                        </small>
+                        {provider.version || provider.permission ? (
+                          <small>
+                            {[provider.version ? `v${provider.version}` : '', provider.permission]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </small>
+                        ) : null}
+                        {provider.diagnostics.map((diagnostic) => (
+                          <small key={diagnostic}>{diagnostic}</small>
+                        ))}
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
+                {bindingCoverage.length > 0 ? (
+                  <section>
+                    <h3>Semantic bindings</h3>
+                    {bindingCoverage.map(([name, coverage]) => (
+                      <div key={name}>
+                        <strong>{readableMetricName(name)}</strong>
+                        <span>{qualityPercent(coverage.coverageRatio)}</span>
+                        <small>
+                          {coverage.boundCount}/{coverage.eligibleCount} bound ·{' '}
+                          {coverage.unknownCount} unknown
+                        </small>
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
+                {graph.source?.scopes.length ? (
+                  <section>
+                    <h3>Source scopes</h3>
+                    {graph.source.scopes.map((scope) => (
+                      <div
+                        key={`${scope.kind}:${scope.id}`}
+                        className={scope.truncated ? 'is-warning' : ''}
+                      >
+                        <strong>{scope.id}</strong>
+                        <span>{scope.kind}</span>
+                        <small>
+                          {scope.strategy ?? 'unknown strategy'} · {scope.fileCount ?? 0}/
+                          {scope.fileLimit ?? '—'} files{' '}
+                          {scope.truncated ? '· bounded' : '· complete'}
+                        </small>
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
+                {graph.diagnostics.length > 0 ? (
+                  <section>
+                    <h3>Diagnostics</h3>
+                    {graph.diagnostics.map((diagnostic, index) => (
+                      <div
+                        key={`${diagnostic.code}:${index}`}
+                        className={`is-${diagnostic.severity}`}
+                      >
+                        <strong>{diagnostic.code}</strong>
+                        <span>{diagnostic.severity}</span>
+                        <small>{diagnostic.message}</small>
+                        {diagnostic.recommendation ? (
+                          <small>{diagnostic.recommendation}</small>
+                        ) : null}
+                        {diagnostic.entityIds?.some((id) => entityById.has(id)) ? (
+                          <button
+                            type="button"
+                            className="ws-btn ws-btn--quiet"
+                            onClick={() =>
+                              setSelectedId(
+                                diagnostic.entityIds?.find((id) => entityById.has(id)) ?? null
+                              )
+                            }
+                          >
+                            Inspect affected entity
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
+        </div>
+      </details>
 
       <div
         className={`workspace-graph-explorer__body ${presentation ? 'is-presentation' : ''}`}
@@ -833,7 +995,7 @@ export function WorkspaceGraphExplorer({
               highlightedIds={graph.highlightedEntityIds ?? []}
               presentation={presentation}
             />
-          ) : entities.length && renderer === 'webgl3d' ? (
+          ) : entities.length && (renderer === 'webgl3d' || renderer === 'canvas3d') ? (
             <WorkspaceGraphWebgl
               key={
                 graph.entities.find((entity) => entity.kind === 'workspace')?.id ?? graph.revision
@@ -844,9 +1006,65 @@ export function WorkspaceGraphExplorer({
               onSelect={setSelectedId}
               presentation={presentation && !rendererCapabilities.prefersReducedMotion}
               onFallback={fallbackToMap}
+              preferWebgl={renderer === 'webgl3d'}
+              autoOrbitDefault={!rendererCapabilities.prefersReducedMotion}
               preferenceKey={
                 graph.entities.find((entity) => entity.kind === 'workspace')?.id ?? graph.revision
               }
+              gifExportRequest={gifExportRequest}
+              videoExportRequest={videoExportRequest}
+              onGifExported={(result) => {
+                if (!workspacePath) {
+                  setGifExportRequest(null);
+                  setGifExportMessage('No canonical workspace is selected for GIF export.');
+                  return;
+                }
+                onExportGif({
+                  workspacePath,
+                  revision: result.revision,
+                  gifDataUrl: result.gifDataUrl,
+                  width: result.width,
+                  height: result.height,
+                  frameCount: result.frameCount,
+                });
+                setGifExportRequest(null);
+                setGifExportMessage('360° GIF is ready. Choose where to save it.');
+              }}
+              onGifExportFailed={(_requestId, reason) => {
+                setGifExportRequest(null);
+                setGifExportMessage(`GIF export stopped: ${reason}`);
+              }}
+              onVideoExported={(result) => {
+                if (!workspacePath) {
+                  setVideoExportRequest(null);
+                  setGifExportMessage('No canonical workspace is selected for video export.');
+                  return;
+                }
+                onExportVideo({
+                  workspacePath,
+                  revision: result.revision,
+                  mp4DataUrl: result.mp4DataUrl,
+                  width: result.width,
+                  height: result.height,
+                  frameCount: result.frameCount,
+                  durationMs: result.durationMs,
+                });
+                setVideoExportRequest(null);
+                setGifExportMessage('HQ 360° MP4 is ready. Choose where to save it.');
+              }}
+              onVideoExportFailed={(_requestId, reason) => {
+                setVideoExportRequest(null);
+                setGifExportMessage(`HQ video export stopped: ${reason}`);
+              }}
+              onGifExportProgress={(completed, total) => {
+                setGifExportMessage(
+                  completed === total
+                    ? videoExportRequest
+                      ? 'Finalizing the true-color HQ video…'
+                      : 'Encoding the 360° GIF…'
+                    : `${videoExportRequest ? 'Recording HQ orbit' : 'Capturing 360° orbit frames'} · ${completed}/${total}`
+                );
+              }}
             />
           ) : entities.length ? (
             <div className="workspace-graph-explorer__entity-grid">
@@ -874,9 +1092,18 @@ export function WorkspaceGraphExplorer({
               })}
             </div>
           ) : (
-            <p className="workspace-graph-explorer__no-results">
-              No entity matches this bounded view.
-            </p>
+            <div className="workspace-graph-explorer__no-results">
+              <p>No entity matches this bounded view.</p>
+              {query.trim() && graph.truncated ? (
+                <button
+                  type="button"
+                  className="ws-btn"
+                  onClick={() => onSearchCanonical(query.trim())}
+                >
+                  Search the canonical graph
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
 

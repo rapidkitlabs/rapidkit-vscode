@@ -154,4 +154,16 @@ describe('WorkspaceGraphStreamSupervisor', () => {
     expect(statuses).toContain('resyncing');
     expect(spawn).toHaveBeenCalledTimes(2);
   });
+
+  it('resyncs instead of silently dropping an invalid stream event', async () => {
+    const children = [fakeProcess(), fakeProcess()];
+    const onStatus = vi.fn();
+    const spawn = vi.fn(() => children.shift()!);
+    const supervisor = new WorkspaceGraphStreamSupervisor({ spawn, onStatus });
+    supervisor.start('/workspace');
+    spawn.mock.results[0].value.stdout('{invalid}\n');
+    await Promise.resolve();
+    expect(onStatus).toHaveBeenCalledWith('resyncing', 'invalid-stream-event:1');
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
 });

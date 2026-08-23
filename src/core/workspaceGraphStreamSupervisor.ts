@@ -29,7 +29,14 @@ export type WorkspaceGraphWatchSpawn = (
   options: { cwd: string; env: NodeJS.ProcessEnv; shell: boolean }
 ) => WorkspaceGraphWatchProcess;
 
-export type WorkspaceGraphStreamStatus = 'starting' | 'live' | 'resyncing' | 'stopped' | 'error';
+export type WorkspaceGraphStreamStatus =
+  | 'starting'
+  | 'live'
+  | 'paused'
+  | 'complete'
+  | 'resyncing'
+  | 'stopped'
+  | 'error';
 
 export type WorkspaceGraphStreamSupervisorOptions = {
   spawn?: WorkspaceGraphWatchSpawn;
@@ -182,6 +189,11 @@ export class WorkspaceGraphStreamSupervisor {
       for (const event of decoder.push(chunk)) {
         this.accept(event);
       }
+      const invalidLines = decoder.takeInvalidLines();
+      if (invalidLines > 0) {
+        this.options.onStatus?.('resyncing', `invalid-stream-event:${invalidLines}`);
+        queueMicrotask(() => this.resync());
+      }
     });
     process.onStderrChunk((chunk) => {
       if (epoch === this.epoch) {
@@ -194,6 +206,9 @@ export class WorkspaceGraphStreamSupervisor {
       }
       for (const event of decoder.flush()) {
         this.accept(event);
+      }
+      if (decoder.takeInvalidLines() > 0) {
+        this.options.onStatus?.('error', 'invalid-stream-event');
       }
       this.process = null;
       if (outcome.exitCode !== 0) {
@@ -220,6 +235,15 @@ export class WorkspaceGraphStreamSupervisor {
       queueMicrotask(() => this.resync());
       return;
     }
+    if (result.status === 'error') {
+      this.options.onStatus?.('error', result.reason);
+      if (event.payload.recoverable === true) {
+        queueMicrotask(() => this.resync());
+      } else {
+        this.stop(false, true);
+      }
+      return;
+    }
     if (result.status === 'applied') {
       const memorySample = this.memoryAccountant.sample(
         result.state,
@@ -235,8 +259,21 @@ export class WorkspaceGraphStreamSupervisor {
       if (event.type === 'graph.snapshot') {
         this.consecutiveResyncs = 0;
       }
+      if (event.type === 'graph.paused') {
+        this.options.onStatus?.(
+          'paused',
+          String(event.payload.message ?? event.payload.reason ?? '')
+        );
+        return;
+      }
+      if (event.type === 'graph.complete') {
+        this.options.onStatus?.('complete', String(event.payload.message ?? ''));
+        return;
+      }
       this.options.onStatus?.('live');
-      this.options.onEvent?.(event, result.state);
+      if (event.type !== 'graph.heartbeat') {
+        this.options.onEvent?.(event, result.state);
+      }
     }
   }
 

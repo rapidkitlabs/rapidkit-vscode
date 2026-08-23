@@ -62,6 +62,7 @@ import {
 } from './workspaceScaffoldEvidence.js';
 import { buildWorkspaceModelDetailSections } from './workspaceModelGraphVisual.js';
 import { encodeWorkspaceGraphProjection } from './workspaceGraphProjection.js';
+import { validateWorkspaceGraphArtifact } from './workspaceGraphArtifactValidation.js';
 import { readJsonArtifact, type JsonArtifactReadResult } from './jsonArtifactReader.js';
 import {
   buildStudioIncidentSummary,
@@ -1830,27 +1831,24 @@ async function buildWorkspaceIntelligenceCards(
     }
   } else if (graphArtifact.kind === 'valid') {
     const graph = graphArtifact.raw;
+    const graphValidation = validateWorkspaceGraphArtifact(graph, modelRaw);
     const quality =
       graph.quality && typeof graph.quality === 'object'
         ? (graph.quality as Record<string, unknown>)
         : {};
-    const diagnostics = Array.isArray(graph.diagnostics)
-      ? graph.diagnostics.flatMap((item) => {
-          if (typeof item === 'string' && item.trim()) {
-            return [item.trim()];
-          }
-          if (!item || typeof item !== 'object' || Array.isArray(item)) {
-            return [];
-          }
-          const message = (item as Record<string, unknown>).message;
-          return typeof message === 'string' && message.trim() ? [message.trim()] : [];
-        })
-      : [];
     const entityCount = Number(quality.entityCount ?? 0);
     const relationCount = Number(quality.relationCount ?? 0);
     const proofCount = Number(quality.proofCount ?? 0);
     const proofCoverage = Number(quality.entityProofCoverageRatio ?? 0);
     if (knowledgeGraphModelCard) {
+      if (!graphValidation.valid) {
+        knowledgeGraphModelCard.status = 'fail';
+        knowledgeGraphModelCard.summary = `${knowledgeGraphModelCard.summary} · graph evidence invalid`;
+        knowledgeGraphModelCard.blockers = [
+          ...(knowledgeGraphModelCard.blockers ?? []),
+          ...graphValidation.errors,
+        ];
+      }
       knowledgeGraphModelCard.summary = `${knowledgeGraphModelCard.summary} · graph ${entityCount}/${relationCount}/${proofCount}`;
       knowledgeGraphModelCard.metrics = {
         ...(knowledgeGraphModelCard.metrics ?? {}),
@@ -1872,12 +1870,23 @@ async function buildWorkspaceIntelligenceCards(
           body: encodeWorkspaceGraphProjection(graph),
         },
       ];
-      if (diagnostics.length > 0) {
+      const blockingDiagnostics = Array.isArray(graph.diagnostics)
+        ? graph.diagnostics.flatMap((item) =>
+            item && typeof item === 'object' && !Array.isArray(item)
+              ? ['warning', 'error'].includes(String((item as Record<string, unknown>).severity))
+                ? [String((item as Record<string, unknown>).message ?? '')].filter(Boolean)
+                : []
+              : typeof item === 'string' && item.trim()
+                ? [item.trim()]
+                : []
+          )
+        : [];
+      if (blockingDiagnostics.length > 0) {
         knowledgeGraphModelCard.status =
           knowledgeGraphModelCard.status === 'fail' ? 'fail' : 'warn';
         knowledgeGraphModelCard.blockers = [
           ...(knowledgeGraphModelCard.blockers ?? []),
-          ...diagnostics.slice(0, 8),
+          ...blockingDiagnostics.slice(0, 8),
         ];
       }
     }

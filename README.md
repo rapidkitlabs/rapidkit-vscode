@@ -72,7 +72,7 @@ supports them.
 
 <p align="center">
   <img
-    src="media/readme/workspace-graph.png"
+    src="media/readme/workspace-graph.gif"
     alt="Workspai workspace graph showing connected entities, relationships, and proof paths"
     width="94%"
   />

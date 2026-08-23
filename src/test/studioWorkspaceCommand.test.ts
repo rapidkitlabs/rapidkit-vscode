@@ -153,41 +153,25 @@ describe('Studio workspace command capability policy', () => {
     ).toBe(false);
   });
 
-  it('enforces the canonical workspace remediation-plan command shape', () => {
+  it.each([
+    ['npx', ['--no-install', 'workspai', 'workspace', 'verify', '--json']],
+    ['npx', ['--no-install', 'workspai@0.64.0', 'doctor', 'workspace', '--json']],
+    ['pnpm', ['dlx', 'workspai', 'workspace', 'run', 'init']],
+    ['npm', ['exec', '--', 'wspai', 'workspace', 'analyze']],
+  ] as const)('rejects Workspai commands from the generic %s executor', (executable, args) => {
     expect(() =>
       resolveStudioWorkspaceCommandPlan({
         workspacePath: '/workspace',
         request: {
-          executable: 'npx',
-          args: ['--no-install', 'workspai', 'remediation-plan', 'project', '--json'],
+          executable,
+          args: [...args],
           purpose: 'inspect',
         },
       })
-    ).toThrow('workspai workspace remediation-plan');
-
-    expect(
-      resolveStudioWorkspaceCommandPlan({
-        workspacePath: '/workspace',
-        request: {
-          executable: 'npx',
-          args: ['--no-install', 'workspai', 'workspace', 'remediation-plan', '--json'],
-          purpose: 'inspect',
-        },
-      }).args
-    ).toEqual(['--no-install', 'workspai', 'workspace', 'remediation-plan', '--json']);
+    ).toThrow('run-governed-command');
   });
 
-  it('gives governed producers and project validation the ten-minute execution budget', () => {
-    expect(
-      resolveStudioWorkspaceCommandPlan({
-        workspacePath: '/workspace',
-        request: {
-          executable: 'npx',
-          args: ['--no-install', 'workspai', 'doctor', 'project', '--json'],
-          purpose: 'inspect',
-        },
-      }).timeoutMs
-    ).toBe(600_000);
+  it('gives project validation the ten-minute execution budget', () => {
     expect(
       resolveStudioWorkspaceCommandPlan({
         workspacePath: '/workspace',
@@ -206,9 +190,9 @@ describe('Studio workspace command capability policy', () => {
     const plan = resolveStudioWorkspaceCommandPlan({
       workspacePath: '/workspace',
       request: {
-        executable: 'npx',
-        args: ['--no-install', 'workspai', 'doctor', 'project', '--json'],
-        purpose: 'inspect',
+        executable: 'pytest',
+        args: ['-q'],
+        purpose: 'test',
       },
     });
     expect(

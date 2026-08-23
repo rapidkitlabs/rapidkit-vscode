@@ -123,11 +123,38 @@ describe('workspace graph explorer projection', () => {
         quality: {},
         diagnostics: [],
       },
-      { focusEntityIds: ['entity:509'] }
+      { focusEntityIds: ['entity:509'], revision: 'live-graph-hash' }
     );
 
     expect(projection.entities[0].id).toBe('entity:509');
     expect(projection.entities).toHaveLength(500);
+    expect(projection.revision).toBe('live-graph-hash');
+  });
+
+  it('rejects malformed projections and dangling relationships at the Webview boundary', () => {
+    const prefix = '__workspace_graph_projection_v1__:';
+    expect(
+      parseWorkspaceGraphProjection(
+        `${prefix}${JSON.stringify({ schemaVersion: 'workspace-graph-projection.v1' })}`
+      )
+    ).toBeNull();
+    const projection = buildWorkspaceGraphProjection({
+      schemaVersion: 'workspace-knowledge-graph.v1',
+      entities: [],
+      relations: [],
+      proofs: [],
+      providers: [],
+      quality: {},
+      diagnostics: [],
+    });
+    projection.relations.push({
+      id: 'dangling',
+      from: 'missing:a',
+      to: 'missing:b',
+      kind: 'depends-on',
+      proofIds: [],
+    });
+    expect(parseWorkspaceGraphProjection(`${prefix}${JSON.stringify(projection)}`)).toBeNull();
   });
 
   it('redacts local machine paths before the projection crosses into the Webview', () => {

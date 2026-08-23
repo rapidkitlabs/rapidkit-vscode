@@ -27,5 +27,20 @@ describe('WorkspaceGraphNdjsonDecoder', () => {
   it('fails closed for malformed and unsupported lines', () => {
     const decoder = new WorkspaceGraphNdjsonDecoder();
     expect(decoder.push('{bad}\n{"schemaVersion":"other"}\n')).toEqual([]);
+    expect(decoder.takeInvalidLines()).toBe(2);
+    expect(decoder.takeInvalidLines()).toBe(0);
+  });
+
+  it('rejects unknown event types and deltas without continuity fields', () => {
+    const decoder = new WorkspaceGraphNdjsonDecoder();
+    expect(
+      decoder.push(
+        `${JSON.stringify({ ...snapshot, type: 'graph.unknown' })}\n${JSON.stringify({
+          ...snapshot,
+          type: 'graph.delta',
+        })}\n`
+      )
+    ).toEqual([]);
+    expect(decoder.takeInvalidLines()).toBe(2);
   });
 });

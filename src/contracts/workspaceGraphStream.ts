@@ -41,11 +41,15 @@ export type WorkspaceGraphStreamState = {
   providers: Map<string, Record<string, unknown>>;
   quality: Record<string, unknown>;
   diagnostics: unknown[];
+  source?: Record<string, unknown>;
+  workspace?: Record<string, unknown>;
+  projectTopology?: Record<string, unknown>;
 };
 
 export type WorkspaceGraphStreamApplyResult =
   | { status: 'applied'; state: WorkspaceGraphStreamState }
   | { status: 'ignored'; state: WorkspaceGraphStreamState; reason: 'duplicate' }
+  | { status: 'error'; state: WorkspaceGraphStreamState | null; reason: string }
   | {
       status: 'resync-required';
       state: WorkspaceGraphStreamState | null;
@@ -55,7 +59,8 @@ export type WorkspaceGraphStreamApplyResult =
         | 'generation-regression'
         | 'schema-unsupported'
         | 'hash-discontinuity'
-        | 'validation-failed';
+        | 'validation-failed'
+        | 'queue-overflow';
     };
 
 export function createWorkspaceGraphReplaySnapshot(
@@ -84,6 +89,9 @@ export function createWorkspaceGraphReplaySnapshot(
         providers: [...state.providers.values()],
         quality: state.quality,
         diagnostics: state.diagnostics,
+        ...(state.source ? { source: state.source } : {}),
+        ...(state.workspace ? { workspace: state.workspace } : {}),
+        ...(state.projectTopology ? { projectTopology: state.projectTopology } : {}),
       },
     },
   };
@@ -102,9 +110,29 @@ function recordsById(value: unknown): Map<string, Record<string, unknown>> | nul
     if (typeof record.id !== 'string' || !record.id) {
       return null;
     }
+    if (result.has(record.id)) {
+      return null;
+    }
     result.set(record.id, record);
   }
   return result;
+}
+
+function eventState(
+  state: WorkspaceGraphStreamState,
+  event: WorkspaceGraphStreamEnvelope
+): WorkspaceGraphStreamState {
+  return {
+    ...state,
+    generation: event.generation,
+    revision: event.revision,
+    modelHash: event.modelHash,
+    graphHash: event.graphHash,
+  };
+}
+
+function stringPayload(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 function stringIds(value: unknown): string[] | null {
@@ -177,6 +205,18 @@ export function applyWorkspaceGraphStreamEvent(
             ? (raw.quality as Record<string, unknown>)
             : {},
         diagnostics: Array.isArray(raw.diagnostics) ? raw.diagnostics : [],
+        source:
+          raw.source && typeof raw.source === 'object'
+            ? (raw.source as Record<string, unknown>)
+            : undefined,
+        workspace:
+          raw.workspace && typeof raw.workspace === 'object'
+            ? (raw.workspace as Record<string, unknown>)
+            : undefined,
+        projectTopology:
+          raw.projectTopology && typeof raw.projectTopology === 'object'
+            ? (raw.projectTopology as Record<string, unknown>)
+            : undefined,
       },
     };
   }
@@ -189,8 +229,96 @@ export function applyWorkspaceGraphStreamEvent(
   if (event.generation < state.generation) {
     return { status: 'resync-required', state, reason: 'generation-regression' };
   }
+  if (event.type === 'graph.resync-required') {
+    const reason = event.payload.reason;
+    const acceptedReasons = new Set([
+      'revision-gap',
+      'identity-mismatch',
+      'generation-regression',
+      'schema-unsupported',
+      'hash-discontinuity',
+      'validation-failed',
+      'queue-overflow',
+    ]);
+    return {
+      status: 'resync-required',
+      state,
+      reason:
+        typeof reason === 'string' && acceptedReasons.has(reason)
+          ? (reason as Extract<
+              WorkspaceGraphStreamApplyResult,
+              { status: 'resync-required' }
+            >['reason'])
+          : 'validation-failed',
+    };
+  }
+  if (event.type === 'graph.error') {
+    return {
+      status: 'error',
+      state,
+      reason:
+        stringPayload(event.payload.message) ?? stringPayload(event.payload.code) ?? 'graph-error',
+    };
+  }
+  if (event.type === 'graph.quality-changed') {
+    if (!event.payload.quality || typeof event.payload.quality !== 'object') {
+      return { status: 'resync-required', state, reason: 'validation-failed' };
+    }
+    return {
+      status: 'applied',
+      state: {
+        ...eventState(state, event),
+        quality: event.payload.quality as Record<string, unknown>,
+        diagnostics: Array.isArray(event.payload.diagnostics)
+          ? event.payload.diagnostics
+          : state.diagnostics,
+      },
+    };
+  }
+  if (event.type === 'graph.proof-invalidated') {
+    const proofIds = stringIds(event.payload.proofIds);
+    if (!proofIds || proofIds.length === 0) {
+      return { status: 'resync-required', state, reason: 'validation-failed' };
+    }
+    const invalidated = new Set(proofIds);
+    const proofs = new Map(state.proofs);
+    for (const proofId of invalidated) {
+      proofs.delete(proofId);
+    }
+    const stripProofs = (record: Record<string, unknown>) => ({
+      ...record,
+      proofIds: Array.isArray(record.proofIds)
+        ? record.proofIds.filter((id) => typeof id === 'string' && !invalidated.has(id))
+        : record.proofIds,
+    });
+    return {
+      status: 'applied',
+      state: {
+        ...eventState(state, event),
+        proofs,
+        entities: new Map([...state.entities].map(([id, record]) => [id, stripProofs(record)])),
+        relations: new Map([...state.relations].map(([id, record]) => [id, stripProofs(record)])),
+      },
+    };
+  }
+  if (event.type === 'graph.provider-progress') {
+    const providerId = stringPayload(event.payload.providerId);
+    const status = stringPayload(event.payload.status);
+    if (!providerId || !status) {
+      return { status: 'resync-required', state, reason: 'validation-failed' };
+    }
+    const providers = new Map(state.providers);
+    providers.set(providerId, {
+      ...(providers.get(providerId) ?? { id: providerId }),
+      status,
+      ...(typeof event.payload.message === 'string'
+        ? { diagnostics: [event.payload.message] }
+        : {}),
+    });
+    return { status: 'applied', state: { ...eventState(state, event), providers } };
+  }
   if (event.type !== 'graph.delta') {
-    return { status: 'applied', state };
+    return { status: 'applied', state: eventState(state, event) };
   }
   if (event.revision === state.revision && event.graphHash === state.graphHash) {
     return { status: 'ignored', state, reason: 'duplicate' };
@@ -219,7 +347,13 @@ export function applyWorkspaceGraphStreamEvent(
     event.payload.proofsUpdated,
     event.payload.proofsRemoved
   );
-  const providers = applyCollectionDelta(state.providers, [], event.payload.providersUpdated, []);
+  const providerChanges = recordsById(event.payload.providersUpdated);
+  const providers = providerChanges ? new Map(state.providers) : null;
+  if (providers && providerChanges) {
+    for (const [id, provider] of providerChanges) {
+      providers.set(id, provider);
+    }
+  }
   if (!entities || !relations || !proofs || !providers) {
     return { status: 'resync-required', state, reason: 'validation-failed' };
   }

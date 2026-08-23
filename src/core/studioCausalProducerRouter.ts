@@ -104,6 +104,32 @@ export function resolveStudioCausalProducerRoute(
     return undefined;
   }
 
+  // Workspace Run is one artifact with project-scoped lifecycle findings.
+  // Route the exact missing/stale stage through the governed registry; the
+  // host binds the selected canonical project and then Verify advances to the
+  // next stage (init -> test/build/start) from freshly generated evidence.
+  const workspaceRunArtifact =
+    artifactText.includes('workspace-run-last') ||
+    combined.includes('workspace run evidence') ||
+    combined.includes('workspace-run-last');
+  const lifecycleRules = [
+    { stage: 'init', commandId: 'workspaceRunInit' },
+    { stage: 'test', commandId: 'workspaceRunTest' },
+    { stage: 'build', commandId: 'workspaceRunBuild' },
+    { stage: 'start', commandId: 'workspaceRunStart' },
+  ] as const;
+  for (const rule of lifecycleRules) {
+    const findingMatch = new RegExp(`(?:^|[\\s.:/])${rule.stage}(?:$|[\\s.:/])`, 'i').test(
+      combined
+    );
+    if (workspaceRunArtifact && findingMatch) {
+      return {
+        commandId: rule.commandId,
+        reason: `Produce fresh project-scoped Workspace Run ${rule.stage} evidence before verification.`,
+      };
+    }
+  }
+
   for (const rule of PRODUCER_RULES) {
     const artifactMatch = rule.artifactTokens.some((token) => artifactText.includes(token));
     const findingMatch = rule.findingTokens.some((token) => combined.includes(token));

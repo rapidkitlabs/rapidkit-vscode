@@ -13,7 +13,7 @@ describe('Workspace Graph renderer contract', () => {
     ).toBe('webgl3d');
   });
 
-  it('falls back safely from 3D to the 2D evidence view', () => {
+  it('falls back from GPU acceleration to software 3D without losing orbit', () => {
     expect(
       resolveWorkspaceGraphRenderer('webgl3d', {
         canvas2d: true,
@@ -27,7 +27,7 @@ describe('Workspace Graph renderer contract', () => {
         webgl2: false,
         prefersReducedMotion: false,
       })
-    ).toBe('canvas2d');
+    ).toBe('canvas3d');
   });
 
   it('preserves a no-GPU list fallback', () => {
@@ -38,5 +38,15 @@ describe('Workspace Graph renderer contract', () => {
         prefersReducedMotion: false,
       })
     ).toBe('list');
+  });
+
+  it('keeps explicit software 3D on the three-axis renderer', () => {
+    expect(
+      resolveWorkspaceGraphRenderer('canvas3d', {
+        canvas2d: true,
+        webgl2: false,
+        prefersReducedMotion: false,
+      })
+    ).toBe('canvas3d');
   });
 });

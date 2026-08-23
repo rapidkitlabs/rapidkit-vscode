@@ -22,6 +22,10 @@ export const STUDIO_EVIDENCE_REFRESH_COMMAND_IDS = [
   'workspaceExplain',
   'workspaceTrace',
   'workspaceRemediationPlan',
+  'workspaceRunInit',
+  'workspaceRunTest',
+  'workspaceRunBuild',
+  'workspaceRunStart',
   'workspaceWatch',
 ] as const;
 export type StudioEvidenceRefreshCommandId = (typeof STUDIO_EVIDENCE_REFRESH_COMMAND_IDS)[number];

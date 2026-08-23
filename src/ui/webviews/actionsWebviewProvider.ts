@@ -140,6 +140,7 @@ import { resolveDashboardCommandContractByVscodeCommand } from '../../core/dashb
 import { gateDashboardCommandCapability } from '../../core/dashboardCommandCapabilityGate.js';
 import {
   applyStudioGovernedCommandReuse,
+  bindStudioGovernedCommandScope,
   preserveAllAgentConsumersForStudioRefresh,
   resolveDashboardCommandExecutionPlan,
 } from '../../core/dashboardCommandExecutionPlan.js';
@@ -219,6 +220,7 @@ import {
   inspectStudioWorkspaceChanges,
   inspectStudioWorkspaceDiagnostics,
   searchStudioWorkspaceSource,
+  STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
 } from '../../core/studioWorkspaceInspection.js';
 import {
   decideCliOwnedRepair,
@@ -3414,10 +3416,23 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         if (request.commandId !== 'workspaceIntelligenceChain' && plan.cliArgs.length === 0) {
           return { ok: false, error: `No governed command exists for ${request.commandId}.` };
         }
-        const cliArgs =
+        const baseCliArgs =
           request.commandId === 'workspaceAgentSync'
             ? preserveAllAgentConsumersForStudioRefresh(plan.cliArgs)
             : plan.cliArgs;
+        const cliArgs = bindStudioGovernedCommandScope({
+          commandId: request.commandId,
+          cliArgs: baseCliArgs,
+          projectName: governedHandoff
+            ? resolveStudioRepairProjectTarget({
+                explicitProjectName:
+                  governedHandoff.selectedTarget?.projectName ?? input.projectName,
+                affectedProjectNames: governedHandoff.affectedProjectNames,
+                projectPath: request.projectPath ?? governedHandoff.selectedTarget?.projectPath,
+              })
+            : input.projectName,
+          requireProjectScope: Boolean(governedHandoff),
+        });
         const command =
           request.commandId === 'workspaceIntelligenceChain'
             ? [...STUDIO_CANONICAL_INTELLIGENCE_ARGS]
@@ -3535,8 +3550,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           if (!before) {
             return {
               ok: false,
-              error:
-                'Studio could not establish a Git-backed source fingerprint before command execution. Run this command manually or initialize source control before autonomous execution.',
+              error: STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
               terminalReason: 'workspace-command-fingerprint-unavailable',
             };
           }
@@ -4505,10 +4519,20 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         if (request.commandId !== 'workspaceIntelligenceChain' && plan.cliArgs.length === 0) {
           return { ok: false, error: `No governed command exists for ${request.commandId}.` };
         }
-        const cliArgs =
+        const baseCliArgs =
           request.commandId === 'workspaceAgentSync'
             ? preserveAllAgentConsumersForStudioRefresh(plan.cliArgs)
             : plan.cliArgs;
+        const cliArgs = bindStudioGovernedCommandScope({
+          commandId: request.commandId,
+          cliArgs: baseCliArgs,
+          projectName: resolveStudioRepairProjectTarget({
+            explicitProjectName: activeHandoff.selectedTarget?.projectName,
+            affectedProjectNames: activeHandoff.affectedProjectNames,
+            projectPath: request.projectPath ?? activeHandoff.selectedTarget?.projectPath,
+          }),
+          requireProjectScope: true,
+        });
         const command =
           request.commandId === 'workspaceIntelligenceChain'
             ? STUDIO_CANONICAL_INTELLIGENCE_COMMAND
@@ -4671,8 +4695,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
               ok: false,
               evidenceGeneration: repairEvidence.evidenceFingerprint,
               terminalReason: 'workspace-command-fingerprint-unavailable',
-              error:
-                'Studio could not establish a Git-backed source fingerprint before command execution. Run this command manually or initialize source control before autonomous execution.',
+              error: STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
             };
           }
           const execution = await runStudioWorkspaceCommand(plan);

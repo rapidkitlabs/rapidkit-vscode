@@ -1,4 +1,4 @@
-export type WorkspaceGraphRendererMode = 'canvas2d' | 'webgl3d' | 'list';
+export type WorkspaceGraphRendererMode = 'canvas2d' | 'canvas3d' | 'webgl3d' | 'list';
 
 export type WorkspaceGraphRendererCapabilities = {
   canvas2d: boolean;
@@ -21,6 +21,12 @@ export function resolveWorkspaceGraphRenderer(
 ): WorkspaceGraphRendererMode {
   if (requested === 'webgl3d' && capabilities.webgl2) {
     return 'webgl3d';
+  }
+  if (requested === 'webgl3d' && capabilities.canvas2d) {
+    return 'canvas3d';
+  }
+  if (requested === 'canvas3d' && capabilities.canvas2d) {
+    return 'canvas3d';
   }
   if (requested !== 'list' && capabilities.canvas2d) {
     return 'canvas2d';

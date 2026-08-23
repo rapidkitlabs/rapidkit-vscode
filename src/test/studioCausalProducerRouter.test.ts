@@ -39,12 +39,27 @@ describe('studio causal producer router', () => {
     ).toBeUndefined();
   });
 
-  it('does not route a stale project run to aggregate workspace verify', () => {
+  it.each([
+    ['project.api.init: Workspace run evidence is stale', 'workspaceRunInit'],
+    [
+      'project.api.test: Missing evidence report: .workspai/reports/workspace-run-last.json',
+      'workspaceRunTest',
+    ],
+    ['project.api.build: Workspace run evidence is unavailable', 'workspaceRunBuild'],
+    ['project.api.start: Workspace run evidence is missing', 'workspaceRunStart'],
+  ])('routes a project lifecycle finding to its exact governed producer', (blocker, commandId) => {
     expect(
       resolveStudioCausalProducerRoute({
         artifactPath: '.workspai/reports/workspace-verify-last-run.json',
-        blockers: ['project.api.init: Workspace run evidence is stale'],
-      })
-    ).toBeUndefined();
+        blockers: [blocker],
+        selectedTarget: {
+          findingId: blocker.split(':')[0],
+          actionIds: [blocker.split(':')[0]],
+          projectName: 'api',
+          repairMode: 'command',
+          sourceMutation: 'forbidden',
+        },
+      })?.commandId
+    ).toBe(commandId);
   });
 });

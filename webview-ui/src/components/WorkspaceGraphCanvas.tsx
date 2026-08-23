@@ -300,6 +300,13 @@ export function WorkspaceGraphCanvas({
     }
     if (nearest) onSelect(nearest.id);
   };
+  const selectRelative = (offset: number) => {
+    if (!entities.length) return;
+    const current = entities.findIndex((entity) => entity.id === selectedId);
+    const start = current < 0 ? (offset > 0 ? -1 : 0) : current;
+    const index = (start + offset + entities.length) % entities.length;
+    onSelect(entities[index].id);
+  };
 
   return (
     <div ref={containerRef} className="workspace-graph-canvas">
@@ -320,6 +327,33 @@ export function WorkspaceGraphCanvas({
       <canvas
         ref={canvasRef}
         aria-label={`Interactive workspace graph with ${entities.length} entities and ${relations.length} relationships`}
+        onKeyDown={(event) => {
+          const panStep = 28;
+          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+            event.preventDefault();
+            setViewport((current) => ({
+              ...current,
+              x:
+                current.x +
+                (event.key === 'ArrowLeft' ? panStep : event.key === 'ArrowRight' ? -panStep : 0),
+              y:
+                current.y +
+                (event.key === 'ArrowUp' ? panStep : event.key === 'ArrowDown' ? -panStep : 0),
+            }));
+          } else if (event.key === '+' || event.key === '=') {
+            event.preventDefault();
+            setViewport((current) => ({ ...current, scale: Math.min(4, current.scale * 1.1) }));
+          } else if (event.key === '-') {
+            event.preventDefault();
+            setViewport((current) => ({ ...current, scale: Math.max(0.18, current.scale * 0.9) }));
+          } else if (event.key === 'Home') {
+            event.preventDefault();
+            fitToLayout();
+          } else if (event.key === 'PageDown' || event.key === 'PageUp') {
+            event.preventDefault();
+            selectRelative(event.key === 'PageDown' ? 1 : -1);
+          }
+        }}
         tabIndex={0}
         onWheel={(event) => {
           event.preventDefault();
@@ -355,7 +389,7 @@ export function WorkspaceGraphCanvas({
         }}
       />
       <span className="workspace-graph-canvas__hint">
-        Drag to pan · Scroll to zoom · Select a node
+        Drag/arrow keys to pan · Scroll/+/- to zoom · Page Up/Down to select
       </span>
     </div>
   );

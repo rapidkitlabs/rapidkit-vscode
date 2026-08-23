@@ -248,7 +248,7 @@ function takeRoundRobin(
 
 export function buildWorkspaceGraphProjection(
   raw: Record<string, unknown>,
-  options: { focusEntityIds?: readonly string[] } = {}
+  options: { focusEntityIds?: readonly string[]; revision?: string } = {}
 ): WorkspaceGraphProjection {
   const projectIds = graphProjectIds(raw);
   const focusEntityIds = new Set(options.focusEntityIds ?? []);
@@ -448,7 +448,11 @@ export function buildWorkspaceGraphProjection(
     schemaVersion: 'workspace-graph-projection.v1',
     sourceSchemaVersion: stringValue(raw.schemaVersion) ?? 'unknown',
     ...(stringValue(raw.generatedAt) ? { generatedAt: stringValue(raw.generatedAt) } : {}),
-    revision: stringValue(source.hash) ?? stringValue(raw.generatedAt) ?? 'unknown',
+    revision:
+      stringValue(options.revision) ??
+      stringValue(source.hash) ??
+      stringValue(raw.generatedAt) ??
+      'unknown',
     truncated:
       selectedEntities.length < totalEntities ||
       selectedRelations.length < totalRelations ||

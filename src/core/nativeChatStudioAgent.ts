@@ -24,6 +24,7 @@ import {
   inspectStudioWorkspaceChanges,
   inspectStudioWorkspaceDiagnostics,
   searchStudioWorkspaceSource,
+  STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
 } from './studioWorkspaceInspection.js';
 import { runRapidkitStreaming } from './streamingRapidkitRunner.js';
 import {
@@ -60,6 +61,7 @@ import {
 } from './studioRemediationRecovery.js';
 import {
   applyStudioGovernedCommandReuse,
+  bindStudioGovernedCommandScope,
   preserveAllAgentConsumersForStudioRefresh,
   resolveDashboardCommandExecutionPlan,
 } from './dashboardCommandExecutionPlan.js';
@@ -469,7 +471,8 @@ export async function runNativeChatStudioAgent(input: {
         if (!before) {
           return {
             ok: false,
-            error: 'Native Chat could not establish a Git-backed source fingerprint.',
+            terminalReason: 'workspace-command-fingerprint-unavailable',
+            error: STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
           };
         }
         const execution = await runStudioWorkspaceCommand(plan);
@@ -544,10 +547,16 @@ export async function runNativeChatStudioAgent(input: {
       if (request.commandId !== 'workspaceIntelligenceChain' && plan.cliArgs.length === 0) {
         return { ok: false, error: `No governed command exists for ${request.commandId}.` };
       }
-      const cliArgs =
+      const baseCliArgs =
         request.commandId === 'workspaceAgentSync'
           ? preserveAllAgentConsumersForStudioRefresh(plan.cliArgs)
           : plan.cliArgs;
+      const cliArgs = bindStudioGovernedCommandScope({
+        commandId: request.commandId,
+        cliArgs: baseCliArgs,
+        projectName: activeHandoff.selectedTarget?.projectName ?? projectName,
+        requireProjectScope: true,
+      });
       const command =
         request.commandId === 'workspaceIntelligenceChain'
           ? STUDIO_CANONICAL_INTELLIGENCE_COMMAND

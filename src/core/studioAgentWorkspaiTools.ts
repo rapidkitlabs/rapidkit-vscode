@@ -606,7 +606,7 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
     name: 'run-workspace-command',
     title: 'Run workspace command',
     description:
-      'Run a structured, no-shell, non-mutating project command for inspection, diagnostics, tests, or builds. All source, formatting, and dependency mutations must use the CLI-owned repair transaction.',
+      'Run a structured, no-shell, non-mutating project-native command for inspection, diagnostics, tests, or builds. Workspai/wspai commands are forbidden here and must use run-governed-command. All source, formatting, and dependency mutations must use the CLI-owned repair transaction.',
     inputSchema: {
       type: 'object',
       required: ['executable', 'args', 'purpose'],
@@ -618,7 +618,7 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
           maxItems: 100,
           items: { type: 'string' },
           description:
-            'Argument vector without shell parsing. For npx, begin with --no-install, then the local package binary; for example ["--no-install", "workspai", "doctor", "project", "--json"].',
+            'Argument vector without shell parsing. Package runners must stay local-only and may execute project-native tools such as eslint; they can never invoke Workspai.',
         },
         cwd: {
           type: 'string',
