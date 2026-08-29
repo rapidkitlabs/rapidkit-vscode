@@ -148,7 +148,10 @@ but they do not share completion authority:
   no inspected evidence is rejected.
 - **Plan** is read-only. It must inspect evidence and return explicit `Scope`,
   `Evidence`, `Steps`, `Verification`, `Rollback`, and `Assumptions` sections.
-  It cannot claim that a proposed change was applied.
+  It cannot claim that a proposed change was applied. Selecting **Run with
+  Agent** creates an explicit handoff containing both the original request and
+  the completed plan; Agent still re-inspects current evidence before gaining
+  mutation authority.
 - **Agent** may propose inspected source edits. Every proposal crosses the CLI
   Repair Engine, and a closed transaction is still insufficient by itself:
   the model must inspect the resulting workspace changes and the controller
@@ -165,6 +168,20 @@ but they do not share completion authority:
   machine-verified. In both modes, a post-repair Goal binding is accepted only
   from a linked, approved, closed transaction whose plan, proposal, checkpoint
   output, closure hash, and fresh Model/Graph input state remain current.
+
+Agent and Goal can request missing blocking input only through the structured
+`workspai-request-input` action and only before mutation. Ordinary model prose
+never silently becomes a question or an authority transition. While input is
+pending, the durable session enters `waiting-input`; a composer message steers
+the same run and Cancel releases it immediately. Cancellation also wins against
+an in-flight provider request, even when that provider transport cannot consume
+an abort signal, so the UI never waits for a late model response to stop.
+
+The secondary-sidebar composer also carries a bounded active-editor focus when
+the file belongs to the selected scope: project-relative path, selected text,
+and current VS Code diagnostics. The focus is never persisted as source
+authority and never supplies a write hash; every mode must still inspect the
+actual source through its allowlisted tool before relying on or changing it.
 
 Goal attempt budgets are durable CLI state. The extension restores the verified
 attempt count from the active Goal status and enforces the immutable

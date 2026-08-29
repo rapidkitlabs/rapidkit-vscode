@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ContractStudioAgentModelAdapter,
   STUDIO_AGENT_COMPLETE_TOOL_NAME,
+  STUDIO_AGENT_REQUEST_INPUT_TOOL_NAME,
   parseStudioAgentModelAction,
   restoreStudioAgentNativeConversation,
   type StudioAgentConversationMessage,
@@ -54,6 +55,60 @@ describe('Studio Agent model protocol', () => {
     expect(
       parseStudioAgentModelAction({ text: `Here is the action:\n${action}`, allowedTools: [] }).type
     ).toBe('message');
+  });
+
+  it('parses a structured blocking input request without treating ordinary prose as one', () => {
+    expect(
+      parseStudioAgentModelAction({
+        text: JSON.stringify({
+          schemaVersion: 'workspai.studio-agent-model-action.v1',
+          action: 'input',
+          question: 'Which project owns this API?',
+          reason: 'Two project scopes are equally plausible.',
+        }),
+        allowedTools: [],
+      })
+    ).toEqual({
+      type: 'input',
+      question: 'Which project owns this API?',
+      reason: 'Two project scopes are equally plausible.',
+    });
+    expect(parseStudioAgentModelAction({ text: 'Which project?', allowedTools: [] })).toEqual({
+      type: 'message',
+      text: 'Which project?',
+    });
+  });
+
+  it('exposes structured user input only to autonomous modes', async () => {
+    const observedTools: string[][] = [];
+    const complete = async (_prompt: string, request: { tools: Array<{ name: string }> }) => {
+      observedTools.push(request.tools.map((tool) => tool.name));
+      return { toolName: STUDIO_AGENT_COMPLETE_TOOL_NAME, input: { summary: 'Done' } };
+    };
+    const baseSession = {
+      schemaVersion: 'workspai.studio-agent-session.v1' as const,
+      id: 'mode-input-session',
+      workspacePath: '/workspace',
+      cardId: 'assistant:test',
+      status: 'running' as const,
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+      sequence: 0,
+      events: [],
+    };
+    await new ContractStudioAgentModelAdapter('Agent task', complete).next({
+      session: { ...baseSession, assistantMode: 'agent' },
+      tools: [],
+      steering: [],
+    });
+    await new ContractStudioAgentModelAdapter('Ask question', complete).next({
+      session: { ...baseSession, id: 'ask-input-session', assistantMode: 'ask' },
+      tools: [],
+      steering: [],
+    });
+
+    expect(observedTools[0]).toContain(STUDIO_AGENT_REQUEST_INPUT_TOOL_NAME);
+    expect(observedTools[1]).not.toContain(STUDIO_AGENT_REQUEST_INPUT_TOOL_NAME);
   });
 
   it('grounds every turn in objective, tools, observations, and durable events', async () => {

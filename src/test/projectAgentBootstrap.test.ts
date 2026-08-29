@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -31,6 +32,13 @@ function receipt(status: AgentBootstrapReceipt['status'] = 'ready'): AgentBootst
     generatedAt: '2026-08-17T12:00:00.000Z',
     receiptId: 'a'.repeat(64),
     status,
+    statusScope: 'agent-grounding',
+    readiness: {
+      agentGrounding: status,
+      architectureEvidence: status,
+      projectEnvironment: 'ready',
+      release: 'not-verified',
+    },
     requestedAgent: 'generic',
     resolvedHost: 'generic',
     project: { name: 'api', relativePath: 'external/api', runtime: 'node' },
@@ -191,6 +199,74 @@ describe('project agent bootstrap', () => {
       'Bounded graph retrieval: command:workspai workspace graph search'
     );
     expect(() => requireReadyProjectAgentBootstrap(result)).not.toThrow();
+  });
+
+  it('validates and surfaces the CLI 0.66 portable project Graph reference', async () => {
+    const projectPath = await fixture();
+    await mkdir(path.join(projectPath, '.workspai', 'reports'), { recursive: true });
+    await writeFile(path.join(projectPath, '.workspai', 'agent-entry.v1.json'), '{}\n');
+    const value = receipt();
+    value.canonicalEvidence.projectKnowledgeGraph =
+      '.workspai/reports/project-knowledge-graph-reference.json';
+    const payload = {
+      schemaVersion: 'project-knowledge-graph-reference.v1',
+      generatedAt: value.generatedAt,
+      project: { name: value.project.name },
+      canonical: {
+        graph: 'workspace:.workspai/reports/workspace-knowledge-graph.json',
+        boundedQuery:
+          'workspai workspace graph search <task-query> --scope project:api --limit 12 --json',
+        sourceHash: 'e'.repeat(64),
+        projectionHash: 'f'.repeat(64),
+      },
+      summary: { entityCount: 8, relationCount: 6, proofCount: 5 },
+    };
+    const stable = (entry: unknown): unknown => {
+      if (Array.isArray(entry)) return entry.map(stable);
+      if (!entry || typeof entry !== 'object') return entry;
+      const record = entry as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.keys(record)
+          .sort()
+          .map((key) => [key, stable(record[key])])
+      );
+    };
+    await writeFile(
+      path.join(projectPath, '.workspai', 'reports', 'project-knowledge-graph-reference.json'),
+      JSON.stringify({
+        ...payload,
+        integrity: {
+          algorithm: 'sha256',
+          payloadHash: crypto
+            .createHash('sha256')
+            .update(JSON.stringify(stable(payload)))
+            .digest('hex'),
+          portable: true,
+          absolutePathsEmitted: false,
+        },
+      })
+    );
+
+    const result = await bootstrapProjectAgent({ projectPath, run: runner(value) });
+
+    expect(result.status).toBe('ready');
+    expect(buildProjectAgentBootstrapPromptSection(result)).toContain(
+      'Project Graph reference: .workspai/reports/project-knowledge-graph-reference.json'
+    );
+  });
+
+  it('keeps legacy pre-0.66 bootstrap receipts compatible', async () => {
+    const projectPath = await fixture();
+    await mkdir(path.join(projectPath, '.workspai'), { recursive: true });
+    await writeFile(path.join(projectPath, '.workspai', 'agent-entry.v1.json'), '{}\n');
+    const legacy = receipt();
+    delete legacy.statusScope;
+    delete legacy.readiness;
+    delete legacy.canonicalEvidence.projectKnowledgeGraph;
+
+    const result = await bootstrapProjectAgent({ projectPath, run: runner(legacy) });
+
+    expect(result.status).toBe('ready');
   });
 
   it('rejects receipts that leak machine-local paths', async () => {

@@ -23,6 +23,9 @@ export const WORKSPACE_VERIFY_REPORT_PATH = '.workspai/reports/workspace-verify-
 export const WORKSPACE_CONTEXT_AGENT_REPORT_PATH = '.workspai/reports/workspace-context-agent.json';
 export const WORKSPACE_HISTORY_PATH = '.workspai/reports/workspace-intelligence-history.json';
 export const WORKSPACE_SKILLS_INDEX_PATH = '.workspai/reports/workspace-skills-index.json';
+export const PROJECT_KNOWLEDGE_GRAPH_REFERENCE_PATH =
+  '.workspai/reports/project-knowledge-graph-reference.json';
+export const PROJECT_CONTEXT_AGENT_REPORT_PATH = '.workspai/reports/project-context-agent.json';
 export const WORKSPACE_EXPLAIN_REPORT_PATH = '.workspai/reports/workspace-explain-last-run.json';
 export const WORKSPACE_WHY_REPORT_PATH = '.workspai/reports/workspace-why-last-run.json';
 export const WORKSPACE_TRACE_REPORT_PATH = '.workspai/reports/workspace-trace-last-run.json';

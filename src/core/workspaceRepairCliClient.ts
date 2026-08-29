@@ -382,6 +382,7 @@ type WorkspaiCliEntrypoint = {
     cliVerificationReceiptCompletion: boolean;
     goalClosedSourceTransition: boolean;
     goalDurableAttemptBudget: boolean;
+    repairQualificationMatrix: boolean;
   };
 };
 
@@ -709,6 +710,47 @@ function containsOrderedStages(actual: string[], required: string[]): boolean {
   return false;
 }
 
+function hasValidRepairQualificationMatrix(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const matrix = value as Record<string, unknown>;
+  const dimensions =
+    matrix.dimensions && typeof matrix.dimensions === 'object' && !Array.isArray(matrix.dimensions)
+      ? (matrix.dimensions as Record<string, unknown>)
+      : undefined;
+  const invariants =
+    matrix.invariants && typeof matrix.invariants === 'object' && !Array.isArray(matrix.invariants)
+      ? (matrix.invariants as Record<string, unknown>)
+      : undefined;
+  const failureFamilies = stringArray(dimensions?.failureFamilies);
+  const recoveryPaths = new Set(stringArray(dimensions?.recoveryPaths));
+  const recoveryPolicy =
+    dimensions?.failureRecoveryPolicy &&
+    typeof dimensions.failureRecoveryPolicy === 'object' &&
+    !Array.isArray(dimensions.failureRecoveryPolicy)
+      ? (dimensions.failureRecoveryPolicy as Record<string, unknown>)
+      : undefined;
+  return (
+    matrix.schemaVersion === 'workspai.workspace-repair-qualification-matrix.v1' &&
+    matrix.status === 'contract-enforced' &&
+    stringArray(dimensions?.adapters).length > 0 &&
+    stringArray(dimensions?.scopes).includes('linked-project') &&
+    failureFamilies.length > 0 &&
+    Boolean(recoveryPolicy) &&
+    failureFamilies.every(
+      (family) =>
+        typeof recoveryPolicy?.[family] === 'string' &&
+        recoveryPaths.has(recoveryPolicy[family] as string)
+    ) &&
+    invariants?.everyAdapterDeclaresClosureStages === true &&
+    invariants?.everyFailureTerminates === true &&
+    invariants?.everyMutationIsCheckpointed === true &&
+    invariants?.workspaceAndProjectScopesUseTheSameEngine === true &&
+    invariants?.linkedProjectsRemainBoundaryChecked === true
+  );
+}
+
 async function runtimeVerifyCandidate(input: {
   candidate: WorkspaiCliEntrypoint;
   workspacePath: string;
@@ -775,6 +817,10 @@ async function runtimeVerifyCandidate(input: {
   const actions = stringArray(invocation?.actions);
   const workspaceResolution = stringArray(invocation?.workspaceResolution);
   const workflow = stringArray(capabilities?.workflow);
+  const qualificationMatrixPresent = capabilities?.qualificationMatrix !== undefined;
+  const qualificationMatrixValid = hasValidRepairQualificationMatrix(
+    capabilities?.qualificationMatrix
+  );
   const requiredActions = [
     'capabilities',
     'plan',
@@ -813,6 +859,7 @@ async function runtimeVerifyCandidate(input: {
     contracts?.operationResult !== CLI_OPERATION_SCHEMA ||
     contracts?.proposal !== REPAIR_PROPOSAL_SCHEMA ||
     contracts?.transaction !== REPAIR_TRANSACTION_SCHEMA ||
+    (qualificationMatrixPresent && !qualificationMatrixValid) ||
     !workspaceResolution.includes('process-cwd') ||
     requiredActions.some((action) => !actions.includes(action)) ||
     !containsOrderedStages(workflow, requiredWorkflow)
@@ -834,6 +881,7 @@ async function runtimeVerifyCandidate(input: {
         invariants?.completionAuthority === 'cli-verification-receipt',
       goalClosedSourceTransition: invariants?.goalSourceTransition === 'closed-integrity-bound-v1',
       goalDurableAttemptBudget: invariants?.goalAttemptBudget === 'durable-serialized-v1',
+      repairQualificationMatrix: qualificationMatrixValid,
     },
   };
 }

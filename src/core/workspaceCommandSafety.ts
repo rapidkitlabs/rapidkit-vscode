@@ -22,6 +22,11 @@ export const WORKSPACE_COMMAND_SAFETY_POLICIES: Record<string, WorkspaceCommandS
     risk: 'write',
     refreshCommands: [['workspace', 'contract', 'inspect', '--json']],
   },
+  workspaceContractSync: {
+    commandId: 'workspaceContractSync',
+    risk: 'write',
+    refreshCommands: [['workspace', 'contract', 'inspect', '--json']],
+  },
   workspacePolicySet: {
     commandId: 'workspacePolicySet',
     risk: 'write',

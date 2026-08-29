@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -30,6 +31,16 @@ describe('evidenceAgentContextBundle', () => {
       await fs.writeJSON(absolutePath, payload);
     }
     return workspacePath;
+  }
+
+  function stableSort(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(stableSort);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, stableSort((value as Record<string, unknown>)[key])])
+    );
   }
 
   it('builds a send-to-copilot prompt with intelligence attachments and blockers', async () => {
@@ -223,5 +234,65 @@ describe('evidenceAgentContextBundle', () => {
     expect(prompt).toContain('/.workspai/skills/dependency-repair.md');
     expect(prompt).not.toContain('/.workspai/skills/release-readiness.md');
     expect(bundle.summaryLines.join('\n')).toContain('Relevant operational skill');
+  });
+
+  it('resolves project-owned context and Graph attachments from an external adopted project', async () => {
+    const workspacePath = await createWorkspace({
+      '.workspai/reports/workspace-context-agent.json': { schemaVersion: 'workspace-context.v1' },
+    });
+    const projectPath = await createWorkspace({
+      '.workspai/reports/project-context-agent.json': {
+        schemaVersion: 'project-context-agent.v1',
+        project: { name: 'linked-api' },
+      },
+    });
+    const graphPayload = {
+      schemaVersion: 'project-knowledge-graph-reference.v1',
+      generatedAt: '2026-08-28T00:00:00.000Z',
+      project: { name: 'linked-api' },
+      canonical: {
+        graph: 'workspace:.workspai/reports/workspace-knowledge-graph.json',
+        boundedQuery:
+          'workspai workspace graph search api --scope project:linked-api --limit 12 --json',
+        sourceHash: 'a'.repeat(64),
+        projectionHash: 'b'.repeat(64),
+      },
+      summary: { entityCount: 12, relationCount: 8, proofCount: 16 },
+    };
+    await fs.writeJSON(
+      path.join(projectPath, '.workspai/reports/project-knowledge-graph-reference.json'),
+      {
+        ...graphPayload,
+        integrity: {
+          algorithm: 'sha256',
+          payloadHash: crypto
+            .createHash('sha256')
+            .update(JSON.stringify(stableSort(graphPayload)))
+            .digest('hex'),
+          portable: true,
+          absolutePathsEmitted: false,
+        },
+      }
+    );
+
+    const bundle = await buildEvidenceAgentContextBundle({
+      workspacePath,
+      projectPath,
+      projectName: 'linked-api',
+    });
+    const prompt = buildSendToCopilotPrompt(bundle);
+
+    expect(bundle.missingRequired).toEqual([]);
+    expect(bundle.attachments).toContainEqual(
+      expect.objectContaining({
+        relativePath: '.workspai/reports/project-context-agent.json',
+        scope: 'project',
+        validity: 'valid',
+      })
+    );
+    expect(prompt).toContain(
+      `#file:${projectPath.replace(/\\/g, '/')}/.workspai/reports/project-context-agent.json`
+    );
+    expect(prompt).toContain('Project Graph: 12 entities, 8 relations, 16 proofs');
   });
 });

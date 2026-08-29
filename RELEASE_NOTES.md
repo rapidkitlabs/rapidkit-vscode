@@ -1,5 +1,53 @@
 # Release Notes
 
+## v0.45.0 (August 28, 2026)
+
+### Portable project intelligence and evidence-driven agent operations
+
+Workspai for VS Code 0.45.0 is validated against Workspai CLI 0.66.0. This
+release carries the CLI's project-owned Graph, evidence-selected Skills, and
+dual-era intelligence contracts into the extension without creating a second
+source of architectural truth.
+
+Highlights:
+
+- Adopted projects validate their portable agent entry, readiness dimensions,
+  and project Graph reference before Agent may use them for grounded work.
+- Dashboard and Graph surfaces expose exact inventory completeness, provider
+  coverage and budgets, API runtime bindings, project governance, project
+  scope, and entity-kind search filters.
+- Artifacts, Studio, Assistant, and Copilot resolve project-owned Graph/context
+  files from the selected project's root and expose them as independent,
+  clickable contract-backed outputs.
+- Bounded CLI activity journals appear in Recent Commands as observational
+  execution state while the Live command opens the complete CLI Flow Board.
+- Skill selection decisions, structured MCP runtime capabilities, and repair
+  qualification matrices are schema-checked while older compatible artifacts
+  remain readable.
+- Workspace contract sync, planned/runtime-aware workspace execution, and the
+  CLI-owned live activity graph are available through governed extension
+  commands.
+- The extension bundles the integrity-checked Workspai CLI 0.66.0 runtime and
+  synchronizes its published contracts and command surface from that authority.
+- Agent and Goal now request genuinely blocking user input through an explicit
+  pre-mutation protocol, provider-bound cancellation releases sessions
+  immediately, and completed Plans carry their inspected output into the
+  user-approved **Run with Agent** handoff.
+
+Compatibility:
+
+- VS Code 1.106.0+
+- Workspai CLI 0.66.0+
+- RapidKit Core 0.6.0 only for Python-backed kits/modules
+
+[Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.45.0/releases/RELEASE_NOTES_v0.45.0.md)
+
+Release posture: `portable-project-intelligence-and-agent-operations`
+
+Release gate posture: `expansion-eligible`.
+
+Publication status: prepared for release validation.
+
 ## v0.44.0 (August 23, 2026)
 
 ### Governed repair convergence and immersive workspace graph

@@ -62,6 +62,53 @@ export type WorkspaceGraphPreviewDiagnostic = {
 
 export const WORKSPACE_GRAPH_SECTION_PREFIX = '__graph__:';
 
+function governanceControlSummary(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return 'unknown';
+  }
+  const control = value as Record<string, unknown>;
+  const status = typeof control.status === 'string' ? control.status : 'unknown';
+  const provider = typeof control.provider === 'string' ? control.provider.trim() : '';
+  const reference = typeof control.reference === 'string' ? control.reference.trim() : '';
+  return [status, provider, reference].filter(Boolean).join(' · ');
+}
+
+function buildProjectGovernanceLines(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return null;
+      }
+      const project = entry as Record<string, unknown>;
+      const name =
+        typeof project.name === 'string'
+          ? project.name.trim()
+          : typeof project.id === 'string'
+            ? project.id.trim()
+            : '';
+      const governance =
+        project.governance &&
+        typeof project.governance === 'object' &&
+        !Array.isArray(project.governance)
+          ? (project.governance as Record<string, unknown>)
+          : undefined;
+      if (!name || !governance) {
+        return null;
+      }
+      return [
+        name,
+        `CI: ${governanceControlSummary(governance.ci)}`,
+        `Release: ${governanceControlSummary(governance.release)}`,
+        `Ownership: ${governanceControlSummary(governance.ownership)}`,
+      ].join('\n  ');
+    })
+    .filter((line): line is string => Boolean(line))
+    .slice(0, 12);
+}
+
 function asFiniteNumber(value: unknown): number | undefined {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : undefined;
@@ -309,6 +356,15 @@ export function buildWorkspaceModelDetailSections(modelRaw: Record<string, unkno
       body: `${WORKSPACE_GRAPH_SECTION_PREFIX}${JSON.stringify(graphPreview)}`,
     },
   ];
+
+  const governanceLines = buildProjectGovernanceLines(modelRaw.projects);
+  if (governanceLines.length > 0) {
+    sections.push({
+      id: 'workspace-project-governance',
+      title: 'Project governance',
+      body: governanceLines.join('\n\n'),
+    });
+  }
 
   const issues = Array.isArray(validation.issues) ? validation.issues : [];
   if (issues.length > 0) {

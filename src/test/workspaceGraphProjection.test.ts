@@ -72,6 +72,84 @@ describe('workspace graph explorer projection', () => {
     ).not.toBeNull();
   });
 
+  it('preserves CLI 0.66 inventory and provider completeness without exposing raw paths', () => {
+    const projection = buildWorkspaceGraphProjection({
+      schemaVersion: 'workspace-knowledge-graph.v1',
+      source: {
+        inputs: {
+          schemaVersion: 'workspace-knowledge-graph-inputs.v1',
+          scopes: [
+            {
+              kind: 'project',
+              id: 'api',
+              strategy: 'adaptive',
+              fileCount: 80,
+              fileLimit: 100,
+              truncated: true,
+              eligibleFileCount: 140,
+              eligibleFileCountExact: true,
+              inventoryMode: 'complete',
+              inventoryStrategy: 'git-index-worktree-v1',
+            },
+          ],
+        },
+      },
+      entities: [],
+      relations: [],
+      proofs: [],
+      providers: [
+        {
+          id: 'source-analysis',
+          diagnostics: [],
+          inputCoverage: [
+            {
+              scope: 'project',
+              scopeId: 'api',
+              tier: 'adaptive-semantic',
+              status: 'bounded',
+              eligibleFiles: 140,
+              suppliedFiles: 80,
+              fileBudget: 100,
+              selectionStrategy: 'component-language-round-robin-v1',
+            },
+          ],
+        },
+      ],
+      quality: {
+        completeness: {
+          status: 'bounded',
+          inventory: {
+            scopeCount: 1,
+            completeScopes: 0,
+            boundedScopes: 1,
+            eligibleFiles: 140,
+            indexedFiles: 80,
+            eligibleFileCountExact: true,
+          },
+          providers: { complete: 0, bounded: 1, notApplicable: 0, failed: 0 },
+        },
+      },
+      diagnostics: [],
+    });
+
+    expect(projection.source?.scopes[0]).toMatchObject({
+      eligibleFileCount: 140,
+      eligibleFileCountExact: true,
+      inventoryMode: 'complete',
+      inventoryStrategy: 'git-index-worktree-v1',
+    });
+    expect(projection.providers[0].inputCoverage?.[0]).toMatchObject({
+      tier: 'adaptive-semantic',
+      status: 'bounded',
+      suppliedFiles: 80,
+      eligibleFiles: 140,
+    });
+    expect(projection.quality.completeness).toMatchObject({
+      status: 'bounded',
+      inventory: { indexedFiles: 80, eligibleFiles: 140 },
+    });
+  });
+
   it('bounds large projections and removes relations outside the selected entity window', () => {
     const entities = Array.from({ length: 510 }, (_, index) => ({
       id: `entity:${index}`,

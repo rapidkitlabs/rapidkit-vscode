@@ -15,6 +15,15 @@ export type DashboardEvidenceStatus = 'pass' | 'warn' | 'fail' | 'missing';
 
 export type DashboardEvidenceScope = 'workspace' | 'project';
 
+export type DashboardRelatedArtifact = {
+  id: string;
+  label: string;
+  artifactPath: string;
+  scope: DashboardEvidenceScope;
+  status?: DashboardEvidenceStatus;
+  summary?: string;
+};
+
 export type DashboardEvidenceFreshnessStatus = 'fresh' | 'aging' | 'stale' | 'unknown';
 
 export type DashboardEvidenceFreshness = {
@@ -35,6 +44,7 @@ export type DashboardEvidenceCard = {
   scope: DashboardEvidenceScope;
   generatedAt?: string;
   artifactPath?: string;
+  relatedArtifacts?: DashboardRelatedArtifact[];
   metrics?: Record<string, number | string>;
   blockers?: string[];
   /** Contract-backed gate posture; advisory text in blockers does not imply release blocking. */

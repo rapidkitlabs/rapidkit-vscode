@@ -18,6 +18,8 @@ export interface AnalyzeReport {
   generatedAt: string;
   workspacePath: string;
   summary: {
+    statusScope?: 'source-structure';
+    releaseReadiness?: 'not-evaluated';
     score: number;
     verdict: 'ready' | 'needs-attention' | 'blocked';
     projectCount: number;
@@ -68,6 +70,14 @@ export const loadAnalyzeReport = (
   try {
     const rawContent = fs.readFileSync(reportPath, 'utf-8');
     const report: AnalyzeReport = JSON.parse(rawContent);
+    if (
+      report.schemaVersion !== 'rapidkit-analyze-v1' ||
+      !report.summary ||
+      typeof report.summary.score !== 'number' ||
+      !['ready', 'needs-attention', 'blocked'].includes(report.summary.verdict)
+    ) {
+      return { report: null, error: 'Analyze report does not satisfy rapidkit-analyze-v1.' };
+    }
     return { report, error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

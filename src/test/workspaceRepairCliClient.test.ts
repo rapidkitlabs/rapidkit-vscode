@@ -63,7 +63,8 @@ function repairProtocolRunner(
   }) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
   runtimeVersion?: (manifestVersion: string, entrypoint: string) => string,
   workflowOverride?: string[],
-  invariantOverrides?: Record<string, unknown>
+  invariantOverrides?: Record<string, unknown>,
+  qualificationMatrix?: Record<string, unknown>
 ) {
   return async (input: {
     entrypoint: { version: string; entrypoint: string };
@@ -123,6 +124,7 @@ function repairProtocolRunner(
             goalAttemptBudget: 'durable-serialized-v1',
             ...invariantOverrides,
           },
+          ...(qualificationMatrix ? { qualificationMatrix } : {}),
           consumerProtocol: {
             protocolVersion: 'workspai.workspace-repair-consumer-protocol.v1',
             invocation: {
@@ -305,6 +307,43 @@ describe('CLI-owned Workspace Repair client', () => {
         ),
       })
     ).rejects.toThrow('repair capabilities do not satisfy');
+  });
+
+  it('accepts and exposes the CLI 0.66 contract-enforced repair qualification matrix', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-repair-matrix-'));
+    const metadata = await installedPackage(workspacePath);
+    const matrix = {
+      schemaVersion: 'workspai.workspace-repair-qualification-matrix.v1',
+      status: 'contract-enforced',
+      dimensions: {
+        adapters: ['node', 'python'],
+        scopes: ['project', 'workspace', 'linked-project'],
+        failureFamilies: ['source-drift'],
+        recoveryPaths: ['bounded-replan'],
+        failureRecoveryPolicy: { 'source-drift': 'bounded-replan' },
+      },
+      invariants: {
+        everyAdapterDeclaresClosureStages: true,
+        everyFailureTerminates: true,
+        everyMutationIsCheckpointed: true,
+        workspaceAndProjectScopesUseTheSameEngine: true,
+        linkedProjectsRemainBoundaryChecked: true,
+      },
+    };
+
+    const resolved = await verifyInstalledWorkspaiRepairCli({
+      workspacePath,
+      installedPackages: [metadata],
+      runner: repairProtocolRunner(
+        async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+        undefined,
+        undefined,
+        undefined,
+        matrix
+      ),
+    });
+
+    expect(resolved.features?.repairQualificationMatrix).toBe(true);
   });
 
   it('restores user tool bins for CLI repair subprocesses with a stale Extension Host PATH', async () => {

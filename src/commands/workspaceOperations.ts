@@ -17,6 +17,7 @@ import {
   listWorkspaceCreateProfiles,
   type WorkspaceCreateProfile,
 } from '../contracts/createPlannerCapabilities';
+import { resolveWorkspaceArtifactPath } from '../core/workspaceIntelligencePaths';
 
 type WorkspaceExplorerLike = {
   getSelectedWorkspace?: () => { path: string; name?: string } | null | undefined;
@@ -35,6 +36,8 @@ type WorkspaceCommandItem = {
   mode?: unknown;
   preferredAction?: unknown;
   json?: unknown;
+  plan?: unknown;
+  runtime?: unknown;
   preferExistingProfile?: unknown;
   forceProfilePrompt?: unknown;
   preferProfileSetupRuntimes?: unknown;
@@ -71,7 +74,7 @@ type WorkspaceRunStage = 'init' | 'test' | 'build' | 'start';
 type WorkspaceAutopilotMode = 'audit' | 'safe-fix' | 'enforce';
 type WorkspaceBootstrapProfile = WorkspaceCreateProfile;
 type WorkspaceSnapshotAction = 'create' | 'list' | 'inspect' | 'restore';
-type WorkspaceContractAction = 'init' | 'inspect' | 'verify' | 'graph' | 'open';
+type WorkspaceContractAction = 'init' | 'inspect' | 'sync' | 'verify' | 'graph' | 'open';
 
 type ProfileQuickPickItem = vscode.QuickPickItem & { value: WorkspaceBootstrapProfile };
 
@@ -289,10 +292,28 @@ function parseWorkspaceAutopilotMode(value: unknown): WorkspaceAutopilotMode | u
 async function pickWorkspaceRunFlags(
   stage: WorkspaceRunStage,
   workspaceName: string,
-  options?: { preferredSince?: string; preferredMaxWorkers?: number; preferredScope?: string }
+  options?: {
+    preferredSince?: string;
+    preferredMaxWorkers?: number;
+    preferredScope?: string;
+    preferredPlan?: boolean;
+    preferredRuntime?: string;
+  }
 ): Promise<string[] | undefined> {
   const selected = await vscode.window.showQuickPick(
     [
+      {
+        label: 'Plan only',
+        description: 'Resolve project lifecycle commands without executing project code',
+        value: 'plan',
+        picked: options?.preferredPlan === true,
+      },
+      {
+        label: 'Runtime filter',
+        description: 'Limit planning or execution to one detected runtime family',
+        value: 'runtime',
+        picked: Boolean(options?.preferredRuntime),
+      },
       {
         label: 'Affected projects only',
         description: 'Run only changed projects from VCS diff',
@@ -347,6 +368,29 @@ async function pickWorkspaceRunFlags(
   }
 
   const flags: string[] = [];
+  if (selectedValues.has('plan')) {
+    flags.push('--plan');
+  }
+  if (selectedValues.has('runtime')) {
+    let runtime = options?.preferredRuntime?.trim();
+    if (!runtime) {
+      const runtimeInput = await vscode.window.showInputBox({
+        title: `Workspace Run (${stage}) — ${workspaceName}`,
+        prompt: 'Runtime family to plan or execute (--runtime), for example node, python, or ruby.',
+        placeHolder: 'node',
+        ignoreFocusOut: true,
+      });
+      if (runtimeInput === undefined) {
+        return undefined;
+      }
+      runtime = runtimeInput.trim();
+    }
+    if (!runtime || !/^[a-z0-9][a-z0-9-]*$/i.test(runtime)) {
+      vscode.window.showErrorMessage('Invalid runtime family. Use letters, numbers, and hyphens.');
+      return undefined;
+    }
+    flags.push('--runtime', runtime);
+  }
   if (selectedValues.has('affected')) {
     flags.push('--affected');
   }
@@ -644,10 +688,16 @@ export function registerWorkspaceOperationsCommands(options: {
       typeof typedItem?.scope === 'string' && typedItem.scope.trim().length > 0
         ? typedItem.scope.trim()
         : undefined;
+    const preferredRuntime =
+      typeof typedItem?.runtime === 'string' && typedItem.runtime.trim().length > 0
+        ? typedItem.runtime.trim()
+        : undefined;
     const flags = await pickWorkspaceRunFlags(stage, wsName, {
       preferredSince,
       preferredMaxWorkers,
       preferredScope,
+      preferredPlan: typedItem?.plan === true,
+      preferredRuntime,
     });
     if (!flags) {
       return;
@@ -903,7 +953,10 @@ export function registerWorkspaceOperationsCommands(options: {
     }
 
     const { workspacePath, workspaceName } = workspaceTarget;
-    const contractPath = path.join(workspacePath, '.rapidkit', 'workspace.contract.json');
+    const contractPath = await resolveWorkspaceArtifactPath(
+      workspacePath,
+      '.workspai/workspace.contract.json'
+    );
 
     if (action === 'open') {
       const fsContract = await import('fs-extra');
@@ -923,10 +976,10 @@ export function registerWorkspaceOperationsCommands(options: {
     }
 
     const command = ['workspace', 'contract', action];
-    if (action === 'verify') {
+    if (action === 'verify' || action === 'sync') {
       command.push('--strict');
     }
-    if (action === 'inspect' || action === 'verify' || action === 'graph') {
+    if (action === 'inspect' || action === 'sync' || action === 'verify' || action === 'graph') {
       command.push('--json');
     }
 
@@ -936,7 +989,9 @@ export function registerWorkspaceOperationsCommands(options: {
       commands:
         action === 'init'
           ? appendWorkspaceCommandRefresh('workspaceContractInit', [command])
-          : [command],
+          : action === 'sync'
+            ? appendWorkspaceCommandRefresh('workspaceContractSync', [command])
+            : [command],
     });
   };
 
@@ -953,6 +1008,12 @@ export function registerWorkspaceOperationsCommands(options: {
             label: '$(json) Inspect contract',
             description: 'Print the current contract as JSON',
             value: 'inspect',
+          },
+          {
+            label: '$(sync) Synchronize contract',
+            description:
+              'Reconcile canonical project and governance declarations from live evidence',
+            value: 'sync',
           },
           {
             label: '$(shield) Verify contract',
@@ -990,6 +1051,10 @@ export function registerWorkspaceOperationsCommands(options: {
 
     vscode.commands.registerCommand('workspai.workspaceContractInspect', async (item?: unknown) => {
       await runWorkspaceContractAction(item, 'inspect');
+    }),
+
+    vscode.commands.registerCommand('workspai.workspaceContractSync', async (item?: unknown) => {
+      await runWorkspaceContractAction(item, 'sync');
     }),
 
     vscode.commands.registerCommand('workspai.workspaceContractVerify', async (item?: unknown) => {
@@ -1348,6 +1413,23 @@ export function registerWorkspaceOperationsCommands(options: {
         name: `Workspai: Workspace Watch — ${wsName}`,
         cwd: workspacePath,
         commands: [['workspace', 'watch', '--once', '--json']],
+      });
+    }),
+
+    vscode.commands.registerCommand('workspai.live', async (item?: unknown) => {
+      const workspaceExplorer = getWorkspaceExplorer();
+      const { workspacePath, workspaceName } = resolveWorkspaceTarget(item, workspaceExplorer);
+      if (!workspacePath) {
+        vscode.window.showErrorMessage(
+          'No workspace selected. Select a workspace in the sidebar first.'
+        );
+        return;
+      }
+      const wsName = workspaceName || path.basename(workspacePath);
+      runRapidkitCommandsInTerminal({
+        name: `Workspai: Live Activity — ${wsName}`,
+        cwd: workspacePath,
+        commands: [['live']],
       });
     }),
 

@@ -355,6 +355,47 @@ export function buildWorkspaceGraphProjection(
         ...(numberValue(value.proofCount) !== undefined
           ? { proofCount: numberValue(value.proofCount) }
           : {}),
+        ...(Array.isArray(value.inputCoverage)
+          ? {
+              inputCoverage: value.inputCoverage.flatMap((coverage) => {
+                if (!isRecord(coverage)) {
+                  return [];
+                }
+                const scope = stringValue(coverage.scope);
+                const scopeId = stringValue(coverage.scopeId);
+                const tier = stringValue(coverage.tier);
+                const status = stringValue(coverage.status);
+                const eligibleFiles = numberValue(coverage.eligibleFiles);
+                const suppliedFiles = numberValue(coverage.suppliedFiles);
+                const selectionStrategy = stringValue(coverage.selectionStrategy);
+                if (
+                  !scope ||
+                  !scopeId ||
+                  !tier ||
+                  !status ||
+                  eligibleFiles === undefined ||
+                  suppliedFiles === undefined ||
+                  !selectionStrategy
+                ) {
+                  return [];
+                }
+                return [
+                  {
+                    scope,
+                    scopeId,
+                    tier,
+                    status,
+                    eligibleFiles,
+                    suppliedFiles,
+                    ...(numberValue(coverage.fileBudget) !== undefined
+                      ? { fileBudget: numberValue(coverage.fileBudget) }
+                      : {}),
+                    selectionStrategy,
+                  },
+                ];
+              }),
+            }
+          : {}),
         diagnostics: stringArray(value.diagnostics),
       },
     ];
@@ -395,6 +436,41 @@ export function buildWorkspaceGraphProjection(
     : {};
   if (Object.keys(bindingCoverage).length > 0) {
     Object.assign(quality, { bindingCoverage });
+  }
+  const completeness = isRecord(qualityRecord.completeness)
+    ? qualityRecord.completeness
+    : undefined;
+  const completenessInventory = isRecord(completeness?.inventory)
+    ? completeness.inventory
+    : undefined;
+  const completenessProviders = isRecord(completeness?.providers)
+    ? completeness.providers
+    : undefined;
+  if (
+    (completeness?.status === 'complete' || completeness?.status === 'bounded') &&
+    completenessInventory &&
+    completenessProviders
+  ) {
+    Object.assign(quality, {
+      completeness: {
+        status: completeness.status,
+        inventory: {
+          scopeCount: numberValue(completenessInventory.scopeCount) ?? 0,
+          completeScopes: numberValue(completenessInventory.completeScopes) ?? 0,
+          boundedScopes: numberValue(completenessInventory.boundedScopes) ?? 0,
+          eligibleFiles: numberValue(completenessInventory.eligibleFiles) ?? 0,
+          indexedFiles: numberValue(completenessInventory.indexedFiles) ?? 0,
+          eligibleFileCountExact:
+            booleanValue(completenessInventory.eligibleFileCountExact) ?? false,
+        },
+        providers: {
+          complete: numberValue(completenessProviders.complete) ?? 0,
+          bounded: numberValue(completenessProviders.bounded) ?? 0,
+          notApplicable: numberValue(completenessProviders.notApplicable) ?? 0,
+          failed: numberValue(completenessProviders.failed) ?? 0,
+        },
+      },
+    });
   }
   const diagnostics = (Array.isArray(raw.diagnostics) ? raw.diagnostics : []).flatMap((value) => {
     if (typeof value === 'string') {
@@ -440,6 +516,18 @@ export function buildWorkspaceGraphProjection(
           : {}),
         ...(booleanValue(value.truncated) !== undefined
           ? { truncated: booleanValue(value.truncated) }
+          : {}),
+        ...(numberValue(value.eligibleFileCount) !== undefined
+          ? { eligibleFileCount: numberValue(value.eligibleFileCount) }
+          : {}),
+        ...(booleanValue(value.eligibleFileCountExact) !== undefined
+          ? { eligibleFileCountExact: booleanValue(value.eligibleFileCountExact) }
+          : {}),
+        ...(stringValue(value.inventoryMode)
+          ? { inventoryMode: stringValue(value.inventoryMode) }
+          : {}),
+        ...(stringValue(value.inventoryStrategy)
+          ? { inventoryStrategy: stringValue(value.inventoryStrategy) }
           : {}),
       },
     ];

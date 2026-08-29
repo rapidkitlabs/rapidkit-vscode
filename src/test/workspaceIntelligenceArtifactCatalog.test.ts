@@ -8,6 +8,7 @@ import { resolveReportBinding } from '../core/dashboardReportRegistry.js';
 import { getWorkspaceIntelligenceAgentReadOrder } from '../core/workspaceIntelligenceChainContract.js';
 import {
   WORKSPAI_RUNTIME_ARTIFACT_CONTRACTS,
+  WORKSPAI_PROJECT_RUNTIME_REPORT_ARTIFACTS,
   WORKSPAI_RUNTIME_REPORT_PATHS,
   workspaceArtifactProducerCommand,
 } from '../core/workspaceIntelligenceArtifactCatalog.js';
@@ -38,6 +39,12 @@ describe('workspace intelligence artifact catalog', () => {
       'capabilities',
       '--write',
     ]);
+    expect(WORKSPAI_RUNTIME_REPORT_PATHS).not.toContain(
+      '.workspai/reports/project-knowledge-graph-reference.json'
+    );
+    expect(WORKSPAI_PROJECT_RUNTIME_REPORT_ARTIFACTS.map((entry) => entry.artifactPath)).toContain(
+      '.workspai/reports/project-knowledge-graph-reference.json'
+    );
   });
 
   it('uses the CLI-authored bounded read order when INDEX.json is missing', async () => {

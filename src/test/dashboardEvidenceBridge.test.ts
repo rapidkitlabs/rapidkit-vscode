@@ -640,6 +640,58 @@ describe('dashboardEvidenceBridge', () => {
     expect(grounding?.detailSections?.[0]?.title).toBe('getWorkspaceModel');
   });
 
+  it('surfaces the implemented dual-era MCP runtime and planned mutation boundary', async () => {
+    const workspacePath = await createWorkspaceWithReports({
+      'agent-customization-pack.json': {
+        schemaVersion: 'rapidkit-agent-customization-pack.v1',
+        generatedAt: '2026-08-28T10:04:00.000Z',
+        preset: 'enterprise',
+        experimental: { mcpReady: true },
+        outputInventory: [{ path: 'AGENTS.md', status: 'written' }],
+      },
+      'workspai-mcp-design.json': {
+        schemaVersion: 'workspai-mcp-design.v1',
+        status: 'implemented',
+        mode: 'read-mostly',
+        runtime: {
+          command: 'workspai workspace mcp serve',
+          transport: 'stdio-jsonrpc',
+          lifecycle: 'dual-era',
+          supportedProtocolVersions: ['2025-06-18', '2024-11-05'],
+          structuredContent: true,
+          toolExecutionErrors: true,
+        },
+        candidateTools: [{ name: 'getWorkspaceModel', mutates: false }],
+        plannedTools: [
+          {
+            name: 'refreshWorkspaceIntelligence',
+            mutates: true,
+            approvalRequired: true,
+            availability: 'not-served',
+          },
+        ],
+      },
+    });
+    await fs.writeFile(path.join(workspacePath, 'AGENTS.md'), '# Agents\n', 'utf8');
+
+    const bundle = await buildDashboardEvidenceBundle({ workspacePath });
+    const grounding = findEvidenceCard(bundle, 'agentGrounding');
+
+    expect(grounding?.metrics?.mcpTools).toBe(1);
+    expect(grounding?.detailSections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'MCP runtime',
+          body: expect.stringContaining('dual-era'),
+        }),
+        expect.objectContaining({
+          title: 'refreshWorkspaceIntelligence (planned)',
+          body: expect.stringContaining('explicit approval required'),
+        }),
+      ])
+    );
+  });
+
   it('does not fail Agent Grounding just because the workspace report index contains release blockers', async () => {
     const workspacePath = await createWorkspaceWithReports({
       'INDEX.json': {
@@ -1540,6 +1592,12 @@ describe('dashboardEvidenceBridge', () => {
       },
     });
     expect(graph?.summary).toContain('graph 42/61/73');
+    expect(graph?.relatedArtifacts).toContainEqual(
+      expect.objectContaining({
+        id: 'workspace-knowledge-graph',
+        scope: 'workspace',
+      })
+    );
     expect(evaluation).toMatchObject({
       metrics: {
         observedTokens: 1280,
@@ -1583,6 +1641,9 @@ describe('dashboardEvidenceBridge', () => {
     const bundle = await buildDashboardEvidenceBundle({ workspacePath });
 
     expect(resolveCardForReportKind(bundle, 'workspace-knowledge-graph')?.id).toBe(
+      'workspaceModel'
+    );
+    expect(resolveCardForReportKind(bundle, 'project-knowledge-graph-reference')?.id).toBe(
       'workspaceModel'
     );
     expect(resolveCardForReportKind(bundle, 'workspace-intelligence-evaluation')?.id).toBe(

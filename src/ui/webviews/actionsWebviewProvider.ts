@@ -79,11 +79,13 @@ import {
   executeApprovedCreatePlan,
 } from '../../core/createExecutionCapability.js';
 import {
+  buildAssistantPlanAgentHandoff,
   assistantExecutionPolicyInstruction,
   parseAssistantExecutionPolicy,
   resolveAssistantExecutionPolicy,
   type AssistantExecutionPolicy,
 } from '../../core/assistantExecutionPolicy.js';
+import { buildAssistantEditorFocus } from '../../core/assistantEditorFocus.js';
 import { buildCoreRapidkitShellCommand, runCommandsInTerminal } from '../../utils/terminalExecutor';
 import { buildRapidkitCommand } from '../../utils/platformCapabilities';
 import { Logger } from '../../utils/logger';
@@ -2996,8 +2998,12 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       resolveWorkspaceEvidenceFreshness(input.workspacePath),
     ]);
     for (const attachment of assistantEvidence.attachments) {
-      if (attachment.exists && !authorizedEvidencePaths.includes(attachment.relativePath)) {
-        authorizedEvidencePaths.push(attachment.relativePath);
+      const locator =
+        attachment.scope === 'project'
+          ? `project:${attachment.relativePath}`
+          : attachment.relativePath;
+      if (attachment.exists && !authorizedEvidencePaths.includes(locator)) {
+        authorizedEvidencePaths.push(locator);
       }
     }
     const baseAssistantObjective = buildAssistantEvidenceObjective({
@@ -3008,11 +3014,60 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       evidence: assistantEvidence,
       freshness: evidenceFreshness,
     });
+    const activeEditor = vscode.window.activeTextEditor;
+    let activeEditorFocus = '';
+    if (activeEditor?.document.uri.scheme === 'file') {
+      try {
+        const focusRoot = effectiveProjectPath ?? input.workspacePath;
+        const [canonicalFocusRoot, canonicalEditorPath] = await Promise.all([
+          fs.realpath(focusRoot),
+          fs.realpath(activeEditor.document.uri.fsPath),
+        ]);
+        activeEditorFocus = buildAssistantEditorFocus({
+          workspacePath: canonicalFocusRoot,
+          filePath: canonicalEditorPath,
+          languageId: activeEditor.document.languageId,
+          ...(!activeEditor.selection.isEmpty
+            ? {
+                selection: {
+                  text: activeEditor.document.getText(activeEditor.selection),
+                  startLine: activeEditor.selection.start.line + 1,
+                  endLine: activeEditor.selection.end.line + 1,
+                },
+              }
+            : {}),
+          diagnostics: vscode.languages
+            .getDiagnostics(activeEditor.document.uri)
+            .slice(0, 20)
+            .map((diagnostic) => ({
+              severity: vscode.DiagnosticSeverity[diagnostic.severity]?.toLowerCase() ?? 'unknown',
+              message: diagnostic.message,
+              line: diagnostic.range.start.line + 1,
+              column: diagnostic.range.start.character + 1,
+              ...(diagnostic.source ? { source: diagnostic.source } : {}),
+              ...(diagnostic.code !== undefined
+                ? {
+                    code:
+                      typeof diagnostic.code === 'object' ? diagnostic.code.value : diagnostic.code,
+                  }
+                : {}),
+            })),
+        });
+      } catch {
+        // A deleted, virtualized, or out-of-scope editor remains ordinary UI
+        // state and must not weaken Assistant scope isolation.
+      }
+    }
     const activeGoalPrompt =
       input.assistantMode === 'goal'
         ? buildActiveGoalPromptSection(await readActiveGoalHandoff(input.workspacePath))
         : '';
-    const assistantObjective = [projectBootstrapPrompt, baseAssistantObjective, activeGoalPrompt]
+    const assistantObjective = [
+      projectBootstrapPrompt,
+      baseAssistantObjective,
+      activeEditorFocus,
+      activeGoalPrompt,
+    ]
       .filter(Boolean)
       .join('\n\n');
     const goalRemediationHandoff: StudioBlockerHandoff | undefined = governedGoal
@@ -3974,6 +4029,17 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         ? String((completion.data as { summary: string }).summary)
         : undefined;
     if (completed.status === 'completed' && summary) {
+      if (executionPolicy.profile === 'implementation-plan') {
+        this._postInlineCreate('sidebarStudioModeSuggestion', {
+          sessionId: completed.id,
+          fromMode: input.assistantMode,
+          toMode: 'agent',
+          label: 'Run with Agent',
+          description:
+            'Implement this approved plan with governed mutation, diff review, and verification.',
+          request: buildAssistantPlanAgentHandoff({ request: input.task, plan: summary }),
+        });
+      }
       this._postInlineCreate('sidebarStudioDone', {
         sessionId: completed.id,
         modelId: completed.selectedModelId ?? 'auto',

@@ -2,7 +2,10 @@ import {
   isAutonomousWorkspaiAssistantMode,
   type WorkspaiAssistantMode,
 } from './assistantModeContract.js';
-import type { EvidenceAgentContextBundle } from './evidenceAgentContextBundle.js';
+import {
+  evidenceAttachmentLocator,
+  type EvidenceAgentContextBundle,
+} from './evidenceAgentContextBundle.js';
 import type { EvidenceFreshnessAssessment } from './workspaceEvidenceFreshness.js';
 
 /**
@@ -18,7 +21,7 @@ export function buildAssistantEvidenceObjective(input: {
 }): string {
   const availablePaths = input.evidence.attachments
     .filter((attachment) => attachment.exists)
-    .map((attachment) => attachment.relativePath);
+    .map(evidenceAttachmentLocator);
 
   return [
     input.task,

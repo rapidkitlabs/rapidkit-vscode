@@ -51,6 +51,7 @@
     "goal",
     "agent",
     "snapshot",
+    "live",
     "bootstrap",
     "setup",
     "cache",
@@ -555,6 +556,13 @@
       "summary": "List detected or registered resources for the current command scope.",
       "canonicalArgv": [
         "list"
+      ]
+    },
+    {
+      "invocation": "live",
+      "summary": "Render the versioned cross-terminal execution graph for Workspai runs in the current project or workspace.",
+      "canonicalArgv": [
+        "live"
       ]
     },
     {
@@ -1902,6 +1910,32 @@
       ]
     },
     {
+      "artifactPath": ".workspai/reports/project-knowledge-graph-reference.json",
+      "schemaVersion": "project-knowledge-graph-reference.v1",
+      "contractPath": "contracts/workspace-intelligence/project-knowledge-graph-reference.v1.json",
+      "producerCommands": [
+        [
+          "adopt"
+        ],
+        [
+          "import"
+        ],
+        [
+          "workspace",
+          "model"
+        ],
+        [
+          "workspace",
+          "sync"
+        ],
+        [
+          "workspace",
+          "intelligence",
+          "run"
+        ]
+      ]
+    },
+    {
       "artifactPath": ".workspai/agent-entry.v1.json",
       "schemaVersion": "workspai.agent-entry.v1",
       "contractPath": "contracts/workspace-intelligence/project-agent-entry.v1.json",
@@ -2695,6 +2729,10 @@
           "description": "Bound graph query results (1–100)."
         },
         {
+          "flag": "--kind",
+          "description": "Limit graph entity search to one canonical entity kind."
+        },
+        {
           "flag": "--refresh-graph",
           "description": "Bypass the compatible persisted graph and rebuild from live sources."
         },
@@ -2732,7 +2770,7 @@
       ],
       "artifact": null,
       "examples": [
-        "workspai workspace graph search \"authentication endpoint\" --limit 12 --json",
+        "workspai workspace graph search \"authentication endpoint\" --kind endpoint --limit 12 --json",
         "workspai workspace graph evidence \"GET /users\" --json",
         "workspai workspace graph mermaid"
       ]
@@ -3209,8 +3247,8 @@
     },
     {
       "id": "contract",
-      "usage": "workspai workspace contract [init|inspect|verify|graph] [--strict] [--json]",
-      "summary": "Create, inspect, verify, or project the workspace contract.",
+      "usage": "workspai workspace contract [init|inspect|sync|verify|graph] [--strict] [--json]",
+      "summary": "Create, inspect, synchronize, verify, or project the workspace contract.",
       "options": [
         {
           "flag": "--workspace",
@@ -3236,11 +3274,13 @@
       "subactions": [
         "init",
         "inspect",
+        "sync",
         "verify",
         "graph"
       ],
       "artifact": ".workspai/workspace.contract.json",
       "examples": [
+        "workspai workspace contract sync --strict --json",
         "workspai workspace contract verify --strict --json",
         "workspai workspace contract graph --json"
       ]
@@ -3493,6 +3533,14 @@
           "description": "Limit the operation to a bounded scope such as project:<name>."
         },
         {
+          "flag": "--plan",
+          "description": "Resolve lifecycle commands without executing project code."
+        },
+        {
+          "flag": "--runtime",
+          "description": "Limit lifecycle planning or execution to one detected runtime family."
+        },
+        {
           "flag": "--affected",
           "description": "Run only projects affected by the selected Git change."
         },
@@ -3538,6 +3586,7 @@
       ],
       "artifact": ".workspai/reports/workspace-run-last.json",
       "examples": [
+        "workspai workspace run test --scope project:api --plan --runtime ruby --json",
         "workspai workspace run test --affected --blast-radius --strict",
         "workspai workspace run build --parallel --max-workers 4 --json"
       ]
@@ -4133,6 +4182,13 @@
       "moduleCommands": false,
       "doctor": "observed",
       "lifecycleCommands": [
+        "init",
+        "dev",
+        "start",
+        "build",
+        "test",
+        "lint",
+        "format",
         "help"
       ]
     },

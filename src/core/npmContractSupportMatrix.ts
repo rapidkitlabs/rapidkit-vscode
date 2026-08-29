@@ -13,6 +13,14 @@ export type NpmContractSupportEntry = {
 
 export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
   {
+    contractPath: 'workspace-activity-event.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface:
+      'Live Workspace Activity command, Dashboard recent activity, and execution observability boundary',
+    usage:
+      'Validates and reads bounded machine-local NDJSON journals for the Dashboard, deduplicates mirrored events, and launches the CLI-owned live execution graph without treating observational activity as verification evidence.',
+  },
+  {
     contractPath: 'adopt-effects.v1.json',
     mode: 'mirrored-reserved',
     extensionSurface: 'Adoption preview compatibility boundary',
@@ -126,7 +134,14 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
     mode: 'evidence-consumed',
     extensionSurface: 'Workspace Model card, graph search, and graph export commands',
     usage:
-      'Reads proof-backed entity, relation, provider, diagnostic, and quality metrics from the canonical graph.',
+      'Reads proof-backed entity, relation, provider input coverage, bounded inventory strategy, semantic binding, completeness, diagnostic, and quality metrics from the canonical graph.',
+  },
+  {
+    contractPath: 'workspace-intelligence/project-knowledge-graph-reference.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Project Agent bootstrap, Dashboard Graph scope, and Studio refresh routing',
+    usage:
+      'Validates the portable project-owned reference payload, binds it to the selected project and canonical workspace Graph source hash, and exposes its bounded continuation query without duplicating the canonical Graph.',
   },
   {
     contractPath: 'workspace-intelligence/workspace-knowledge-graph-change-overlay.v1.json',
@@ -159,7 +174,8 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
     contractPath: 'analyze-last-run.v1.json',
     mode: 'evidence-consumed',
     extensionSurface: 'Dashboard evidence, Studio handoff, AI architecture grounding',
-    usage: 'Reads analyze-last-run.json blockers, score, warnings, and artifact paths.',
+    usage:
+      'Reads analyze-last-run.json blockers, score, warnings, artifact paths, and the source-structure/not-evaluated authority fields so Analyze is never presented as release readiness.',
   },
   {
     contractPath: 'artifact-remediation-plan.v1.json',
@@ -712,7 +728,7 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
     mode: 'evidence-consumed',
     extensionSurface: 'Project-scoped Assistant and Studio grounding',
     usage:
-      'Reads the bounded project context artifact that points an agent from one project to its owning workspace, model, graph, evidence index, and safe commands.',
+      'Reads the project-owned bounded context from the project root, exposes governance and projection bounds, and routes Assistant/Studio to the project Graph reference, workspace evidence index, and safe continuation commands.',
   },
   {
     contractPath: 'workspace-intelligence/verified-goal.v1.json',

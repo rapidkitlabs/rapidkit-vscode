@@ -324,6 +324,7 @@ export function WorkspaceGraphExplorer({
     return counts;
   }, [graph]);
   const bindingCoverage = Object.entries(graph?.quality.bindingCoverage ?? {});
+  const completeness = graph?.quality.completeness;
   const selectedAttributes = selected
     ? Object.entries(selected.attributes).filter(([, value]) => value !== null && value !== '')
     : [];
@@ -861,11 +862,13 @@ export function WorkspaceGraphExplorer({
               <span>Input fingerprint</span>
               <strong>{graph.source?.strategy ?? 'not reported'}</strong>
               <small>
-                {!graph.source?.scopes.length
-                  ? 'No source scope metadata reported'
-                  : graph.source.scopes.some((scope) => scope.truncated)
-                    ? 'One or more source scopes are bounded'
-                    : 'All reported source scopes are complete'}
+                {completeness
+                  ? `${completeness.status} · ${completeness.inventory.indexedFiles}/${completeness.inventory.eligibleFiles} eligible files indexed`
+                  : !graph.source?.scopes.length
+                    ? 'No source scope metadata reported'
+                    : graph.source.scopes.some((scope) => scope.truncated)
+                      ? 'One or more source scopes are bounded'
+                      : 'All reported source scopes are complete'}
               </small>
             </article>
           </div>
@@ -888,6 +891,14 @@ export function WorkspaceGraphExplorer({
                           {provider.discoveredRelations ?? 0} relations · {provider.proofCount ?? 0}{' '}
                           proofs
                         </small>
+                        {provider.inputCoverage?.map((coverage) => (
+                          <small key={`${coverage.scope}:${coverage.scopeId}:${coverage.tier}`}>
+                            {coverage.scopeId} · {coverage.tier} · {coverage.suppliedFiles}/
+                            {coverage.eligibleFiles} files · {coverage.status} ·{' '}
+                            {coverage.selectionStrategy}
+                            {coverage.fileBudget ? ` · budget ${coverage.fileBudget}` : ''}
+                          </small>
+                        ))}
                         {provider.version || provider.permission ? (
                           <small>
                             {[provider.version ? `v${provider.version}` : '', provider.permission]
@@ -929,8 +940,11 @@ export function WorkspaceGraphExplorer({
                         <span>{scope.kind}</span>
                         <small>
                           {scope.strategy ?? 'unknown strategy'} · {scope.fileCount ?? 0}/
-                          {scope.fileLimit ?? '—'} files{' '}
+                          {scope.eligibleFileCount ?? scope.fileLimit ?? '—'} files{' '}
                           {scope.truncated ? '· bounded' : '· complete'}
+                          {scope.eligibleFileCountExact === false ? ' · estimated inventory' : ''}
+                          {scope.inventoryMode ? ` · ${scope.inventoryMode}` : ''}
+                          {scope.inventoryStrategy ? ` · ${scope.inventoryStrategy}` : ''}
                         </small>
                       </div>
                     ))}

@@ -18,6 +18,8 @@ import {
   AGENT_GROUNDING_DOC_PATH,
   AGENT_REPORTS_INDEX_PATH,
   AGENTS_MD_PATH,
+  PROJECT_CONTEXT_AGENT_REPORT_PATH,
+  PROJECT_KNOWLEDGE_GRAPH_REFERENCE_PATH,
   WORKSPACE_CONTEXT_AGENT_REPORT_PATH,
 } from './workspaceIntelligencePaths.js';
 import {
@@ -26,9 +28,12 @@ import {
 } from './workspaceIntelligenceArtifactCatalog.js';
 import { getWorkspaceIntelligenceAgentReadOrder } from './workspaceIntelligenceChainContract.js';
 import { readWorkspaceSkillsIndexArtifact } from './workspaceSkillsIndexReader.js';
+import { readProjectKnowledgeGraphReference } from './projectKnowledgeGraphReferenceReader.js';
 
 export type EvidenceAgentAttachment = {
   relativePath: string;
+  /** Artifact authority. Project artifacts resolve from projectPath, never workspacePath. */
+  scope?: 'workspace' | 'project';
   label: string;
   required: boolean;
   exists: boolean;
@@ -102,6 +107,29 @@ function attachmentFileRef(workspacePath: string, relativePath: string): string 
   return `#file:${toPosixPath(path.join(workspacePath, relativePath))}`;
 }
 
+export function evidenceAttachmentRoot(
+  bundle: Pick<EvidenceAgentContextBundle, 'workspacePath' | 'projectPath'>,
+  attachment: Pick<EvidenceAgentAttachment, 'scope'>
+): string | undefined {
+  return attachment.scope === 'project' ? bundle.projectPath : bundle.workspacePath;
+}
+
+export function evidenceAttachmentAbsolutePath(
+  bundle: Pick<EvidenceAgentContextBundle, 'workspacePath' | 'projectPath'>,
+  attachment: Pick<EvidenceAgentAttachment, 'relativePath' | 'scope'>
+): string | undefined {
+  const root = evidenceAttachmentRoot(bundle, attachment);
+  return root ? path.resolve(root, attachment.relativePath) : undefined;
+}
+
+export function evidenceAttachmentLocator(
+  attachment: Pick<EvidenceAgentAttachment, 'relativePath' | 'scope'>
+): string {
+  return attachment.scope === 'project'
+    ? `project:${attachment.relativePath}`
+    : attachment.relativePath;
+}
+
 function relativeArtifactPath(workspacePath: string, artifactPath?: string): string | undefined {
   if (!artifactPath?.trim()) {
     return undefined;
@@ -138,6 +166,7 @@ export async function buildEvidenceAgentContextBundle(
   const attachments: EvidenceAgentAttachment[] = [];
   const missingRequired: string[] = [];
   const matchedOperationalSkills: string[] = [];
+  const projectContextSummaryLines: string[] = [];
 
   for (const entry of INTELLIGENCE_ATTACHMENTS) {
     const absolutePath = path.join(input.workspacePath, entry.relativePath);
@@ -150,6 +179,115 @@ export async function buildEvidenceAgentContextBundle(
     });
     if (entry.required && !exists) {
       missingRequired.push(entry.relativePath);
+    }
+  }
+
+  // Project-owned evidence is a first-class authority in 0.66. It must never
+  // be resolved relative to the canonical workspace because adopted/linked
+  // projects commonly live outside that directory.
+  if (input.projectPath) {
+    const projectContextPath = path.join(input.projectPath, PROJECT_CONTEXT_AGENT_REPORT_PATH);
+    const projectContextExists = await fs.pathExists(projectContextPath);
+    const projectGraphPath = path.join(input.projectPath, PROJECT_KNOWLEDGE_GRAPH_REFERENCE_PATH);
+    const projectHasPortableEntry =
+      projectContextExists ||
+      (await fs.pathExists(projectGraphPath)) ||
+      (await fs.pathExists(path.join(input.projectPath, '.workspai/agent-entry.v1.json')));
+    if (!projectHasPortableEntry) {
+      // Ordinary, non-adopted projects remain source-capable without claiming
+      // that project-owned Workspai evidence exists.
+    } else {
+      let projectContextValid = false;
+      let projectContextError: string | undefined;
+      if (projectContextExists) {
+        try {
+          const context = (await fs.readJson(projectContextPath)) as Record<string, unknown>;
+          const project =
+            context.project &&
+            typeof context.project === 'object' &&
+            !Array.isArray(context.project)
+              ? (context.project as Record<string, unknown>)
+              : undefined;
+          projectContextValid =
+            context.schemaVersion === 'project-context-agent.v1' &&
+            typeof project?.name === 'string' &&
+            (!input.projectName || project.name === input.projectName);
+          const intelligence =
+            context.intelligence &&
+            typeof context.intelligence === 'object' &&
+            !Array.isArray(context.intelligence)
+              ? (context.intelligence as Record<string, unknown>)
+              : undefined;
+          const projection =
+            intelligence?.projection &&
+            typeof intelligence.projection === 'object' &&
+            !Array.isArray(intelligence.projection)
+              ? (intelligence.projection as Record<string, unknown>)
+              : undefined;
+          const governance =
+            project?.governance &&
+            typeof project.governance === 'object' &&
+            !Array.isArray(project.governance)
+              ? (project.governance as Record<string, unknown>)
+              : undefined;
+          if (projection) {
+            projectContextSummaryLines.push(
+              `Project lens: ${String(projection.selectedCount ?? 0)}/${String(projection.eligibleCount ?? 0)} representative entities selected; ${String(projection.omittedCount ?? 0)} retrievable via ${String(projection.continuationCommand ?? 'bounded Graph search')}`
+            );
+          }
+          if (governance) {
+            projectContextSummaryLines.push(
+              `Project governance: ownership ${governance.ownership ? 'declared' : 'not declared'}; CI ${governance.ci ? 'declared' : 'not declared'}; release ${governance.release ? 'declared' : 'not declared'}`
+            );
+          }
+          if (!projectContextValid) {
+            projectContextError = 'Project context schema or project identity does not match.';
+          }
+        } catch (error) {
+          projectContextError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      attachments.push({
+        relativePath: PROJECT_CONTEXT_AGENT_REPORT_PATH,
+        scope: 'project',
+        label: 'Project agent context',
+        required: true,
+        exists: projectContextExists,
+        validity: projectContextValid ? 'valid' : projectContextExists ? 'invalid' : 'missing',
+        ...(projectContextError ? { validationError: projectContextError } : {}),
+      });
+      if (!projectContextValid) {
+        missingRequired.push(`project:${PROJECT_CONTEXT_AGENT_REPORT_PATH}`);
+      }
+
+      const projectGraph = await readProjectKnowledgeGraphReference({
+        projectPath: input.projectPath,
+        expectedProjectName: input.projectName,
+      });
+      attachments.push({
+        relativePath: PROJECT_KNOWLEDGE_GRAPH_REFERENCE_PATH,
+        scope: 'project',
+        label: 'Project Knowledge Graph reference',
+        required: true,
+        exists: projectGraph.kind !== 'missing',
+        validity:
+          projectGraph.kind === 'valid'
+            ? 'valid'
+            : projectGraph.kind === 'missing'
+              ? 'missing'
+              : 'invalid',
+        ...(projectGraph.kind === 'corrupt' || projectGraph.kind === 'incompatible'
+          ? { validationError: projectGraph.error }
+          : {}),
+      });
+      if (projectGraph.kind !== 'valid') {
+        missingRequired.push(`project:${PROJECT_KNOWLEDGE_GRAPH_REFERENCE_PATH}`);
+      } else {
+        const summary = projectGraph.reference.summary;
+        matchedOperationalSkills.push(
+          `Project Graph: ${summary.entityCount} entities, ${summary.relationCount} relations, ${summary.proofCount} proofs; retrieve more with ${projectGraph.reference.canonical.boundedQuery}`
+        );
+      }
     }
   }
 
@@ -186,7 +324,7 @@ export async function buildEvidenceAgentContextBundle(
       }
       const exists = await fs.pathExists(absolutePath);
       const existingIndex = attachments.findIndex(
-        (attachment) => attachment.relativePath === relativePath
+        (attachment) => attachment.scope !== 'project' && attachment.relativePath === relativePath
       );
       // A live INDEX may strengthen the bundled baseline, but it cannot
       // downgrade a report the extension requires for grounded AI actions.
@@ -337,6 +475,7 @@ export async function buildEvidenceAgentContextBundle(
       ? `Missing or invalid intelligence: ${Array.from(new Set(missingRequired)).join(', ')} (run workspace context/model first)`
       : undefined,
     ...buildAgentPackHandoffSummaryLines(agentPack, agentPackSummary),
+    ...projectContextSummaryLines,
     ...matchedOperationalSkills.map((skill) => `Relevant operational skill: ${skill}`),
   ].filter((line): line is string => Boolean(line));
 
@@ -359,7 +498,10 @@ export function buildSendToCopilotPrompt(bundle: EvidenceAgentContextBundle): st
   const workspaceRoot = toPosixPath(bundle.workspacePath);
   const fileLines = bundle.attachments
     .filter((attachment) => attachment.exists && attachment.promptEligible !== false)
-    .map((attachment) => attachmentFileRef(bundle.workspacePath, attachment.relativePath));
+    .flatMap((attachment) => {
+      const root = evidenceAttachmentRoot(bundle, attachment);
+      return root ? [attachmentFileRef(root, attachment.relativePath)] : [];
+    });
 
   const contextLines = [
     '## Workspai workspace root (READ THIS FIRST)',

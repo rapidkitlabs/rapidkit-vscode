@@ -321,8 +321,12 @@ async function hasFileWithExtension(rootPath: string, extension: string): Promis
 }
 
 function projectBadgeLabel(project: WorkspaiProject): string {
+  const detected = project.framework || project.runtime;
+  if (detected) {
+    return [project.kind, detected].filter(Boolean).join(' · ');
+  }
   if (project.type === 'unknown' && project.managed) {
-    return 'Managed';
+    return project.kind ? `${project.kind} · Managed` : 'Managed';
   }
 
   return frameworkLabel(project.type);
@@ -789,6 +793,39 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
                 ? detection.stack
                 : markerStack;
 
+          let intelligenceIdentity: Pick<
+            WorkspaiProject,
+            'kind' | 'runtime' | 'framework' | 'runtimeCandidates'
+          > = {};
+          try {
+            const projectContext = (await fs.readJSON(
+              path.join(projectPath, '.workspai', 'reports', 'project-context-agent.json')
+            )) as { schemaVersion?: unknown; project?: Record<string, unknown> };
+            if (projectContext.schemaVersion === 'project-context-agent.v1') {
+              const identity = projectContext.project ?? {};
+              intelligenceIdentity = {
+                ...(typeof identity.kind === 'string' ? { kind: identity.kind } : {}),
+                ...(typeof identity.runtime === 'string' ? { runtime: identity.runtime } : {}),
+                ...(typeof identity.framework === 'string'
+                  ? { framework: identity.framework }
+                  : typeof workspaceRegistryProject?.framework === 'string'
+                    ? { framework: workspaceRegistryProject.framework }
+                    : {}),
+                ...(Array.isArray(identity.runtimeCandidates)
+                  ? {
+                      runtimeCandidates: identity.runtimeCandidates.filter(
+                        (entry): entry is string => typeof entry === 'string'
+                      ),
+                    }
+                  : {}),
+              };
+            }
+          } catch {
+            if (workspaceRegistryProject?.framework) {
+              intelligenceIdentity = { framework: workspaceRegistryProject.framework };
+            }
+          }
+
           if (
             projectType === 'unknown' &&
             !registryEntry &&
@@ -806,6 +843,7 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
             modules: [],
             isValid: true,
             workspacePath: wsPath,
+            ...intelligenceIdentity,
           };
 
           return { ...base, type: projectType } as WorkspaiProject;

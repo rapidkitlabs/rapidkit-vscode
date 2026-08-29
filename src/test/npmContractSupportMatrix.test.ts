@@ -73,6 +73,7 @@ describe('npm contract support matrix', () => {
 
     for (const contractPath of [
       'agent-customization-pack.v1.json',
+      'workspace-activity-event.v1.json',
       'create-planner-capabilities.v1.json',
       'cli-log-event.v1.json',
       'module-support.v1.json',

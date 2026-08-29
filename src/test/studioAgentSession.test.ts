@@ -106,6 +106,87 @@ function closedCliRepairResult(input?: {
 }
 
 describe('Studio Agent session runtime', () => {
+  it('waits on an explicit input action and resumes from user steering', async () => {
+    const session = new StudioAgentSession(
+      {
+        id: 'structured-input-session',
+        workspacePath: '/workspace',
+        cardId: 'assistant:agent',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        requiresVerifiedCompletion: false,
+      },
+      sequenceModel([
+        {
+          type: 'input',
+          question: 'Which project should I change?',
+          reason: 'The workspace contains two matching projects.',
+        },
+        { type: 'complete', summary: 'Scoped to the API project.' },
+      ]),
+      new StudioAgentToolRegistry(),
+      new MemoryStore()
+    );
+    const waiting = new Promise<void>((resolve) => {
+      session.onEvent((event) => {
+        if (event.type === 'session.status' && event.data.status === 'waiting-input') {
+          resolve();
+        }
+      });
+    });
+
+    const running = session.run('Update the API');
+    await waiting;
+    session.steer('Use the api project.');
+    const result = await running;
+
+    expect(result.status).toBe('completed');
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'model.message',
+          data: expect.objectContaining({ clarification: true, inputRequired: true }),
+        }),
+        expect.objectContaining({ type: 'request.steered' }),
+      ])
+    );
+  });
+
+  it('cancels immediately while a provider model decision is still pending', async () => {
+    const session = new StudioAgentSession(
+      {
+        id: 'pending-provider-cancel-session',
+        workspacePath: '/workspace',
+        cardId: 'assistant:agent',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      { next: async () => new Promise<StudioAgentModelAction>(() => undefined) },
+      new StudioAgentToolRegistry(),
+      new MemoryStore()
+    );
+    const started = new Promise<void>((resolve) => {
+      session.onEvent((event) => {
+        if (event.type === 'request.started') resolve();
+      });
+    });
+
+    const running = session.run('Inspect the workspace');
+    await started;
+    session.cancel();
+    const result = await Promise.race([
+      running,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Cancellation did not release the session.')), 500)
+      ),
+    ]);
+
+    expect(result.status).toBe('cancelled');
+    expect(result.events.some((event) => event.type === 'session.cancelled')).toBe(true);
+  });
+
   it('applies a reduced persisted execution policy across the complete session state machine', async () => {
     const registry = new StudioAgentToolRegistry();
     registry.register({

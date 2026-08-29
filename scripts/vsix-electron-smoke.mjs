@@ -48,10 +48,10 @@ function findSingleVsix(cwd) {
 
 function prepareSmokeWorkspace(root) {
   const workspacePath = path.join(root, 'workspace');
-  const reportsDir = path.join(workspacePath, '.rapidkit', 'reports');
+  const reportsDir = path.join(workspacePath, '.workspai', 'reports');
   fs.mkdirSync(reportsDir, { recursive: true });
   fs.writeFileSync(
-    path.join(workspacePath, '.rapidkit-workspace'),
+    path.join(workspacePath, '.workspai-workspace'),
     JSON.stringify(
       {
         schemaVersion: 'rapidkit-workspace-marker-v1',
@@ -64,7 +64,7 @@ function prepareSmokeWorkspace(root) {
   );
   const generatedAt = new Date().toISOString();
   fs.writeFileSync(
-    path.join(workspacePath, '.rapidkit', 'workspace.json'),
+    path.join(workspacePath, '.workspai', 'workspace.json'),
     JSON.stringify(
       {
         schema_version: '1.0',
@@ -108,7 +108,7 @@ function prepareSmokeWorkspace(root) {
           workspacePath,
           target:
             fileName === 'workspace-trace-last-run.json'
-              ? { kind: 'trace', diffRef: '.rapidkit/reports/workspace-model-diff-last-run.json' }
+              ? { kind: 'trace', diffRef: '.workspai/reports/workspace-model-diff-last-run.json' }
               : { kind: 'release-blocked' },
           summary,
           sections: [{ id: sectionTitle.toLowerCase(), title: sectionTitle, body: summary }],

@@ -2,7 +2,7 @@
 
 <!-- WORKSPAI:CLI-RELEASE-POLICY:START -->
 
-> Extension 0.44.0 · verified with Workspai CLI 0.64.0 · minimum compatible CLI 0.64.0
+> Extension 0.45.0 · verified with Workspai CLI 0.66.0 · minimum compatible CLI 0.66.0
 
 <!-- WORKSPAI:CLI-RELEASE-POLICY:END -->
 
@@ -69,6 +69,15 @@ Workspai creates or resolves the workspace, registers the project, writes the
 project-to-workspace link, and synchronizes consumer context. You can continue
 working from the project directory; the CLI resolves the owning workspace
 without requiring you to remember its path.
+
+The adopted repository receives portable consumer artifacts under `.workspai/`
+and generated agent Skills under `.agents/skills/` when repository state permits
+that mirror. The project entry records readiness and points to a bounded
+project-owned Graph artifact whose hash and source freshness are validated by
+the extension. The owning workspace keeps the complete aggregate Model and
+Graph; project artifacts are scoped projections, not competing canonical
+graphs. Existing authored `.agents` content is preserved and unsafe symlink or
+path escapes are rejected.
 
 ## Create a project
 
@@ -183,8 +192,10 @@ npx workspai workspace intelligence run \
 ```
 
 Use a supported agent identifier when targeting a specific consumer. Generated
-agent instructions tell the model how to query bounded graph evidence; users do
-not need to paste the entire graph into prompts.
+agent instructions and evidence-selected Skills tell the model how to query
+bounded Graph evidence and which operational workflows the repository can
+actually justify. Users do not need to paste the entire Graph into prompts, and
+irrelevant Skills are recorded as suppressed rather than presented as valid.
 
 ## Health and verification
 

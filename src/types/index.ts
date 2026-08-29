@@ -50,6 +50,11 @@ export interface WorkspaiProject {
   modules: string[];
   isValid: boolean;
   workspacePath?: string;
+  /** CLI-authored open taxonomy; never restricted to the extension's scaffold catalog. */
+  kind?: string;
+  runtime?: string;
+  framework?: string;
+  runtimeCandidates?: string[];
 }
 
 export interface WorkspaiModule {

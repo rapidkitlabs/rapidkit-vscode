@@ -15,7 +15,11 @@ import {
 import { loadAnalyzeReport } from '../ui/panels/incidentStudioAnalyze.js';
 import { classifyIncidentActionPolicy } from '../ui/panels/incidentStudioPromptPolicy.js';
 import type { StudioBlockerHandoff } from '../contracts/studio-blocker-handoff-contract.js';
-import { buildEvidenceAgentContextBundle } from './evidenceAgentContextBundle.js';
+import {
+  buildEvidenceAgentContextBundle,
+  evidenceAttachmentAbsolutePath,
+  evidenceAttachmentLocator,
+} from './evidenceAgentContextBundle.js';
 import {
   inspectStudioAgentFiles,
   parseStudioAgentAction,
@@ -273,8 +277,12 @@ async function discoverAnalyzeFindingRepairTargets(input: {
     if (!attachment.relativePath.endsWith('.json')) {
       continue;
     }
-    const artifactPath = path.resolve(input.workspacePath, attachment.relativePath);
-    if (!isPathInside(input.workspacePath, artifactPath)) {
+    const artifactPath = evidenceAttachmentAbsolutePath(
+      { workspacePath: input.workspacePath, projectPath: input.projectPath },
+      attachment
+    );
+    const authorityRoot = attachment.scope === 'project' ? input.projectPath : input.workspacePath;
+    if (!artifactPath || !authorityRoot || !isPathInside(authorityRoot, artifactPath)) {
       continue;
     }
     try {
@@ -314,8 +322,11 @@ async function discoverContractAuthoredRepairTargets(input: {
     ) {
       continue;
     }
-    const artifactPath = path.resolve(input.workspacePath, attachment.relativePath);
-    if (!isPathInside(input.workspacePath, artifactPath)) {
+    const artifactPath = evidenceAttachmentAbsolutePath(
+      { workspacePath: input.workspacePath },
+      attachment
+    );
+    if (!artifactPath || !isPathInside(input.workspacePath, artifactPath)) {
       continue;
     }
     try {
@@ -510,8 +521,12 @@ export async function collectSidebarStudioRepairEvidence(input: {
     ) {
       continue;
     }
-    const absolutePath = path.resolve(input.workspacePath, attachment.relativePath);
-    if (!isPathInside(input.workspacePath, absolutePath)) {
+    const absolutePath = evidenceAttachmentAbsolutePath(
+      { workspacePath: input.workspacePath, projectPath: repairProjectPath },
+      attachment
+    );
+    const authorityRoot = attachment.scope === 'project' ? repairProjectPath : input.workspacePath;
+    if (!absolutePath || !authorityRoot || !isPathInside(authorityRoot, absolutePath)) {
       continue;
     }
     const content = await readBoundedUtf8(absolutePath);
@@ -520,7 +535,7 @@ export async function collectSidebarStudioRepairEvidence(input: {
     }
     const block = [
       '',
-      `<governed-evidence path="${normalizeRelativePath(attachment.relativePath)}" label="${attachment.label}" validity="${attachment.validity ?? 'unknown'}">`,
+      `<governed-evidence path="${evidenceAttachmentLocator(attachment)}" label="${attachment.label}" validity="${attachment.validity ?? 'unknown'}">`,
       content,
       '</governed-evidence>',
     ].join('\n');
@@ -532,13 +547,13 @@ export async function collectSidebarStudioRepairEvidence(input: {
   }
 
   const attachmentValidity = new Map(
-    bundle.attachments.map((attachment) => [attachment.relativePath, attachment.validity])
+    bundle.attachments.map((attachment) => [
+      evidenceAttachmentLocator(attachment),
+      attachment.validity,
+    ])
   );
   const observedEvidencePaths = [
-    ...new Set([
-      ...bundle.attachments.map((attachment) => attachment.relativePath),
-      ...exactTargetPaths,
-    ]),
+    ...new Set([...bundle.attachments.map(evidenceAttachmentLocator), ...exactTargetPaths]),
   ].sort();
   const evidenceFingerprint = crypto
     .createHash('sha256')
@@ -546,9 +561,17 @@ export async function collectSidebarStudioRepairEvidence(input: {
       JSON.stringify(
         await Promise.all(
           observedEvidencePaths.map(async (relativePath) => {
+            const projectEvidence = relativePath.startsWith('project:');
+            const normalizedEvidencePath = projectEvidence
+              ? relativePath.slice('project:'.length)
+              : relativePath;
             const absolutePath = path.resolve(
-              exactTargetPaths.includes(relativePath) ? sourceRoot : input.workspacePath,
-              relativePath
+              exactTargetPaths.includes(relativePath)
+                ? sourceRoot
+                : projectEvidence
+                  ? (repairProjectPath ?? input.workspacePath)
+                  : input.workspacePath,
+              normalizedEvidencePath
             );
             try {
               const stat = await fs.stat(absolutePath);
@@ -588,7 +611,7 @@ export async function collectSidebarStudioRepairEvidence(input: {
     evidenceFingerprint,
     authorizedEvidencePaths: bundle.attachments
       .filter((attachment) => attachment.exists)
-      .map((attachment) => normalizeRelativePath(attachment.relativePath)),
+      .map(evidenceAttachmentLocator),
   };
 }
 
@@ -748,6 +771,7 @@ export async function executeSidebarApplyDebugPatch(input: {
     ? [
         `Analyze verdict: ${report.summary.verdict}`,
         `Analyze score: ${report.summary.score}`,
+        `Analyze authority: ${report.summary.statusScope ?? 'legacy-unspecified'}; release readiness: ${report.summary.releaseReadiness ?? 'legacy-unspecified'}`,
         `Findings: ${report.summary.findings.fail} fail, ${report.summary.findings.warn} warn, ${report.summary.findings.info} info`,
       ].join('\n')
     : error
@@ -894,6 +918,7 @@ export async function executeSidebarApplyDebugPatch(input: {
         try {
           files = await inspectStudioAgentFiles({
             workspacePath: input.workspacePath,
+            projectPath: input.projectPath ?? input.handoff.projectPath,
             paths: freshPaths,
             kind: action.type === 'inspect-files' ? 'source' : 'evidence',
             authorizedEvidencePaths: repairEvidence.authorizedEvidencePaths,

@@ -183,6 +183,16 @@ export const DASHBOARD_COMMAND_CONTRACTS = {
     cliArgs: ['workspace', 'contract', 'init'],
     vscodeCommand: 'workspai.workspaceContractInit',
   },
+  workspaceContractSync: {
+    id: 'workspaceContractSync',
+    label: 'Contract Sync',
+    scope: 'workspace',
+    executionMode: 'terminal-rapidkit',
+    trackActivity: true,
+    requiresWorkspace: true,
+    cliArgs: ['workspace', 'contract', 'sync', '--strict', '--json'],
+    vscodeCommand: 'workspai.workspaceContractSync',
+  },
   workspaceContractGraph: {
     id: 'workspaceContractGraph',
     label: 'Workspace Graph',
@@ -512,6 +522,16 @@ export const DASHBOARD_COMMAND_CONTRACTS = {
     requiresWorkspace: true,
     cliArgs: ['workspace', 'watch', '--once', '--json'],
     vscodeCommand: 'workspai.workspaceWatch',
+  },
+  live: {
+    id: 'live',
+    label: 'Live Activity',
+    scope: 'workspace',
+    executionMode: 'terminal-rapidkit',
+    trackActivity: true,
+    requiresWorkspace: true,
+    cliArgs: ['live'],
+    vscodeCommand: 'workspai.live',
   },
   workspaceMcp: {
     id: 'workspaceMcp',

@@ -27,6 +27,7 @@ export type DashboardReportKind =
   | 'snapshot-last-run'
   | 'workspace-model'
   | 'workspace-knowledge-graph'
+  | 'project-knowledge-graph-reference'
   | 'workspace-intelligence-evaluation'
   | 'workspace-model-snapshot'
   | 'workspace-model-diff'
@@ -208,6 +209,15 @@ const REPORT_BINDINGS: Array<{
       command: 'workspaceModel',
       cardId: 'workspaceModel',
       scope: 'workspace',
+    },
+  },
+  {
+    match: (name) => name === 'project-knowledge-graph-reference.json',
+    binding: {
+      kind: 'project-knowledge-graph-reference',
+      command: 'workspaceModel',
+      cardId: 'workspaceModel',
+      scope: 'project',
     },
   },
   {

@@ -76,6 +76,11 @@
       "contractPath": "contracts/workspace-intelligence/project-context-agent.v1.json",
       "publication": "json-schema"
     },
+    "projectKnowledgeGraphReference": {
+      "schemaVersion": "project-knowledge-graph-reference.v1",
+      "contractPath": "contracts/workspace-intelligence/project-knowledge-graph-reference.v1.json",
+      "publication": "json-schema"
+    },
     "projectAgentEntry": {
       "schemaVersion": "workspai.agent-entry.v1",
       "contractPath": "contracts/workspace-intelligence/project-agent-entry.v1.json",
@@ -319,6 +324,11 @@
     "cliLogEvent": {
       "schemaVersion": "cli-log-event-v1",
       "contractPath": "contracts/cli-log-event.v1.json",
+      "publication": "json-schema"
+    },
+    "workspaceActivityEvent": {
+      "schemaVersion": "workspace-activity-event.v1",
+      "contractPath": "contracts/workspace-activity-event.v1.json",
       "publication": "json-schema"
     },
     "freshnessMetadata": {

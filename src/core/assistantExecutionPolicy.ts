@@ -190,6 +190,26 @@ export function assistantExecutionPolicyInstruction(policy: AssistantExecutionPo
   }
 }
 
+/**
+ * Convert a completed read-only Plan into an explicit, user-approved Agent
+ * handoff. The plan is context, not authority: Agent must re-inspect current
+ * evidence before mutation and remains bound to its own verification gates.
+ */
+export function buildAssistantPlanAgentHandoff(input: { request: string; plan: string }): string {
+  const request = input.request.trim().slice(0, 4_000);
+  const plan = input.plan.trim().slice(0, 12_000);
+  return [
+    'Implement the following user-approved Workspai Plan in Agent mode.',
+    'Treat the plan as a bounded handoff, not as proof that the workspace is unchanged: re-inspect relevant evidence and source before mutation, then verify the completed result.',
+    '',
+    'Original request:',
+    request,
+    '',
+    'Approved plan:',
+    plan,
+  ].join('\n');
+}
+
 export function parseAssistantExecutionPolicy(
   value: unknown,
   expectedSelectedMode: WorkspaiAssistantMode

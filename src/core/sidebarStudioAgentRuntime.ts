@@ -255,22 +255,26 @@ export async function inspectStudioAgentFiles(input: {
   lineStart?: number;
   lineEnd?: number;
 }): Promise<StudioAgentFileObservation[]> {
-  const sourceRoot =
+  const defaultRoot =
     input.kind === 'source' && input.projectPath?.trim()
       ? path.resolve(input.projectPath)
       : path.resolve(input.workspacePath);
-  const workspaceReal = await fs.realpath(sourceRoot);
   const authorized = new Set(
     (input.authorizedEvidencePaths ?? []).map((entry) => entry.replace(/\\/g, '/'))
   );
   const observations: StudioAgentFileObservation[] = [];
   for (const relativePath of input.paths.slice(0, STUDIO_AGENT_MAX_FILES)) {
-    const normalized = relativePath.replace(/\\/g, '/');
+    const requested = relativePath.replace(/\\/g, '/');
+    const projectEvidence = input.kind === 'evidence' && requested.startsWith('project:');
+    const normalized = projectEvidence ? requested.slice('project:'.length) : requested;
+    const sourceRoot =
+      projectEvidence && input.projectPath?.trim() ? path.resolve(input.projectPath) : defaultRoot;
+    const workspaceReal = await fs.realpath(sourceRoot);
     if (
       (input.kind === 'source' && Boolean(studioSourcePathDenialReason(normalized))) ||
-      (input.kind === 'evidence' && !authorized.has(normalized))
+      (input.kind === 'evidence' && !authorized.has(requested))
     ) {
-      throw new Error(`Studio agent path is not authorized: ${normalized}`);
+      throw new Error(`Studio agent path is not authorized: ${requested}`);
     }
     const lexicalPath = path.resolve(sourceRoot, normalized);
     if (!isInside(sourceRoot, lexicalPath)) {
@@ -288,7 +292,7 @@ export async function inspectStudioAgentFiles(input: {
         (error as NodeJS.ErrnoException).code === 'ENOENT'
       ) {
         observations.push({
-          path: normalized,
+          path: requested,
           kind: input.kind,
           exists: false,
           sha256: null,
@@ -320,7 +324,7 @@ export async function inspectStudioAgentFiles(input: {
         : fullText;
     const bounded = Buffer.from(selectedText, 'utf8').subarray(0, STUDIO_AGENT_MAX_FILE_BYTES);
     observations.push({
-      path: normalized,
+      path: requested,
       kind: input.kind,
       exists: true,
       sha256: crypto.createHash('sha256').update(full).digest('hex'),

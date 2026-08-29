@@ -69,8 +69,19 @@ export const WORKSPAI_RUNTIME_ARTIFACT_CONTRACTS: readonly WorkspaceIntelligence
     .map(normalizeArtifactContract)
     .filter((entry): entry is WorkspaceIntelligenceArtifactContract => Boolean(entry));
 
+const PROJECT_LOCAL_REPORT_PATHS = new Set([
+  '.workspai/reports/project-context-agent.json',
+  '.workspai/reports/project-knowledge-graph-reference.json',
+]);
+
+export const WORKSPAI_PROJECT_RUNTIME_REPORT_ARTIFACTS = WORKSPAI_RUNTIME_ARTIFACT_CONTRACTS.filter(
+  (entry) => PROJECT_LOCAL_REPORT_PATHS.has(entry.artifactPath)
+);
+
 export const WORKSPAI_RUNTIME_REPORT_ARTIFACTS = WORKSPAI_RUNTIME_ARTIFACT_CONTRACTS.filter(
-  (entry) => entry.artifactPath.startsWith('.workspai/reports/')
+  (entry) =>
+    entry.artifactPath.startsWith('.workspai/reports/') &&
+    !PROJECT_LOCAL_REPORT_PATHS.has(entry.artifactPath)
 );
 
 export const WORKSPAI_RUNTIME_REPORT_PATHS = WORKSPAI_RUNTIME_REPORT_ARTIFACTS.map(

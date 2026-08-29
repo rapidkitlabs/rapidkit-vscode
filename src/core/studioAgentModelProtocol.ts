@@ -18,6 +18,7 @@ import {
 export const STUDIO_AGENT_MODEL_ACTION_SCHEMA_VERSION =
   'workspai.studio-agent-model-action.v1' as const;
 export const STUDIO_AGENT_COMPLETE_TOOL_NAME = 'workspai-complete' as const;
+export const STUDIO_AGENT_REQUEST_INPUT_TOOL_NAME = 'workspai-request-input' as const;
 
 export type StudioAgentNativeToolAction = {
   callId?: string;
@@ -452,6 +453,20 @@ export function parseStudioAgentModelAction(input: {
     };
   }
   if (
+    value.action === 'input' &&
+    hasOnlyKeys(value, ['schemaVersion', 'action', 'question', 'reason']) &&
+    typeof value.question === 'string' &&
+    value.question.trim() &&
+    typeof value.reason === 'string' &&
+    value.reason.trim()
+  ) {
+    return {
+      type: 'input',
+      question: boundedControlText(value.question, 1_000),
+      reason: boundedControlText(value.reason, 500),
+    };
+  }
+  if (
     value.action === 'complete' &&
     hasOnlyKeys(value, ['schemaVersion', 'action', 'summary']) &&
     typeof value.summary === 'string' &&
@@ -569,11 +584,16 @@ function promptForTurn(
       : []),
     ...modeInstructions,
     mode === 'agent' && !context.session.goal && !context.session.governedGoal
-      ? 'Select exactly one provided native tool per turn, or send a plain-text message if the user request requires clarification or is not an engineering task.'
+      ? 'Select exactly one provided native tool per turn. If essential scope is missing, call workspai-request-input before mutation; never use ordinary text as an implicit question.'
       : 'Select exactly one provided native tool per turn.',
     'If native tool calling is unavailable, use exactly one JSON action with no markdown or prose.',
     `Action schema: ${STUDIO_AGENT_MODEL_ACTION_SCHEMA_VERSION}`,
     'Tool action: {"schemaVersion":"workspai.studio-agent-model-action.v1","action":"tool","toolName":"...","input":{},"reason":"..."}',
+    ...(mode === 'agent' || mode === 'goal'
+      ? [
+          'Input action: {"schemaVersion":"workspai.studio-agent-model-action.v1","action":"input","question":"...","reason":"..."}',
+        ]
+      : []),
     'Completion action: {"schemaVersion":"workspai.studio-agent-model-action.v1","action":"complete","summary":"..."}',
     `Objective: ${boundedControlText(objective, 5_000)}`,
     'Workspace control boundary: $WORKSPACE',
@@ -697,6 +717,27 @@ export class ContractStudioAgentModelAdapter implements StudioAgentModelAdapter 
           description: `${tool.description} Activity: ${tool.activity}. Risk: ${tool.risk}.`,
           inputSchema: tool.inputSchema,
         })),
+        ...(context.session.executionPolicy?.toolMode === 'agent' ||
+        context.session.executionPolicy?.toolMode === 'goal' ||
+        (!context.session.executionPolicy &&
+          (context.session.assistantMode === 'agent' || context.session.assistantMode === 'goal'))
+          ? [
+              {
+                name: STUDIO_AGENT_REQUEST_INPUT_TOOL_NAME,
+                description:
+                  'Ask one concise blocking question only when essential scope or intent is missing and before any workspace mutation.',
+                inputSchema: {
+                  type: 'object',
+                  required: ['question', 'reason'],
+                  additionalProperties: false,
+                  properties: {
+                    question: { type: 'string', minLength: 1, maxLength: 1_000 },
+                    reason: { type: 'string', minLength: 1, maxLength: 500 },
+                  },
+                },
+              },
+            ]
+          : []),
         {
           name: STUDIO_AGENT_COMPLETE_TOOL_NAME,
           description:
@@ -764,6 +805,23 @@ export class ContractStudioAgentModelAdapter implements StudioAgentModelAdapter 
           : {
               type: 'message',
               text: 'The completion tool requires a non-empty summary.',
+            };
+      }
+      if (response.toolName === STUDIO_AGENT_REQUEST_INPUT_TOOL_NAME) {
+        const question = response.input.question;
+        const reason = response.input.reason;
+        return typeof question === 'string' &&
+          question.trim() &&
+          typeof reason === 'string' &&
+          reason.trim()
+          ? {
+              type: 'input',
+              question: boundedControlText(question, 1_000),
+              reason: boundedControlText(reason, 500),
+            }
+          : {
+              type: 'message',
+              text: 'The structured input request requires a non-empty question and reason.',
             };
       }
       return allowedTools.includes(response.toolName)

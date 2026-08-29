@@ -126,6 +126,50 @@ describe('workspace snapshot commands', () => {
     );
   });
 
+  it('synchronizes the canonical workspace contract and refreshes its projection', async () => {
+    const { getCommand } = setupHarness();
+
+    await getCommand('workspai.workspaceContractSync')();
+
+    expect(terminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: '/tmp/team-ws',
+        commands: [
+          ['workspace', 'contract', 'sync', '--strict', '--json'],
+          ['workspace', 'contract', 'inspect', '--json'],
+        ],
+      })
+    );
+  });
+
+  it('opens the CLI-owned live cross-terminal activity graph', async () => {
+    const { getCommand } = setupHarness();
+
+    await getCommand('workspai.live')();
+
+    expect(terminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Workspai: Live Activity — team-ws',
+        cwd: '/tmp/team-ws',
+        commands: [['live']],
+      })
+    );
+  });
+
+  it('passes bounded plan and runtime filters to workspace lifecycle commands', async () => {
+    const { getCommand } = setupHarness();
+    showQuickPickMock.mockResolvedValueOnce([{ value: 'plan' }, { value: 'runtime' }]);
+
+    await getCommand('workspai.workspaceRunTest')({ plan: true, runtime: 'ruby' });
+
+    expect(terminalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: '/tmp/team-ws',
+        commands: [['workspace', 'run', 'test', '--plan', '--runtime', 'ruby']],
+      })
+    );
+  });
+
   it('runs workspace analyze with JSON output and writes report to .rapidkit/reports', async () => {
     const { getCommand } = setupHarness();
 

@@ -40,7 +40,8 @@ export function EvidenceCardLogDrawer({
     preview.stderrTail ||
     preview.exitCode != null ||
     entries.length > 0 ||
-    Boolean(card.artifactPath);
+    Boolean(card.artifactPath) ||
+    Boolean(card.relatedArtifacts?.length);
 
   if (!hasDetails && card.id !== 'workspaceModel' && !(card.detailSections?.length ?? 0)) {
     return null;
@@ -50,106 +51,135 @@ export function EvidenceCardLogDrawer({
     <div className="evidence-card-log-drawer">
       <EvidenceCardDetailPreview card={card} />
       {!hasDetails ? null : (
-      <>
-      <button
-        type="button"
-        className="evidence-card-log-drawer__toggle"
-        onClick={() => setExpanded((open) => !open)}
-        aria-expanded={expanded}
-      >
-        <TerminalSquare size={12} aria-hidden="true" />
-        <span>Execution details</span>
-        <ChevronDown
-          size={12}
-          className={`evidence-card-log-drawer__chevron${expanded ? ' is-open' : ''}`}
-          aria-hidden="true"
-        />
-      </button>
+        <>
+          <button
+            type="button"
+            className="evidence-card-log-drawer__toggle"
+            onClick={() => setExpanded((open) => !open)}
+            aria-expanded={expanded}
+          >
+            <TerminalSquare size={12} aria-hidden="true" />
+            <span>Execution details</span>
+            <ChevronDown
+              size={12}
+              className={`evidence-card-log-drawer__chevron${expanded ? ' is-open' : ''}`}
+              aria-hidden="true"
+            />
+          </button>
 
-      {expanded ? (
-        <div className="evidence-card-log-drawer__body">
-          <dl className="evidence-card-log-drawer__meta">
-            {preview.commandId ? (
-              <>
-                <dt>Command</dt>
-                <dd>{preview.commandId}</dd>
-              </>
-            ) : null}
-            {preview.exitCode != null ? (
-              <>
-                <dt>Exit code</dt>
-                <dd>{preview.exitCode}</dd>
-              </>
-            ) : null}
-            {preview.runId ? (
-              <>
-                <dt>Run ID</dt>
-                <dd>{preview.runId}</dd>
-              </>
-            ) : null}
-            {card.generatedAt ? (
-              <>
-                <dt>Generated</dt>
-                <dd>{card.generatedAt}</dd>
-              </>
-            ) : null}
-          </dl>
+          {expanded ? (
+            <div className="evidence-card-log-drawer__body">
+              <dl className="evidence-card-log-drawer__meta">
+                {preview.commandId ? (
+                  <>
+                    <dt>Command</dt>
+                    <dd>{preview.commandId}</dd>
+                  </>
+                ) : null}
+                {preview.exitCode != null ? (
+                  <>
+                    <dt>Exit code</dt>
+                    <dd>{preview.exitCode}</dd>
+                  </>
+                ) : null}
+                {preview.runId ? (
+                  <>
+                    <dt>Run ID</dt>
+                    <dd>{preview.runId}</dd>
+                  </>
+                ) : null}
+                {card.generatedAt ? (
+                  <>
+                    <dt>Generated</dt>
+                    <dd>{card.generatedAt}</dd>
+                  </>
+                ) : null}
+              </dl>
 
-          {blockers.length > 0 ? (
-            <div className="evidence-card-log-drawer__section">
-              <strong>Blockers</strong>
-              <ul>
-                {blockers.map((blocker) => (
-                  <li key={blocker}>{blocker}</li>
-                ))}
-              </ul>
+              {blockers.length > 0 ? (
+                <div className="evidence-card-log-drawer__section">
+                  <strong>Blockers</strong>
+                  <ul>
+                    {blockers.map((blocker) => (
+                      <li key={blocker}>{blocker}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {preview.stderrTail ? (
+                <div className="evidence-card-log-drawer__section">
+                  <strong>stderr tail</strong>
+                  <pre className="evidence-card-log-drawer__log">{preview.stderrTail}</pre>
+                </div>
+              ) : null}
+
+              {entries.length > 0 ? (
+                <div className="evidence-card-log-drawer__section">
+                  <strong>Recent command activity</strong>
+                  <ul>
+                    {entries.map((entry) => (
+                      <li key={entry.id}>
+                        {entry.label} · {entry.status}
+                        {entry.detail ? ` — ${entry.detail}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {card.relatedArtifacts?.length ? (
+                <div className="evidence-card-log-drawer__section">
+                  <strong>Related artifacts</strong>
+                  <ul>
+                    {card.relatedArtifacts.map((artifact) => (
+                      <li key={`${artifact.scope}-${artifact.id}`}>
+                        {onRevealArtifact ? (
+                          <button
+                            type="button"
+                            className="ws-btn ws-btn--ghost"
+                            onClick={() => onRevealArtifact(artifact.artifactPath)}
+                          >
+                            {artifact.label}
+                          </button>
+                        ) : (
+                          artifact.label
+                        )}
+                        {artifact.status ? ` · ${artifact.status}` : ''}
+                        {artifact.summary ? ` — ${artifact.summary}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <div className="evidence-card-log-drawer__actions">
+                {onOpenOutputChannel ? (
+                  <button
+                    type="button"
+                    className="ws-btn ws-btn--ghost"
+                    onClick={onOpenOutputChannel}
+                  >
+                    Open Workspai Evidence output
+                  </button>
+                ) : null}
+                {card.artifactPath && onRevealArtifact ? (
+                  <button
+                    type="button"
+                    className="ws-btn ws-btn--ghost"
+                    onClick={() => onRevealArtifact(card.artifactPath!)}
+                  >
+                    Open artifact file
+                  </button>
+                ) : null}
+              </div>
+              <p className="evidence-card-log-drawer__footnote">
+                Background CLI logs appear in Workspai Evidence output after you run this card.
+                Terminal-mode commands log in the integrated terminal instead.
+              </p>
             </div>
           ) : null}
-
-          {preview.stderrTail ? (
-            <div className="evidence-card-log-drawer__section">
-              <strong>stderr tail</strong>
-              <pre className="evidence-card-log-drawer__log">{preview.stderrTail}</pre>
-            </div>
-          ) : null}
-
-          {entries.length > 0 ? (
-            <div className="evidence-card-log-drawer__section">
-              <strong>Recent command activity</strong>
-              <ul>
-                {entries.map((entry) => (
-                  <li key={entry.id}>
-                    {entry.label} · {entry.status}
-                    {entry.detail ? ` — ${entry.detail}` : ''}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="evidence-card-log-drawer__actions">
-            {onOpenOutputChannel ? (
-              <button type="button" className="ws-btn ws-btn--ghost" onClick={onOpenOutputChannel}>
-                Open Workspai Evidence output
-              </button>
-            ) : null}
-            {card.artifactPath && onRevealArtifact ? (
-              <button
-                type="button"
-                className="ws-btn ws-btn--ghost"
-                onClick={() => onRevealArtifact(card.artifactPath!)}
-              >
-                Open artifact file
-              </button>
-            ) : null}
-          </div>
-          <p className="evidence-card-log-drawer__footnote">
-            Background CLI logs appear in Workspai Evidence output after you run this card. Terminal-mode
-            commands log in the integrated terminal instead.
-          </p>
-        </div>
-      ) : null}
-      </>
+        </>
       )}
     </div>
   );

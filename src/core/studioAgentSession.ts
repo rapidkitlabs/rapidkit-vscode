@@ -24,6 +24,7 @@ import { selectStudioSourceRepairCandidates } from './studioRepairReceipt.js';
 
 export type StudioAgentModelAction =
   | { type: 'tool'; callId?: string; toolName: string; input: unknown; reason: string }
+  | { type: 'input'; question: string; reason: string }
   | { type: 'message'; text: string }
   | { type: 'complete'; summary: string };
 
@@ -688,6 +689,7 @@ export class StudioAgentSession {
   private readonly steering: string[] = [];
   private readonly recentObservations: StudioAgentRecentObservation[] = [];
   private readonly abortController = new AbortController();
+  private pendingInputResolve: (() => void) | undefined;
   private readonly toolAttemptsByEpoch = new Map<string, number>();
   private readonly exhaustedTools = new Set<string>();
   private causalEpoch = 0;
@@ -807,11 +809,15 @@ export class StudioAgentSession {
       return;
     }
     this.steering.push(normalized);
+    this.pendingInputResolve?.();
+    this.pendingInputResolve = undefined;
     void this.emit('request.steered', { message: normalized });
   }
 
   cancel(): void {
     this.abortController.abort();
+    this.pendingInputResolve?.();
+    this.pendingInputResolve = undefined;
   }
 
   run(request: string): Promise<StudioAgentPersistedSession> {
@@ -988,37 +994,41 @@ export class StudioAgentSession {
             'model-source-progress-exhausted'
           );
         }
-        const action: StudioAgentModelAction = deterministicSatisfiedGoalVerificationPending
-          ? {
-              type: 'tool',
-              toolName: 'verify-goal',
-              input: {},
-              reason:
-                'Confirm the already-satisfied Goal baseline before authorizing any source mutation.',
-            }
-          : deterministicProducerRefreshPending
+        const action: StudioAgentModelAction | undefined =
+          deterministicSatisfiedGoalVerificationPending
             ? {
                 type: 'tool',
-                toolName: producerRefreshToolName!,
+                toolName: 'verify-goal',
                 input: {},
-                reason: 'Refresh the exact producer-owned card before spending a model decision.',
+                reason:
+                  'Confirm the already-satisfied Goal baseline before authorizing any source mutation.',
               }
-            : deterministicRecoveryPending
+            : deterministicProducerRefreshPending
               ? {
                   type: 'tool',
-                  toolName: 'recover-active-blocker',
+                  toolName: producerRefreshToolName!,
                   input: {},
-                  reason:
-                    'Run the contract-first blocker recovery prelude before spending a model decision.',
+                  reason: 'Refresh the exact producer-owned card before spending a model decision.',
                 }
-              : await this.model.next(
-                  this.modelContext(
-                    latestObservation,
-                    this.generalSourceRepairActive &&
-                      consecutiveModelDecisionsWithoutSemanticProgress >=
-                        Math.min(4, Math.max(1, modelDecisionLimit - 1))
-                  )
-                );
+              : deterministicRecoveryPending
+                ? {
+                    type: 'tool',
+                    toolName: 'recover-active-blocker',
+                    input: {},
+                    reason:
+                      'Run the contract-first blocker recovery prelude before spending a model decision.',
+                  }
+                : await this.nextModelAction(
+                    this.modelContext(
+                      latestObservation,
+                      this.generalSourceRepairActive &&
+                        consecutiveModelDecisionsWithoutSemanticProgress >=
+                          Math.min(4, Math.max(1, modelDecisionLimit - 1))
+                    )
+                  );
+        if (!action) {
+          break;
+        }
         const satisfiedGoalVerificationWasDeterministic =
           deterministicSatisfiedGoalVerificationPending;
         const producerRefreshWasDeterministic = deterministicProducerRefreshPending;
@@ -1059,45 +1069,61 @@ export class StudioAgentSession {
           consecutiveModelDecisionsWithoutSemanticProgress += 1;
         }
         turnsSinceCheckpoint += 1;
-        if (action.type === 'message') {
-          const isFreeFormClarification =
-            this.isFreeFormAgentSession() && !this.hasMutated() && this.steering.length === 0;
-          if (isFreeFormClarification) {
-            await this.emit('model.message', { text: action.text, clarification: true }, requestId);
-            const waitStart = Date.now();
-            const steeringBefore = this.steering.length;
-            while (
-              this.steering.length === steeringBefore &&
-              !this.abortController.signal.aborted &&
-              Date.now() - waitStart < 120_000
-            ) {
-              await new Promise((resolve) => setTimeout(resolve, 500));
-            }
-            if (this.abortController.signal.aborted) {
-              break;
-            }
-            latestObservation = {
-              ok: true,
-              output: {
-                userResponse: this.steering[this.steering.length - 1],
-                instruction:
-                  'The user answered your clarification. Proceed with the selected scope.',
-              },
-            };
-          } else {
-            consecutiveProtocolMisses += 1;
-            await this.emit('model.message', { text: action.text }, requestId);
-            if (consecutiveProtocolMisses >= 3) {
-              throw new Error(
-                'Selected model did not produce a valid native Studio tool call after 3 attempts.'
-              );
-            }
+        if (action.type === 'input') {
+          if (!isAutonomousWorkspaiAssistantMode(executionMode) || this.hasMutated()) {
             latestObservation = {
               ok: false,
               error:
-                'The repair is still active. Choose a tool or complete only after verified evidence.',
+                'User input can only be requested before mutation in Agent or Goal mode. Continue with the available evidence or complete the governed verification path.',
             };
+            continue;
           }
+          await this.emit(
+            'model.message',
+            {
+              text: action.question,
+              clarification: true,
+              inputRequired: true,
+              reason: action.reason,
+            },
+            requestId
+          );
+          const steeringBefore = this.steering.length;
+          await this.setStatus('waiting-input');
+          if (this.steering.length === steeringBefore && !this.abortController.signal.aborted) {
+            await new Promise<void>((resolve) => {
+              this.pendingInputResolve = resolve;
+              if (this.steering.length !== steeringBefore || this.abortController.signal.aborted) {
+                this.pendingInputResolve = undefined;
+                resolve();
+              }
+            });
+          }
+          if (this.abortController.signal.aborted) {
+            break;
+          }
+          await this.setStatus('running');
+          latestObservation = {
+            ok: true,
+            output: {
+              userResponse: this.steering[this.steering.length - 1],
+              instruction:
+                'The user answered your structured clarification. Proceed within the selected scope and mode contract.',
+            },
+          };
+        } else if (action.type === 'message') {
+          consecutiveProtocolMisses += 1;
+          await this.emit('model.message', { text: action.text, protocolMiss: true }, requestId);
+          if (consecutiveProtocolMisses >= 3) {
+            throw new Error(
+              'Selected model did not produce a valid native Studio tool call after 3 attempts.'
+            );
+          }
+          latestObservation = {
+            ok: false,
+            error:
+              'The session is still active. Select a governed tool, request user input through the structured input action, or complete only after the mode contract is satisfied.',
+          };
         } else if (action.type === 'complete') {
           consecutiveProtocolMisses = 0;
           const completionPolicyViolation = this.completionPolicyViolation(
@@ -1755,6 +1781,32 @@ export class StudioAgentSession {
       );
       await this.setStatus('failed');
       return this.snapshot();
+    }
+  }
+
+  /**
+   * Release the session immediately when the user cancels even when a provider
+   * transport cannot consume an AbortSignal. Promise.race attaches rejection
+   * handling to the provider promise, so a late provider failure is contained
+   * and cannot rewrite the already-cancelled durable session.
+   */
+  private async nextModelAction(
+    context: StudioAgentModelContext
+  ): Promise<StudioAgentModelAction | undefined> {
+    if (this.abortController.signal.aborted) {
+      return undefined;
+    }
+    let onAbort: (() => void) | undefined;
+    const cancelled = new Promise<undefined>((resolve) => {
+      onAbort = () => resolve(undefined);
+      this.abortController.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([this.model.next(context), cancelled]);
+    } finally {
+      if (onAbort) {
+        this.abortController.signal.removeEventListener('abort', onAbort);
+      }
     }
   }
 

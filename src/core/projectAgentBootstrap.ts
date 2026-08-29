@@ -6,6 +6,7 @@ import {
   type StreamingRunOptions,
   type StreamingRunResult,
 } from './streamingRapidkitRunner.js';
+import { readProjectKnowledgeGraphReference } from './projectKnowledgeGraphReferenceReader.js';
 
 export type ProjectAgentBootstrapStatus = 'not-applicable' | 'ready' | 'degraded' | 'blocked';
 
@@ -14,6 +15,13 @@ export type AgentBootstrapReceipt = {
   generatedAt: string;
   receiptId: string;
   status: 'ready' | 'degraded' | 'blocked';
+  statusScope?: 'agent-grounding';
+  readiness?: {
+    agentGrounding: 'ready' | 'degraded' | 'blocked';
+    architectureEvidence: 'ready' | 'degraded' | 'blocked';
+    projectEnvironment: 'ready' | 'degraded' | 'blocked';
+    release: 'not-verified' | 'degraded' | 'blocked';
+  };
   requestedAgent: string;
   resolvedHost: string;
   project: { name: string; relativePath: string; runtime?: string; framework?: string };
@@ -34,6 +42,7 @@ export type AgentBootstrapReceipt = {
   };
   canonicalEvidence: {
     projectContext: '.workspai/reports/project-context-agent.json';
+    projectKnowledgeGraph?: '.workspai/reports/project-knowledge-graph-reference.json';
     workspaceIndex: 'workspace:.workspai/reports/INDEX.json';
     workspaceContext: 'workspace:.workspai/reports/workspace-context-agent.json';
     workspaceModel?: 'workspace:.workspai/reports/workspace-model.json';
@@ -143,6 +152,7 @@ function parseReceipt(value: unknown): AgentBootstrapReceipt | undefined {
   const workspace = value.workspace;
   const entry = value.entry;
   const evidence = value.canonicalEvidence;
+  const readiness = value.readiness;
   const activeGoal = value.activeGoal;
   const claims = value.claims;
   const integrity = value.integrity;
@@ -155,11 +165,21 @@ function parseReceipt(value: unknown): AgentBootstrapReceipt | undefined {
     evidence.workspaceSkillsIndex === 'workspace:.workspai/reports/workspace-skills-index.json' &&
     evidence.boundedGraphSearch ===
       'command:workspai workspace graph search <task-query> --scope project:<project> --limit 12 --json';
+  const modernReadiness =
+    value.statusScope === 'agent-grounding' &&
+    isRecord(readiness) &&
+    BOOTSTRAP_STATUSES.has(String(readiness.agentGrounding)) &&
+    BOOTSTRAP_STATUSES.has(String(readiness.architectureEvidence)) &&
+    BOOTSTRAP_STATUSES.has(String(readiness.projectEnvironment)) &&
+    ['not-verified', 'degraded', 'blocked'].includes(String(readiness.release));
+  const legacyReadiness = value.statusScope === undefined && readiness === undefined;
+  const projectGraphReference = isRecord(evidence) ? evidence.projectKnowledgeGraph : undefined;
   if (
     value.schemaVersion !== 'workspai.agent-bootstrap-receipt.v1' ||
     typeof value.generatedAt !== 'string' ||
     !Number.isFinite(Date.parse(value.generatedAt)) ||
     !BOOTSTRAP_STATUSES.has(String(value.status)) ||
+    (!modernReadiness && !legacyReadiness) ||
     typeof value.receiptId !== 'string' ||
     !/^[a-f0-9]{64}$/.test(value.receiptId) ||
     !AGENT_IDS.has(String(value.requestedAgent)) ||
@@ -188,6 +208,9 @@ function parseReceipt(value: unknown): AgentBootstrapReceipt | undefined {
     evidence.projectContext !== '.workspai/reports/project-context-agent.json' ||
     evidence.workspaceIndex !== 'workspace:.workspai/reports/INDEX.json' ||
     evidence.workspaceContext !== 'workspace:.workspai/reports/workspace-context-agent.json' ||
+    (projectGraphReference !== undefined &&
+      projectGraphReference !== '.workspai/reports/project-knowledge-graph-reference.json') ||
+    (projectGraphReference !== undefined && !modernReadiness) ||
     (!legacyEvidenceRoute && !boundedEvidenceRoute) ||
     !FRESHNESS_STATUSES.has(String(evidence.modelFreshness)) ||
     !FRESHNESS_STATUSES.has(String(evidence.graphFreshness)) ||
@@ -312,6 +335,23 @@ async function executeBootstrap(input: {
       reason: 'The agent bootstrap command failed without a matching blocked receipt.',
     };
   }
+  if (receipt.canonicalEvidence.projectKnowledgeGraph) {
+    const projectGraph = await readProjectKnowledgeGraphReference({
+      projectPath: input.projectPath,
+      expectedProjectName: receipt.project.name,
+    });
+    if (projectGraph.kind !== 'valid') {
+      return {
+        status: 'blocked',
+        adopted: true,
+        receipt,
+        reason:
+          projectGraph.kind === 'missing'
+            ? 'The CLI advertised a project Graph reference, but the portable artifact is missing.'
+            : `The project Graph reference is ${projectGraph.kind}: ${projectGraph.error}`,
+      };
+    }
+  }
   return {
     status: receipt.status,
     adopted: true,
@@ -378,10 +418,18 @@ export function buildProjectAgentBootstrapPromptSection(
   return [
     'PROJECT AGENT BOOTSTRAP RECEIPT:',
     `- Status: ${receipt.status}`,
+    ...(receipt.readiness
+      ? [
+          `- Readiness: grounding ${receipt.readiness.agentGrounding}; architecture ${receipt.readiness.architectureEvidence}; environment ${receipt.readiness.projectEnvironment}; release ${receipt.readiness.release}`,
+        ]
+      : []),
     `- Project: ${receipt.project.name}`,
     `- Canonical workspace identity: ${receipt.workspace.name} (resolved privately at runtime)`,
     `- Model freshness: ${receipt.canonicalEvidence.modelFreshness}`,
     `- Graph freshness: ${receipt.canonicalEvidence.graphFreshness}`,
+    ...(receipt.canonicalEvidence.projectKnowledgeGraph
+      ? [`- Project Graph reference: ${receipt.canonicalEvidence.projectKnowledgeGraph}`]
+      : []),
     receipt.canonicalEvidence.boundedGraphSearch
       ? `- Bounded graph retrieval: ${receipt.canonicalEvidence.boundedGraphSearch}`
       : '- Evidence route: legacy canonical Model and Graph (load only when the task requires it)',

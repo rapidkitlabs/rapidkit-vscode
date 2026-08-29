@@ -5,6 +5,7 @@ export const STUDIO_AGENT_EVENT_SCHEMA_VERSION = 'workspai.studio-agent-event.v1
 export type StudioAgentSessionStatus =
   | 'idle'
   | 'running'
+  | 'waiting-input'
   | 'waiting-permission'
   | 'verifying'
   | 'completed'

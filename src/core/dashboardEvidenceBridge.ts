@@ -63,6 +63,7 @@ import {
 import { buildWorkspaceModelDetailSections } from './workspaceModelGraphVisual.js';
 import { encodeWorkspaceGraphProjection } from './workspaceGraphProjection.js';
 import { validateWorkspaceGraphArtifact } from './workspaceGraphArtifactValidation.js';
+import { readProjectKnowledgeGraphReference } from './projectKnowledgeGraphReferenceReader.js';
 import { readJsonArtifact, type JsonArtifactReadResult } from './jsonArtifactReader.js';
 import {
   buildStudioIncidentSummary,
@@ -84,6 +85,15 @@ export type DashboardEvidenceStatus = 'pass' | 'warn' | 'fail' | 'missing';
 
 export type DashboardEvidenceScope = 'workspace' | 'project';
 
+export type DashboardRelatedArtifact = {
+  id: string;
+  label: string;
+  artifactPath: string;
+  scope: DashboardEvidenceScope;
+  status?: DashboardEvidenceStatus;
+  summary?: string;
+};
+
 export type DashboardEvidenceCard = {
   id: DashboardEvidenceCardId;
   label: string;
@@ -92,6 +102,7 @@ export type DashboardEvidenceCard = {
   scope: DashboardEvidenceScope;
   generatedAt?: string;
   artifactPath?: string;
+  relatedArtifacts?: DashboardRelatedArtifact[];
   metrics?: Record<string, number | string>;
   blockers?: string[];
   /** Projects explicitly implicated by the evidence producer, not the current UI selection. */
@@ -208,6 +219,13 @@ function sanitizeDashboardEvidenceCard(
   return {
     ...card,
     summary: sanitizeDashboardEvidenceText(card.summary, aliases),
+    relatedArtifacts: card.relatedArtifacts?.map((artifact) => ({
+      ...artifact,
+      label: sanitizeDashboardEvidenceText(artifact.label, aliases),
+      summary: artifact.summary
+        ? sanitizeDashboardEvidenceText(artifact.summary, aliases)
+        : undefined,
+    })),
     blockers: card.blockers?.map((blocker) => sanitizeDashboardEvidenceText(blocker, aliases)),
     metrics: card.metrics
       ? Object.fromEntries(
@@ -357,8 +375,32 @@ function buildMcpDesignDetailSections(
   if (!raw) {
     return [];
   }
+  const runtime =
+    raw.runtime && typeof raw.runtime === 'object' && !Array.isArray(raw.runtime)
+      ? (raw.runtime as Record<string, unknown>)
+      : null;
+  const runtimeSection = runtime
+    ? [
+        {
+          id: 'mcp-runtime',
+          title: 'MCP runtime',
+          body: [
+            typeof runtime.command === 'string' ? `command: ${runtime.command}` : '',
+            typeof runtime.transport === 'string' ? `transport: ${runtime.transport}` : '',
+            typeof runtime.lifecycle === 'string' ? `lifecycle: ${runtime.lifecycle}` : '',
+            Array.isArray(runtime.supportedProtocolVersions)
+              ? `protocols: ${runtime.supportedProtocolVersions.join(', ')}`
+              : '',
+            runtime.structuredContent === true ? 'structured content' : '',
+            runtime.toolExecutionErrors === true ? 'structured tool errors' : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        },
+      ]
+    : [];
   const tools = Array.isArray(raw.candidateTools) ? raw.candidateTools : [];
-  return tools
+  const toolSections = tools
     .slice(0, 12)
     .map((entry, index) => {
       if (!entry || typeof entry !== 'object') {
@@ -381,6 +423,29 @@ function buildMcpDesignDetailSections(
       };
     })
     .filter((section): section is { id: string; title: string; body: string } => Boolean(section));
+  const plannedTools = Array.isArray(raw.plannedTools) ? raw.plannedTools : [];
+  const plannedSections = plannedTools.slice(0, 4).flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+    const tool = entry as Record<string, unknown>;
+    const name = typeof tool.name === 'string' ? tool.name : `planned-tool-${index + 1}`;
+    return [
+      {
+        id: `mcp-planned-${name}`,
+        title: `${name} (planned)`,
+        body: [
+          typeof tool.command === 'string' ? `command: ${tool.command}` : '',
+          tool.mutates === true ? 'mutates workspace' : 'read-only',
+          tool.approvalRequired === true ? 'explicit approval required' : '',
+          typeof tool.availability === 'string' ? `availability: ${tool.availability}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+    ];
+  });
+  return [...runtimeSection, ...toolSections, ...plannedSections];
 }
 
 function softenEmptyWorkspaceExplainStatus(input: {
@@ -1646,7 +1711,9 @@ async function buildGovernanceOperationalCards(
 }
 
 async function buildWorkspaceIntelligenceCards(
-  reportsDir: string
+  reportsDir: string,
+  projectPath?: string,
+  projectName?: string
 ): Promise<DashboardEvidenceCard[]> {
   const cards: DashboardEvidenceCard[] = [];
   const workspaceRoot = path.dirname(path.dirname(reportsDir));
@@ -1857,6 +1924,16 @@ async function buildWorkspaceIntelligenceCards(
         graphProofs: proofCount,
         graphProofCoverage: proofCoverage,
       };
+      knowledgeGraphModelCard.relatedArtifacts = [
+        {
+          id: 'workspace-knowledge-graph',
+          label: 'Canonical workspace Knowledge Graph',
+          artifactPath: graphArtifact.artifactPath,
+          scope: 'workspace',
+          status: graphValidation.valid ? 'pass' : 'fail',
+          summary: `${entityCount} entities · ${relationCount} relations · ${proofCount} proofs`,
+        },
+      ];
       knowledgeGraphModelCard.detailSections = [
         ...(knowledgeGraphModelCard.detailSections ?? []),
         {
@@ -1888,6 +1965,47 @@ async function buildWorkspaceIntelligenceCards(
           ...(knowledgeGraphModelCard.blockers ?? []),
           ...blockingDiagnostics.slice(0, 8),
         ];
+      }
+      if (projectPath && projectName) {
+        const projectGraph = await readProjectKnowledgeGraphReference({
+          projectPath,
+          expectedProjectName: projectName,
+          canonicalGraph: graph,
+        });
+        if (projectGraph.kind === 'valid') {
+          const summary = projectGraph.reference.summary;
+          knowledgeGraphModelCard.metrics = {
+            ...(knowledgeGraphModelCard.metrics ?? {}),
+            projectGraphEntities: summary.entityCount,
+            projectGraphRelations: summary.relationCount,
+            projectGraphProofs: summary.proofCount,
+          };
+          knowledgeGraphModelCard.detailSections = [
+            ...(knowledgeGraphModelCard.detailSections ?? []),
+            {
+              id: 'project-knowledge-graph-reference',
+              title: `${projectName} Graph reference`,
+              body: `${summary.entityCount} entities · ${summary.relationCount} relations · ${summary.proofCount} proofs\n${projectGraph.reference.canonical.boundedQuery}`,
+            },
+          ];
+          knowledgeGraphModelCard.relatedArtifacts = [
+            ...(knowledgeGraphModelCard.relatedArtifacts ?? []),
+            {
+              id: 'project-knowledge-graph-reference',
+              label: `${projectName} Knowledge Graph`,
+              artifactPath: projectGraph.artifactPath,
+              scope: 'project',
+              status: 'pass',
+              summary: `${summary.entityCount} entities · ${summary.relationCount} relations · ${summary.proofCount} proofs`,
+            },
+          ];
+        } else if (projectGraph.kind !== 'missing') {
+          knowledgeGraphModelCard.status = 'fail';
+          knowledgeGraphModelCard.blockers = [
+            ...(knowledgeGraphModelCard.blockers ?? []),
+            `Project Graph reference is ${projectGraph.kind}: ${projectGraph.error}`,
+          ];
+        }
       }
     }
   }
@@ -2240,6 +2358,90 @@ async function buildWorkspaceIntelligenceCards(
           ]
         : [];
     const detailSections = [...reportBlockerSections, ...mcpDetailSections];
+    const projectContextArtifactPath = projectPath
+      ? path.join(projectPath, '.workspai/reports/project-context-agent.json')
+      : undefined;
+    const projectContextExists = projectContextArtifactPath
+      ? await fs.pathExists(projectContextArtifactPath)
+      : false;
+    let projectContextDetail: { id: string; title: string; body: string } | undefined;
+    let projectProjectionMetrics: Record<string, number | string> = {};
+    if (projectContextExists && projectContextArtifactPath) {
+      const projectContext = await readJsonIfExists(projectContextArtifactPath);
+      const projectRecord =
+        projectContext?.project && typeof projectContext.project === 'object'
+          ? (projectContext.project as Record<string, unknown>)
+          : {};
+      const intelligence =
+        projectContext?.intelligence && typeof projectContext.intelligence === 'object'
+          ? (projectContext.intelligence as Record<string, unknown>)
+          : {};
+      const projection =
+        intelligence.projection && typeof intelligence.projection === 'object'
+          ? (intelligence.projection as Record<string, unknown>)
+          : {};
+      const governance =
+        projectRecord.governance && typeof projectRecord.governance === 'object'
+          ? (projectRecord.governance as Record<string, unknown>)
+          : {};
+      projectProjectionMetrics = {
+        projectLensSelected: Number(projection.selectedCount ?? 0),
+        projectLensEligible: Number(projection.eligibleCount ?? 0),
+        projectLensOmitted: Number(projection.omittedCount ?? 0),
+      };
+      projectContextDetail = {
+        id: 'selected-project-agent-context',
+        title: `${projectName || path.basename(projectPath!)} project lens`,
+        body: [
+          `${String(projection.selectedCount ?? 0)}/${String(projection.eligibleCount ?? 0)} representative entities selected within ${String(projection.byteBudget ?? 'unknown')} bytes; ${String(projection.omittedCount ?? 0)} available through bounded retrieval.`,
+          typeof projection.continuationCommand === 'string'
+            ? `Continue: ${projection.continuationCommand}`
+            : '',
+          `Governance: CI ${governance.ci ? 'declared' : 'not declared'} · release ${governance.release ? 'declared' : 'not declared'} · ownership ${governance.ownership ? 'declared' : 'not declared'}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      };
+    }
+    const relatedArtifacts: DashboardRelatedArtifact[] = [
+      {
+        id: 'agent-reports-index',
+        label: 'Agent reports index',
+        artifactPath: path.join(reportsDir, 'INDEX.json'),
+        scope: 'workspace',
+        status: indexRaw ? 'pass' : 'missing',
+      },
+      {
+        id: 'workspace-skills-index',
+        label: 'Evidence-selected Skills',
+        artifactPath: path.join(reportsDir, 'workspace-skills-index.json'),
+        scope: 'workspace',
+        status: skillsArtifact.kind === 'valid' ? 'pass' : 'fail',
+        summary: skillsLine || undefined,
+      },
+      ...(mcpDesignRaw
+        ? [
+            {
+              id: 'workspai-mcp-design',
+              label: 'MCP interoperability design',
+              artifactPath: path.join(reportsDir, path.basename(RAPIDKIT_MCP_DESIGN_REPORT_PATH)),
+              scope: 'workspace' as const,
+              status: 'pass' as const,
+            },
+          ]
+        : []),
+      ...(projectContextArtifactPath
+        ? [
+            {
+              id: 'project-context-agent',
+              label: `${projectName || path.basename(projectPath!)} agent context`,
+              artifactPath: projectContextArtifactPath,
+              scope: 'project' as const,
+              status: projectContextExists ? ('pass' as const) : ('missing' as const),
+            },
+          ]
+        : []),
+    ];
     cards.push({
       id: 'agentGrounding',
       label: 'Agent Customization Pack',
@@ -2252,15 +2454,22 @@ async function buildWorkspaceIntelligenceCards(
       artifactPath: pack
         ? path.join(reportsDir, 'agent-customization-pack.json')
         : path.join(reportsDir, 'INDEX.json'),
+      relatedArtifacts,
       metrics: {
         indexed: existingCount,
         surfaces: packSummary?.writtenOutputs ?? (agentsMdExists ? 1 : 0),
         skills: skillsIndex?.skills?.length ?? 0,
-        mcpTools: mcpDetailSections.length,
+        mcpTools: Array.isArray(mcpDesignRaw?.candidateTools)
+          ? mcpDesignRaw.candidateTools.length
+          : 0,
+        ...projectProjectionMetrics,
         ...staleEvidenceMetric(blockers),
       },
       blockers: blockers.slice(0, 12),
-      detailSections: detailSections.length > 0 ? detailSections : undefined,
+      detailSections:
+        detailSections.length > 0 || projectContextDetail
+          ? [...detailSections, ...(projectContextDetail ? [projectContextDetail] : [])]
+          : undefined,
     });
   } else {
     cards.push(
@@ -2692,6 +2901,10 @@ export async function buildDashboardEvidenceBundle(input?: {
     const fail = Number(findings.fail ?? 0);
     const warn = Number(findings.warn ?? 0);
     const score = Number(summary.score ?? 0);
+    const statusScope =
+      summary.statusScope === 'source-structure' ? 'source-structure' : 'legacy-unspecified';
+    const releaseReadiness =
+      summary.releaseReadiness === 'not-evaluated' ? 'not-evaluated' : 'legacy-unspecified';
     const verdict = normalizeEvidenceStatus(summary.verdict);
     const blockers = extractBlockersFromReport('analyze-last-run', analyzeRaw);
     const rawStatus: DashboardEvidenceStatus =
@@ -2706,11 +2919,21 @@ export async function buildDashboardEvidenceBundle(input?: {
         warn,
         blockers,
       }),
-      summary: `Score ${score} · ${fail} fail · ${warn} warn`,
+      summary: `Source structure ${score} · ${fail} fail · ${warn} warn · release ${releaseReadiness}`,
       scope: 'workspace',
       generatedAt: reportGeneratedAt(analyzeRaw),
       artifactPath: analyzeArtifact.artifactPath,
-      metrics: mergeReportMetrics({ score, fail, warn }, analyzeRaw),
+      metrics: mergeReportMetrics({ score, fail, warn, statusScope, releaseReadiness }, analyzeRaw),
+      detailSections: [
+        {
+          id: 'analyze-status-authority',
+          title: 'Analyze authority',
+          body:
+            statusScope === 'source-structure'
+              ? 'Analyze evaluates source structure only. Release readiness is intentionally not evaluated; use the Readiness and Verify artifacts for release decisions.'
+              : 'Legacy Analyze evidence does not declare its authority scope; do not treat it as release readiness.',
+        },
+      ],
       blockers,
       incidentStudioTarget: 'analyze',
     });
@@ -2811,7 +3034,7 @@ export async function buildDashboardEvidenceBundle(input?: {
     );
   }
 
-  cards.push(...(await buildWorkspaceIntelligenceCards(reportsDir)));
+  cards.push(...(await buildWorkspaceIntelligenceCards(reportsDir, projectPath, projectName)));
   cards.push(...(await buildWorkspaceStateCards(workspacePath)));
   cards.push(...(await buildHandoffCards(workspacePath)));
   cards.push(...(await buildGovernanceOperationalCards(workspacePath, reportsDir)));
@@ -2890,6 +3113,7 @@ export function resolveCardForReportKind(
     case 'workspace-model':
       return findEvidenceCardById(bundle, 'workspaceModel');
     case 'workspace-knowledge-graph':
+    case 'project-knowledge-graph-reference':
       return findEvidenceCardById(bundle, 'workspaceModel');
     case 'workspace-intelligence-evaluation':
     case 'workspace-intelligence-run':

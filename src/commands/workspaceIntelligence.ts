@@ -25,6 +25,7 @@ import {
   shouldPromptForWorkspaceCommandPreset,
   type WorkspaceCommandPreset,
 } from '../core/workspaceCommandPresets';
+import { buildWorkspaceGraphSearchCommand } from '../core/workspaceGraphSearchCommand';
 
 type WorkspaceExplorerLike = {
   getSelectedWorkspace?: () => { path: string; name?: string } | null | undefined;
@@ -42,6 +43,7 @@ type WorkspaceCommandItem = {
   forcePresetPrompt?: unknown;
   experimentalHooks?: unknown;
   query?: unknown;
+  kind?: unknown;
 };
 
 type WorkspaceTarget = {
@@ -341,8 +343,18 @@ export function registerWorkspaceIntelligenceCommands(options: {
       if (!query) {
         return;
       }
+      const scope = resolveImpactScope(item);
+      const kind = typeof typed?.kind === 'string' ? typed.kind.trim() : '';
+      if (kind && !/^[a-z0-9][a-z0-9-]*$/i.test(kind)) {
+        vscode.window.showWarningMessage(`Invalid graph entity kind: ${kind}`);
+        return;
+      }
       await runWorkspaceIntelligenceCommandWithProgress({
-        command: ['workspace', 'graph', 'search', query, '--limit', '12', '--json'],
+        command: buildWorkspaceGraphSearchCommand({
+          query,
+          ...(scope ? { scope } : {}),
+          ...(kind ? { kind } : {}),
+        }),
         cwd: target.workspacePath,
         title: `Graph Search — ${target.workspaceName}`,
         featureLabel: 'Workspace Graph Search',

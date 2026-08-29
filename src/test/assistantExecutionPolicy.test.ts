@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildAssistantPlanAgentHandoff,
   parseAssistantExecutionPolicy,
   resolveAssistantExecutionPolicy,
 } from '../core/assistantExecutionPolicy.js';
@@ -91,5 +92,17 @@ describe('Assistant execution policy', () => {
         'agent'
       )
     ).toBeNull();
+  });
+
+  it('carries a completed Plan into the explicit Agent transition without granting authority', () => {
+    const handoff = buildAssistantPlanAgentHandoff({
+      request: 'Add caching to the API',
+      plan: '## Scope\nAPI only\n\n## Verification\nRun API tests',
+    });
+
+    expect(handoff).toContain('user-approved Workspai Plan');
+    expect(handoff).toContain('Add caching to the API');
+    expect(handoff).toContain('Run API tests');
+    expect(handoff).toContain('re-inspect relevant evidence and source before mutation');
   });
 });

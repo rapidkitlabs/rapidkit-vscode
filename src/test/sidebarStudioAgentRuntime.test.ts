@@ -245,7 +245,12 @@ describe('sidebar Studio agent runtime contract', () => {
     const project = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-agent-linked-'));
     try {
       await fs.mkdir(path.join(project, 'cmake'), { recursive: true });
+      await fs.mkdir(path.join(project, '.workspai', 'reports'), { recursive: true });
       await fs.writeFile(path.join(project, 'cmake', 'cares.cmake'), 'add_subdirectory(cares)\n');
+      await fs.writeFile(
+        path.join(project, '.workspai', 'reports', 'project-context-agent.json'),
+        '{"schemaVersion":"project-context-agent.v1"}\n'
+      );
 
       const result = await inspectStudioAgentFiles({
         workspacePath: workspace,
@@ -259,6 +264,21 @@ describe('sidebar Studio agent runtime contract', () => {
         exists: true,
         kind: 'source',
       });
+      await expect(
+        inspectStudioAgentFiles({
+          workspacePath: workspace,
+          projectPath: project,
+          paths: ['project:.workspai/reports/project-context-agent.json'],
+          kind: 'evidence',
+          authorizedEvidencePaths: ['project:.workspai/reports/project-context-agent.json'],
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({
+          path: 'project:.workspai/reports/project-context-agent.json',
+          exists: true,
+          kind: 'evidence',
+        }),
+      ]);
     } finally {
       await fs.rm(workspace, { recursive: true, force: true });
       await fs.rm(project, { recursive: true, force: true });

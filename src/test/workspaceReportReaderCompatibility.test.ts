@@ -80,6 +80,30 @@ describe('workspace report reader compatibility contracts', () => {
             title: 'Release',
           },
         ],
+        selection: {
+          generatedCount: 1,
+          suppressedCount: 1,
+          decisions: [
+            {
+              skillId: 'release',
+              title: 'Release',
+              status: 'generated',
+              confidence: 'high',
+              reasons: ['Release evidence exists.'],
+              signals: ['release-workflow'],
+              scopedProjects: ['api'],
+            },
+            {
+              skillId: 'python-runtime',
+              title: 'Python runtime',
+              status: 'suppressed',
+              confidence: 'high',
+              reasons: ['No Python project exists.'],
+              signals: [],
+              scopedProjects: [],
+            },
+          ],
+        },
         futureField: 1,
       },
       [WORKSPACE_CONTEXT_AGENT_REPORT_PATH]: {
@@ -124,6 +148,26 @@ describe('workspace report reader compatibility contracts', () => {
     await expect(readWorkspaceSkillsIndexArtifact(workspacePath)).resolves.toMatchObject({
       kind: 'incompatible',
       error: expect.stringContaining('unique safe operational skills'),
+    });
+  });
+
+  it('rejects inconsistent evidence-driven Skill selection counts', async () => {
+    const workspacePath = await makeWorkspace({
+      [WORKSPACE_SKILLS_INDEX_PATH]: {
+        schemaVersion: WORKSPACE_SKILLS_INDEX_SCHEMA_VERSION,
+        generatedAt: '2026-08-28T00:00:00.000Z',
+        inputsHash: 'abcdefgh',
+        skills: [],
+        selection: {
+          generatedCount: 1,
+          suppressedCount: 0,
+          decisions: [],
+        },
+      },
+    });
+
+    await expect(readWorkspaceSkillsIndexArtifact(workspacePath)).resolves.toMatchObject({
+      kind: 'incompatible',
     });
   });
 

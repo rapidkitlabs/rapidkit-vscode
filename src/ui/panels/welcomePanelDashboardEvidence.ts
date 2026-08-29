@@ -8,6 +8,7 @@ import {
 import {
   finalizeDashboardActivityFromReport,
   getDashboardActivityLog,
+  mergeDashboardActivityEntry,
 } from '../../core/dashboardActivityBridge';
 import {
   advanceDashboardOpsChain,
@@ -22,6 +23,7 @@ import { buildRetentionAnalyticsPayload } from '../../core/retentionAnalytics';
 import type { DashboardEvidenceRefreshContext } from './doctorTelemetryRefresh';
 import type { DashboardSelectedProject } from './welcomePanelDashboardCommands';
 import type { RecentWorkspaceEntry } from './welcomePanelRecentWorkspaces';
+import { readWorkspaceActivityJournal } from '../../core/workspaceActivityJournalReader';
 
 export type DashboardEvidenceHost = {
   context: vscode.ExtensionContext;
@@ -191,7 +193,18 @@ export async function sendDashboardEvidence(
     return;
   }
 
-  const activity = getDashboardActivityLog(host.context);
+  const extensionActivity = getDashboardActivityLog(host.context);
+  const cliActivity = workspacePath
+    ? await readWorkspaceActivityJournal({
+        workspacePath,
+        projectPath: projectContext.projectPath,
+      })
+    : [];
+  const activity = cliActivity.reduce(
+    (current, entry) =>
+      mergeDashboardActivityEntry(current, entry, { coalesceMs: 0, maxEntries: 12 }),
+    extensionActivity
+  );
   const opsChain = filterOpsChainForWorkspace(getDashboardOpsChain(host.context), workspacePath);
 
   host.postWebviewMessage(

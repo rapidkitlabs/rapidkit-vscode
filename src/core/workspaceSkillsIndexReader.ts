@@ -17,11 +17,26 @@ export type WorkspaceSkillsIndexEntry = {
   title: string;
 };
 
+export type WorkspaceOperationalSkillDecision = {
+  skillId: string;
+  title: string;
+  status: 'generated' | 'suppressed';
+  confidence: 'high' | 'medium';
+  reasons: string[];
+  signals: string[];
+  scopedProjects: string[];
+};
+
 export type WorkspaceSkillsIndex = {
   schemaVersion: typeof WORKSPACE_SKILLS_INDEX_SCHEMA_VERSION;
   generatedAt: string;
   inputsHash: string;
   skills: WorkspaceSkillsIndexEntry[];
+  selection?: {
+    generatedCount: number;
+    suppressedCount: number;
+    decisions: WorkspaceOperationalSkillDecision[];
+  };
 };
 
 export type WorkspaceSkillsIndexReadResult =
@@ -55,7 +70,7 @@ export function isWorkspaceSkillsIndex(value: unknown): value is WorkspaceSkills
   }
   const skillIds = new Set<string>();
   const paths = new Set<string>();
-  return record.skills.every((entry) => {
+  const skillsValid = record.skills.every((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       return false;
     }
@@ -77,6 +92,72 @@ export function isWorkspaceSkillsIndex(value: unknown): value is WorkspaceSkills
     }
     return valid;
   });
+  if (!skillsValid) {
+    return false;
+  }
+  if (record.selection === undefined) {
+    return true;
+  }
+  if (
+    !record.selection ||
+    typeof record.selection !== 'object' ||
+    Array.isArray(record.selection)
+  ) {
+    return false;
+  }
+  const selection = record.selection as Record<string, unknown>;
+  if (
+    !Number.isInteger(selection.generatedCount) ||
+    Number(selection.generatedCount) < 0 ||
+    !Number.isInteger(selection.suppressedCount) ||
+    Number(selection.suppressedCount) < 0 ||
+    !Array.isArray(selection.decisions)
+  ) {
+    return false;
+  }
+  const decisions = selection.decisions as unknown[];
+  const decisionIds = new Set<string>();
+  let generatedCount = 0;
+  let suppressedCount = 0;
+  const decisionsValid = decisions.every((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return false;
+    }
+    const decision = entry as Record<string, unknown>;
+    const status = decision.status;
+    const valid =
+      typeof decision.skillId === 'string' &&
+      Boolean(decision.skillId) &&
+      !decisionIds.has(decision.skillId) &&
+      typeof decision.title === 'string' &&
+      (status === 'generated' || status === 'suppressed') &&
+      (decision.confidence === 'high' || decision.confidence === 'medium') &&
+      [decision.reasons, decision.signals, decision.scopedProjects].every(
+        (items) => Array.isArray(items) && items.every((item) => typeof item === 'string')
+      );
+    if (valid) {
+      decisionIds.add(decision.skillId as string);
+      if (status === 'generated') {
+        generatedCount += 1;
+      } else {
+        suppressedCount += 1;
+      }
+    }
+    return valid;
+  });
+  return (
+    decisionsValid &&
+    generatedCount === selection.generatedCount &&
+    suppressedCount === selection.suppressedCount &&
+    generatedCount === record.skills.length &&
+    record.skills.every((skill) =>
+      decisions.some(
+        (decision) =>
+          (decision as Record<string, unknown>).skillId === skill.skillId &&
+          (decision as Record<string, unknown>).status === 'generated'
+      )
+    )
+  );
 }
 
 export async function readWorkspaceSkillsIndex(
@@ -110,5 +191,6 @@ export function summarizeOperationalSkills(index: WorkspaceSkillsIndex | null): 
   if (!index?.skills?.length) {
     return '';
   }
-  return `${index.skills.length} operational skill(s)`;
+  const suppressed = index.selection?.suppressedCount ?? 0;
+  return `${index.skills.length} operational skill(s)${suppressed > 0 ? ` · ${suppressed} evidence-suppressed` : ''}`;
 }

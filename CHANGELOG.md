@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-08-28
+
+### Added
+
+- Added integrity and freshness validation for each adopted project's portable
+  knowledge-graph reference before grounded Agent work begins.
+- Added project governance, Graph inventory completeness, provider coverage,
+  entity-kind/project-scope search, workspace contract sync, planned/runtime
+  workspace execution, and the CLI-owned live activity graph to extension
+  surfaces.
+- Added schema-aware support for evidence-driven Skill decisions, dual-era MCP
+  runtime capabilities, and repair qualification matrices.
+- Added a structured pre-mutation user-input action for Agent and Goal sessions.
+- Added scope-safe active-editor selection and diagnostic focus to secondary-sidebar
+  Assistant sessions without granting source mutation authority.
+
+### Changed
+
+- Synchronized published Workspace Intelligence contracts and the governed
+  command surface with Workspai CLI 0.66.0.
+- Updated the bundled, integrity-checked CLI authority to Workspai 0.66.0.
+- Made cancellation release a durable session while a provider call is still
+  pending, and made completed Plan output part of the explicit Agent handoff.
+
 ## [0.44.0] - 2026-08-23
 
 ### Added

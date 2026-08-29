@@ -38,9 +38,7 @@ contracts, dependencies, and operational evidence that make up a software system
 | **Agent** | Edit code, run scoped checks, review the diff, and verify the result.   |
 | **Goal**  | Pursue any bounded engineering outcome through evidence and safe edits. |
 
-Agent handles ordinary tasks without an incident card. It reads before changing, writes through transactions, and verifies the result.
-For adopted projects, it validates the portable Workspai entry receipt and resolves
-canonical evidence privately before broad source discovery or mutation.
+Agent handles ordinary tasks without an incident card. It reads before changing, writes through transactions, and verifies the result. Missing blocking context is requested explicitly in the same session, and Cancel stops the session even while a model request is in flight. Plan stays read-only; **Run with Agent** carries the approved plan forward but requires fresh inspection before any edit. For adopted projects, Agent validates the portable Workspai entry receipt, readiness dimensions, and project-owned Graph reference before resolving canonical evidence or permitting broad source discovery and mutation.
 
 ## Set one governed goal
 
@@ -67,8 +65,12 @@ checks—not a false machine-proof claim.
 ## Explore the workspace graph
 
 See how projects, modules, files, APIs, and dependencies connect across the
-workspace. Select any entity to inspect its relationships and the evidence that
-supports them.
+workspace. Select any entity to inspect its relationships and the evidence that supports them. The canonical workspace Graph remains the aggregate authority;
+each adopted project receives a portable, integrity-bound projection that points
+back to that aggregate without copying the whole workspace into agent context.
+Artifacts keeps the workspace Graph, project Graph/context, selected Skills,
+and MCP design independently inspectable. Linked projects resolve from their
+own root, so Agent never confuses project and workspace reports.
 
 <p align="center">
   <img
@@ -85,7 +87,6 @@ own provider key.
 
 `VS Code Models` · `OpenAI` · `Claude` · `Gemini` · `Kimi` · `DeepSeek` ·
 `OpenRouter` · `Groq` · `Mistral` · `xAI` · `Ollama` · `Custom`
-
 Provider credentials are isolated in VS Code Secret Storage. Endpoint and model
 preferences are stored separately for each provider.
 
@@ -100,12 +101,12 @@ preferences are stored separately for each provider.
    never changes files before you approve a clear creation plan.
 4. Open **Workspai: Open Dashboard**, select or adopt a workspace, then open the
    Assistant and choose **Ask**, **Plan**, **Agent**, or **Goal**.
-
 Install `workspai` separately only for an external terminal; extension-owned
 operations use the integrity-checked runtime shipped inside the extension.
-Workspai supports FastAPI, NestJS, Next.js, Vite, Angular, Go, Spring Boot, .NET,
-adopted repositories, and mixed-stack workspaces. Deep module generation remains
-available for FastAPI and NestJS; Workspace Intelligence covers the workspace.
+Workspai scaffolds its published catalog and adopts arbitrary repositories.
+Intelligence uses the CLI's open taxonomy across Node, Python, Go, JVM, .NET,
+Rust, native, Ruby, PHP, Elixir, Bun, and Deno without forcing adopted code into
+the scaffold catalog. Deep modules appear only when the CLI authorizes them.
 
 ## Learn more
 
@@ -115,5 +116,4 @@ available for FastAPI and NestJS; Workspace Intelligence covers the workspace.
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 - [Issues and feature requests](https://github.com/chistiq/rapidkit-vscode/issues)
-
-MIT © [Chistiq](https://github.com/chistiq)
+  MIT © [Chistiq](https://github.com/chistiq)

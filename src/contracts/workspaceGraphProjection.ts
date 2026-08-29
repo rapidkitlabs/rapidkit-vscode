@@ -45,6 +45,16 @@ export type WorkspaceGraphProviderProjection = {
   discoveredEntities?: number;
   discoveredRelations?: number;
   proofCount?: number;
+  inputCoverage?: Array<{
+    scope: string;
+    scopeId: string;
+    tier: string;
+    status: string;
+    eligibleFiles: number;
+    suppliedFiles: number;
+    fileBudget?: number;
+    selectionStrategy: string;
+  }>;
   diagnostics: string[];
 };
 
@@ -55,6 +65,10 @@ export type WorkspaceGraphInputScopeProjection = {
   fileCount?: number;
   fileLimit?: number;
   truncated?: boolean;
+  eligibleFileCount?: number;
+  eligibleFileCountExact?: boolean;
+  inventoryMode?: string;
+  inventoryStrategy?: string;
 };
 
 export type WorkspaceGraphBindingCoverageProjection = {
@@ -70,6 +84,7 @@ export type WorkspaceGraphQualityProjection = {
     | string
     | boolean
     | Record<string, WorkspaceGraphBindingCoverageProjection>
+    | WorkspaceGraphCompletenessProjection
     | undefined;
   entityCount?: number;
   relationCount?: number;
@@ -82,6 +97,25 @@ export type WorkspaceGraphQualityProjection = {
   portable?: boolean;
   secretValuesEmitted?: boolean;
   bindingCoverage?: Record<string, WorkspaceGraphBindingCoverageProjection>;
+  completeness?: WorkspaceGraphCompletenessProjection;
+};
+
+export type WorkspaceGraphCompletenessProjection = {
+  status: 'complete' | 'bounded';
+  inventory: {
+    scopeCount: number;
+    completeScopes: number;
+    boundedScopes: number;
+    eligibleFiles: number;
+    indexedFiles: number;
+    eligibleFileCountExact: boolean;
+  };
+  providers: {
+    complete: number;
+    bounded: number;
+    notApplicable: number;
+    failed: number;
+  };
 };
 
 export type WorkspaceGraphProjection = {

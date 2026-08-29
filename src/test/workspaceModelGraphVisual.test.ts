@@ -152,4 +152,45 @@ describe('workspaceModelGraphVisual', () => {
     expect(graph.stats?.orphanCount).toBe(2);
     expect(graph.stats?.density).toBe(0);
   });
+
+  it('surfaces evidence-backed project governance without exposing raw model JSON', () => {
+    const sections = buildWorkspaceModelDetailSections({
+      workspace: { profile: 'enterprise' },
+      summary: { projectCount: 1 },
+      validation: { status: 'passed', errors: 0, warnings: 0 },
+      projects: [
+        {
+          name: 'orders-api',
+          governance: {
+            schemaVersion: 'workspai.project-governance.v1',
+            ci: {
+              status: 'external-declared',
+              provider: 'Buildkite',
+              reference: 'platform/orders',
+              evidence: [],
+            },
+            release: {
+              status: 'repository',
+              provider: 'Changesets',
+              reference: null,
+              evidence: ['.changeset'],
+            },
+            ownership: {
+              status: 'unknown',
+              provider: null,
+              reference: null,
+              evidence: [],
+            },
+          },
+        },
+      ],
+      graph: { nodes: [], edges: [], stats: { nodeCount: 0, edgeCount: 0 } },
+    });
+
+    const governance = sections.find((section) => section.id === 'workspace-project-governance');
+    expect(governance?.body).toContain('orders-api');
+    expect(governance?.body).toContain('CI: external-declared · Buildkite · platform/orders');
+    expect(governance?.body).toContain('Release: repository · Changesets');
+    expect(governance?.body).toContain('Ownership: unknown');
+  });
 });
