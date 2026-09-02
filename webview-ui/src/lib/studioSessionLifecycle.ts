@@ -203,6 +203,7 @@ export function terminalizeStudioProgress(
     summary: string;
     reviewRequired?: boolean;
     terminalReason?: string;
+    missingExecutable?: string;
     technicalDetail?: string;
   }
 ): SidebarStudioActionProgressView | null {
@@ -216,6 +217,7 @@ export function terminalizeStudioProgress(
     title: input.title,
     summary: input.summary,
     terminalReason: input.terminalReason,
+    missingExecutable: input.missingExecutable ?? progress.missingExecutable,
     technicalDetail: input.technicalDetail,
     nextAction: undefined,
     nextActionLabel: undefined,

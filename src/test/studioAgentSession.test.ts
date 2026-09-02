@@ -810,6 +810,7 @@ describe('Studio Agent session runtime', () => {
         data: expect.objectContaining({
           terminalReason: 'environment-prerequisite-required',
           requiresUserDecision: false,
+          missingExecutable: 'go',
           error: 'Required repair executable is unavailable: go (nova-api).',
         }),
       })

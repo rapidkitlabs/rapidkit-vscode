@@ -112,7 +112,7 @@ describe('Studio causal recovery briefing', () => {
       cardBlocking: true,
       requiresUserDecision: false,
       terminalReason: 'environment-prerequisite-required',
-      error: 'Required repair executable is unavailable: go (nova-api).',
+      error: 'Go is required for nova-api, but it is not available in the current environment.',
       output: {
         recoveryPath: 'contract-prerequisite',
         nextAction: 'environment-change-and-fresh-plan',

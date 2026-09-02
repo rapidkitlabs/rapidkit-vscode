@@ -157,6 +157,7 @@ import { collectSidebarStudioRepairEvidence } from '../../core/sidebarStudioPatc
 import type { StudioEvidenceRefreshCommandId } from '../../core/sidebarStudioAgentRuntime.js';
 import { resolveStudioCausalProducerRoute } from '../../core/studioCausalProducerRouter.js';
 import { buildStudioCausalRecoveryBriefing } from '../../core/studioCausalRecoveryBriefing.js';
+import { resolveRuntimeSetupGuidance } from '../../contracts/runtimeSetupGuidance.js';
 import { normalizePatchesForWorkspaceScope, type FilePatch } from '../../core/patchApplyEngine.js';
 import {
   clearSidebarPendingPatches,
@@ -6003,6 +6004,9 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           ...(typeof terminalFailureData?.error === 'string'
             ? { error: terminalFailureData.error }
             : {}),
+          ...(typeof terminalFailureData?.missingExecutable === 'string'
+            ? { missingExecutable: terminalFailureData.missingExecutable }
+            : {}),
           ...(persistedDecisionStillRequired
             ? {
                 requiresUserDecision: true,
@@ -6031,7 +6035,14 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         return;
       }
       if (action === 'open-setup') {
-        await vscode.commands.executeCommand('workspai.openSetup');
+        const executable =
+          typeof payloadRecord.executable === 'string' ? payloadRecord.executable.trim() : '';
+        const guidance = resolveRuntimeSetupGuidance(executable);
+        if (guidance) {
+          await vscode.env.openExternal(vscode.Uri.parse(guidance.officialUrl));
+        } else {
+          await vscode.commands.executeCommand('workspai.openSetup');
+        }
         return;
       }
       if (action === 'agent-steer') {

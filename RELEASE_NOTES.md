@@ -1,6 +1,6 @@
 # Release Notes
 
-## v0.46.0 (August 31, 2026)
+## v0.46.0 (September 1, 2026)
 
 ### Proof-carrying Studio and live operational assurance
 
@@ -71,9 +71,9 @@ Compatibility:
 
 Release posture: `proof-carrying-studio-and-live-assurance`
 
-Release gate posture: `validation-required`.
+Release gate posture: `expansion-eligible`.
 
-Publication status: prepared for release validation.
+Publication status: published September 1, 2026.
 
 ## v0.45.0 (August 28, 2026)
 

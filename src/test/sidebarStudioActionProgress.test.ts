@@ -103,6 +103,22 @@ describe('sidebarStudioActionProgress', () => {
     });
   });
 
+  it('preserves a missing executable for the runtime-aware setup action', () => {
+    expect(
+      parseSidebarStudioActionProgress({
+        action: 'repair-session',
+        status: 'failed',
+        title: 'Environment setup required',
+        summary: 'Go is unavailable.',
+        terminalReason: 'environment-prerequisite-required',
+        missingExecutable: 'go',
+      })
+    ).toMatchObject({
+      terminalReason: 'environment-prerequisite-required',
+      missingExecutable: 'go',
+    });
+  });
+
   it('maps remediation command progress separately from terminal command execution', () => {
     expect(
       parseSidebarStudioActionProgress({

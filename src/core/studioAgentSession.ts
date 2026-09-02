@@ -2014,6 +2014,14 @@ export class StudioAgentSession {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const providerFailure = isAiProviderFailure(message);
+      const terminalObservationOutput = latestObservation
+        ? toolOutputRecord(latestObservation)
+        : undefined;
+      const missingExecutable =
+        typeof terminalObservationOutput?.missingExecutable === 'string' &&
+        terminalObservationOutput.missingExecutable.trim()
+          ? terminalObservationOutput.missingExecutable.trim()
+          : undefined;
       const repairTransactionState = latestDurableRepairTransactionState({
         latestObservation,
         events: this.state.events,
@@ -2023,6 +2031,7 @@ export class StudioAgentSession {
         {
           error: message,
           ...(providerFailure ? { terminalReason: 'ai-provider-unavailable' } : {}),
+          ...(missingExecutable ? { missingExecutable } : {}),
           ...(repairTransactionState ? { repairTransactionState } : {}),
           ...(error instanceof StudioAgentReviewRequiredError ||
           error instanceof StudioAgentTerminalError

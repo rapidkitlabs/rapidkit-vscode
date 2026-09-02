@@ -1,15 +1,17 @@
 import { AlertTriangle, RotateCcw, Settings2 } from 'lucide-react';
+import { resolveRuntimeSetupGuidance } from '../../../src/contracts/runtimeSetupGuidance';
 
 type StudioDecisionBarProps = {
   reviewRequired?: boolean;
   resumable?: boolean;
   terminalReason?: string;
+  missingExecutable?: string;
   message?: string;
   transactionId?: string;
   decisionOptions?: string[];
   onDecision?: (decision: string, transactionId?: string) => void;
   onResume: () => void;
-  onOpenSetup?: () => void;
+  onOpenSetup?: (executable?: string) => void;
 };
 
 const DECISION_COPY: Record<string, { label: string; detail: string; primary?: boolean }> = {
@@ -59,6 +61,7 @@ export function StudioDecisionBar({
   reviewRequired = false,
   resumable = false,
   terminalReason,
+  missingExecutable,
   message,
   transactionId,
   decisionOptions = [],
@@ -66,6 +69,7 @@ export function StudioDecisionBar({
   onResume,
   onOpenSetup,
 }: StudioDecisionBarProps) {
+  const runtimeSetup = resolveRuntimeSetupGuidance(missingExecutable);
   const toolchainFailure =
     terminalReason === 'repair-toolchain-unavailable' ||
     terminalReason === 'environment-prerequisite-required';
@@ -108,9 +112,9 @@ export function StudioDecisionBar({
             <button
               type="button"
               className="ws-sidebar__inline ws-sidebar__inline--primary"
-              onClick={onOpenSetup}
+              onClick={() => onOpenSetup(missingExecutable)}
             >
-              Open setup
+              {runtimeSetup?.actionLabel ?? 'Open setup'}
             </button>
           ) : null}
           {decisionOptions.length > 0 && onDecision

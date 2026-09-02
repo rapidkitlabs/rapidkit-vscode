@@ -93,6 +93,7 @@ export type SidebarStudioActionProgressView = {
   requestId?: string;
   canUndo?: boolean;
   terminalReason?: string;
+  missingExecutable?: string;
   technicalDetail?: string;
   policyRejected?: boolean;
   occurrences?: number;
@@ -552,6 +553,7 @@ export function parseSidebarStudioActionProgress(
     requestId: optionalTrimmedString(record.requestId),
     canUndo: record.canUndo === true,
     terminalReason: optionalTrimmedString(record.terminalReason),
+    missingExecutable: optionalTrimmedString(record.missingExecutable),
     technicalDetail: optionalTrimmedString(record.technicalDetail),
     policyRejected: record.policyRejected === true,
     occurrences:

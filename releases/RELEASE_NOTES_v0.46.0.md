@@ -30,7 +30,7 @@
 
 # Workspai VS Code v0.46.0
 
-Prepared for release validation.
+Released September 1, 2026.
 
 ## Proof-carrying Studio and live operational assurance
 
@@ -221,6 +221,6 @@ npm install -g workspai@0.72.0
 
 Release posture: `proof-carrying-studio-and-live-assurance`
 
-Release gate posture: `validation-required`.
+Release gate posture: `expansion-eligible`.
 
-Publication status: prepared for release validation.
+Publication status: published September 1, 2026.

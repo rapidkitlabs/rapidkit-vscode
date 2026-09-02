@@ -422,6 +422,9 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     expect(decisionBar).toContain('Approve and continue');
     expect(decisionBar).toContain('Create a new plan');
     expect(decisionBar).toContain('Repair manually');
+    expect(decisionBar).toContain('runtimeSetup?.actionLabel');
+    expect(provider).toContain('resolveRuntimeSetupGuidance(executable)');
+    expect(provider).toContain('vscode.Uri.parse(guidance.officialUrl)');
     expect(repairPrelude).toContain('explicit engineering decision');
     expect(repairPrelude).toContain('verification required');
     expect(repairPrelude).not.toContain('ws-sidebar__repair-avatar');

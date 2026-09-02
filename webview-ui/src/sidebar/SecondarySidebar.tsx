@@ -1388,6 +1388,10 @@ export function SecondarySidebar() {
               : eventType === 'session.cancelled'
                 ? 'cancelled'
                 : undefined;
+          const missingExecutable =
+            typeof eventData.missingExecutable === 'string'
+              ? eventData.missingExecutable.trim()
+              : undefined;
           const repairTransactionState =
             typeof eventData.repairTransactionState === 'string'
               ? eventData.repairTransactionState
@@ -1410,6 +1414,7 @@ export function SecondarySidebar() {
             title: terminalPresentation.title,
             summary: terminalPresentation.summary,
             terminalReason: terminalPresentation.terminalReason,
+            missingExecutable,
             technicalDetail: terminalPresentation.technicalDetail,
             requiresApproval: eventRequiresDecision,
             transactionId: decisionTransactionId,
@@ -1429,6 +1434,7 @@ export function SecondarySidebar() {
                   summary: failureMessage,
                   reviewRequired: requiresUserDecision,
                   terminalReason: terminalPresentation.terminalReason,
+                  missingExecutable,
                   technicalDetail: terminalPresentation.technicalDetail,
                 });
                 return terminal ? { ...previous, [failedIncidentKey]: terminal } : previous;
@@ -1440,6 +1446,7 @@ export function SecondarySidebar() {
                   summary: failureMessage,
                   reviewRequired: requiresUserDecision,
                   terminalReason: terminalPresentation.terminalReason,
+                  missingExecutable,
                   technicalDetail: terminalPresentation.technicalDetail,
                 }),
               }));
@@ -1449,6 +1456,7 @@ export function SecondarySidebar() {
                   summary: failureMessage,
                   reviewRequired: requiresUserDecision,
                   terminalReason: terminalPresentation.terminalReason,
+                  missingExecutable,
                   technicalDetail: terminalPresentation.technicalDetail,
                 })
               );
@@ -1556,6 +1564,8 @@ export function SecondarySidebar() {
             typeof data.repairTransactionState === 'string'
               ? data.repairTransactionState
               : undefined;
+          const persistedMissingExecutable =
+            typeof data.missingExecutable === 'string' ? data.missingExecutable.trim() : undefined;
           const terminalPresentation = describeStudioTerminalFailure({
             error:
               typeof data.error === 'string' && data.error.trim()
@@ -1570,6 +1580,7 @@ export function SecondarySidebar() {
               title: terminalPresentation.title,
               summary: inactiveMessage,
               terminalReason: terminalPresentation.terminalReason,
+              missingExecutable: persistedMissingExecutable,
               technicalDetail: terminalPresentation.technicalDetail,
             });
             return terminal ? { ...previous, [hydratedIncidentKey]: terminal } : previous;
@@ -1580,6 +1591,7 @@ export function SecondarySidebar() {
               title: terminalPresentation.title,
               summary: inactiveMessage,
               terminalReason: terminalPresentation.terminalReason,
+              missingExecutable: persistedMissingExecutable,
               technicalDetail: terminalPresentation.technicalDetail,
             }),
           }));
@@ -1588,6 +1600,7 @@ export function SecondarySidebar() {
               title: terminalPresentation.title,
               summary: inactiveMessage,
               terminalReason: terminalPresentation.terminalReason,
+              missingExecutable: persistedMissingExecutable,
               technicalDetail: terminalPresentation.technicalDetail,
             })
           );
@@ -2020,6 +2033,8 @@ export function SecondarySidebar() {
         const rawFailureMessage = (data.error as string) || 'Unknown error';
         const terminalReason =
           typeof data.terminalReason === 'string' ? data.terminalReason : undefined;
+        const missingExecutable =
+          typeof data.missingExecutable === 'string' ? data.missingExecutable.trim() : undefined;
         const repairTransactionState =
           typeof data.repairTransactionState === 'string' ? data.repairTransactionState : undefined;
         const errorDecisionOptions = Array.isArray(data.decisionOptions)
@@ -2062,6 +2077,7 @@ export function SecondarySidebar() {
               summary: failureMessage,
               reviewRequired: requiresUserDecision,
               terminalReason: terminalPresentation.terminalReason,
+              missingExecutable,
               technicalDetail: terminalPresentation.technicalDetail,
             });
             return terminal ? { ...previous, [failedIncidentKey]: terminal } : previous;
@@ -2073,6 +2089,7 @@ export function SecondarySidebar() {
               summary: failureMessage,
               reviewRequired: requiresUserDecision,
               terminalReason: terminalPresentation.terminalReason,
+              missingExecutable,
               technicalDetail: terminalPresentation.technicalDetail,
             }),
           }));
@@ -2082,6 +2099,7 @@ export function SecondarySidebar() {
               summary: failureMessage,
               reviewRequired: requiresUserDecision,
               terminalReason: terminalPresentation.terminalReason,
+              missingExecutable,
               technicalDetail: terminalPresentation.technicalDetail,
             })
           );
@@ -4102,6 +4120,7 @@ export function SecondarySidebar() {
                   activeStudio?.incident?.repairStatus === 'blocked')
               }
               terminalReason={activeStudioTerminalReason}
+              missingExecutable={activeStudioActionProgress?.missingExecutable}
               message={activeStudioReviewMessage}
               transactionId={activeStudioActionProgress?.transactionId}
               decisionOptions={activeStudioActionProgress?.decisionOptions}
@@ -4111,10 +4130,14 @@ export function SecondarySidebar() {
                   ? studioVerifyHandoff
                   : studioAutoFix
               }
-              onOpenSetup={() =>
+              onOpenSetup={(executable) =>
                 vscode.postMessage(
                   'sidebarStudioAction',
-                  { action: 'open-setup', sessionId: studio.activeId ?? undefined },
+                  {
+                    action: 'open-setup',
+                    sessionId: studio.activeId ?? undefined,
+                    executable,
+                  },
                   META
                 )
               }

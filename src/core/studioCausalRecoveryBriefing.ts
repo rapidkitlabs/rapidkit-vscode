@@ -1,5 +1,6 @@
 import type { StudioAgentToolResult } from './studioAgentToolRegistry.js';
 import { STUDIO_GENERAL_SOURCE_REPAIR_RECOMMENDED_TOOLS } from './studioRepairReceipt.js';
+import { resolveRuntimeSetupGuidance } from '../contracts/runtimeSetupGuidance.js';
 
 export type StudioCausalRecoveryStepBrief = {
   id: string;
@@ -52,12 +53,18 @@ export function buildStudioCausalRecoveryBriefing(input: {
   remediationPlanError?: string;
 }): StudioAgentToolResult<Record<string, unknown>> {
   if (input.environmentPrerequisite) {
-    const missingExecutable = input.environmentPrerequisite.requirements.find(
+    const missingRequirement = input.environmentPrerequisite.requirements.find(
       (requirement) =>
         requirement.kind === 'executable' &&
         requirement.status === 'missing' &&
         typeof requirement.executable === 'string'
-    )?.executable;
+    );
+    const missingExecutable = missingRequirement?.executable;
+    const runtime = resolveRuntimeSetupGuidance(missingExecutable);
+    const affectedProject = input.blockers[0]?.match(/^([^:]+):/)?.[1]?.trim();
+    const prerequisiteSummary = missingExecutable
+      ? `${runtime?.runtimeLabel ?? missingExecutable} is required${affectedProject ? ` for ${affectedProject}` : ''}, but it is not available in the current environment.`
+      : missingRequirement?.message || input.environmentPrerequisite.summary;
     return {
       ok: false,
       changed: false,
@@ -75,7 +82,7 @@ export function buildStudioCausalRecoveryBriefing(input: {
         blockers: [...input.blockers],
         remediationPlanRefreshed: input.remediationPlanRefreshed,
       },
-      error: input.environmentPrerequisite.summary,
+      error: prerequisiteSummary,
     };
   }
   const legacyExecutionReady = Boolean(
