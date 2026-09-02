@@ -1,5 +1,6 @@
 export type StudioAgentToolRisk = 'read' | 'safe-write' | 'guarded-write' | 'invasive';
 export type StudioAgentPermissionLevel = 'default' | 'autopilot';
+export type StudioAgentApprovalExecution = 'once' | 'session' | 'project';
 
 export type StudioAgentToolContext = {
   sessionId: string;
@@ -8,8 +9,48 @@ export type StudioAgentToolContext = {
   workspacePath: string;
   projectPath?: string;
   evidenceGeneration?: string;
+  approval?: StudioAgentToolApprovalGrant;
   signal: AbortSignal;
   reportProgress?(data: Record<string, unknown>): Promise<void>;
+};
+
+export type StudioAgentToolApprovalDescriptor = {
+  fingerprint: string;
+  title: string;
+  summary: string;
+  displayCommand?: string;
+  cwd?: string;
+  scope: 'workspace' | 'project';
+  reasons: string[];
+  execution: StudioAgentApprovalExecution;
+  allowedExecutions?: StudioAgentApprovalExecution[];
+};
+
+export type StudioAgentToolApprovalRequest = StudioAgentToolApprovalDescriptor & {
+  sessionId: string;
+  requestId: string;
+  toolCallId: string;
+  toolName: string;
+  modelReason: string;
+};
+
+export type StudioAgentToolApprovalDecision = {
+  approved: boolean;
+  fingerprint: string;
+  approvedBy?: string;
+  execution?: StudioAgentApprovalExecution;
+};
+
+export type StudioAgentToolApprovalGrant = {
+  fingerprint: string;
+  approvedBy: string;
+  approvedAt: string;
+  execution?: StudioAgentApprovalExecution;
+};
+
+export type StudioAgentToolAuthorization = {
+  risk: StudioAgentToolRisk;
+  approval?: StudioAgentToolApprovalDescriptor;
 };
 
 export type StudioAgentToolResult<T = unknown> = {
@@ -32,6 +73,10 @@ export type StudioAgentToolDefinition<TInput = unknown, TOutput = unknown> = {
   inputSchema: Record<string, unknown>;
   activity: 'inspect' | 'change' | 'verify' | 'complete';
   risk: StudioAgentToolRisk;
+  authorize?(
+    input: TInput,
+    context: Omit<StudioAgentToolContext, 'approval' | 'reportProgress'>
+  ): Promise<StudioAgentToolAuthorization> | StudioAgentToolAuthorization;
   execute(input: TInput, context: StudioAgentToolContext): Promise<StudioAgentToolResult<TOutput>>;
 };
 

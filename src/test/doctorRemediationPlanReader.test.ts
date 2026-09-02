@@ -955,4 +955,131 @@ describe('doctorRemediationPlanReader', () => {
       })
     ).resolves.toBeNull();
   });
+
+  it('scopes a workspace-global next action to the active CLI 0.72 runtime prerequisite', async () => {
+    const workspacePath = makeRoot();
+    const projectPath = path.join(workspacePath, 'apps', 'api');
+    const reportsPath = path.join(workspacePath, '.workspai', 'reports');
+    await fs.outputJSON(path.join(reportsPath, 'doctor-last-run.json'), {
+      generatedAt: new Date().toISOString(),
+    });
+    await fs.outputJSON(path.join(reportsPath, 'artifact-remediation-plan-last-run.json'), {
+      schemaVersion: 'artifact-remediation-plan-v1',
+      generatedAt: new Date(Date.now() + 60_000).toISOString(),
+      execution: {
+        nextActionId: 'doctor.apex-web.surface-security-hygiene.file-append',
+        eligibleActionIds: ['doctor.apex-web.surface-security-hygiene.file-append'],
+        blockedActionIds: ['doctor.api.dependencies'],
+      },
+      actions: [
+        {
+          id: 'environment.runtime.go',
+          artifactKind: 'doctor',
+          cardId: 'environment',
+          title: 'Provide go',
+          order: 1,
+          phase: 'host-prerequisite',
+          scope: 'project',
+          projectName: 'api',
+          projectPath,
+          findingId: 'runtime-go',
+          findingStatus: 'blocking',
+          causalKey: 'doctor|api|runtime-go',
+          status: 'guidance-only',
+          mode: 'manual-guidance',
+          risk: 'safe',
+          requiresApproval: true,
+          blocker: 'The required executable go is unavailable.',
+          summary: 'Install or configure Go, then refresh the plan.',
+          verifyCommand: 'npx workspai doctor workspace --json',
+          cwd: 'project',
+          files: [],
+          requirements: [
+            {
+              kind: 'executable',
+              id: 'executable:go',
+              status: 'missing',
+              executable: 'go',
+              message: 'Executable go is unavailable in the current environment.',
+            },
+          ],
+          retryPolicy: { sameGeneration: 'forbidden', resumeWhen: 'environment-changed' },
+          notes: [],
+        },
+        {
+          id: 'doctor.api.dependencies',
+          artifactKind: 'doctor',
+          cardId: 'doctor',
+          title: 'Materialize Go dependencies',
+          order: 2,
+          phase: 'dependency-baseline',
+          scope: 'project',
+          projectName: 'api',
+          projectPath,
+          findingId: 'go-sum-missing',
+          findingStatus: 'blocking',
+          causalKey: 'doctor|api|go-sum-missing',
+          dependsOn: ['environment.runtime.go'],
+          status: 'blocked',
+          mode: 'run-command',
+          risk: 'guarded',
+          requiresApproval: true,
+          blocker: 'Go dependencies are not downloaded.',
+          summary: 'Go must be available before dependency materialization.',
+          invocation: { cwd: projectPath, executable: 'go', args: ['mod', 'download'] },
+          verifyCommand: 'npx workspai doctor project --json',
+          cwd: 'project',
+          files: ['go.sum'],
+          requirements: [
+            {
+              kind: 'executable',
+              id: 'executable:go',
+              status: 'missing',
+              executable: 'go',
+              message: 'Executable go is unavailable in the current environment.',
+            },
+          ],
+          retryPolicy: { sameGeneration: 'forbidden', resumeWhen: 'environment-changed' },
+          notes: [],
+        },
+      ],
+    });
+
+    const plan = await readDoctorRemediationPlanForStudio({
+      workspacePath,
+      maxSteps: 64,
+      handoff: handoff({
+        workspacePath,
+        cardId: 'doctor',
+        cardLabel: 'Workspace Doctor',
+        artifactPath: '.workspai/reports/doctor-last-run.json',
+        scope: 'project',
+        projectName: 'api',
+        projectPath,
+        blockers: ['api: Go dependencies are not downloaded (go.sum missing)'],
+      }),
+    });
+
+    expect(plan?.execution).toEqual({
+      nextActionId: 'environment.runtime.go',
+      eligibleActionIds: [],
+      blockedActionIds: ['doctor.api.dependencies'],
+    });
+    expect(plan?.visibleSteps.map((step) => step.id)).toEqual([
+      'environment.runtime.go',
+      'doctor.api.dependencies',
+    ]);
+    expect(plan?.visibleSteps[0]).toMatchObject({
+      studioState: 'guidance-only',
+      executable: false,
+      requirements: [expect.objectContaining({ executable: 'go', status: 'missing' })],
+      retryPolicy: { sameGeneration: 'forbidden', resumeWhen: 'environment-changed' },
+    });
+    expect(plan?.visibleSteps[1]).toMatchObject({
+      studioState: 'blocked',
+      executable: true,
+      executionReady: false,
+      invocation: { executable: 'go', args: ['mod', 'download'] },
+    });
+  });
 });

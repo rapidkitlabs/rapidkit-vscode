@@ -25,6 +25,42 @@ export type SidebarStudioFileChangeView = {
   diffLines?: SidebarStudioDiffLineView[];
 };
 
+export type SidebarStudioApprovalRequestView = {
+  sessionId: string;
+  fingerprint: string;
+  toolCallId: string;
+  scope: 'workspace' | 'project';
+  command: string;
+  commandLabel: string;
+  summary: string;
+  modelReason?: string;
+  cwd?: string;
+  reasons: string[];
+  allowedExecutions: Array<'once' | 'session' | 'project'>;
+};
+
+function approvalIdentifierLabel(value: string): string {
+  return value
+    .split(/[-_]+/g)
+    .filter(Boolean)
+    .join(' ')
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
+export function studioApprovalCommandLabel(command: string): string {
+  const remediationPrefix = 'Workspai remediation action:';
+  if (!command.startsWith(remediationPrefix)) {
+    return command;
+  }
+  const segments = command.slice(remediationPrefix.length).trim().split('.').filter(Boolean);
+  const subject = segments.length > 2 ? approvalIdentifierLabel(segments[1]) : '';
+  const action = segments.length ? approvalIdentifierLabel(segments[segments.length - 1]) : '';
+  if (subject && action && subject.toLowerCase() !== action.toLowerCase()) {
+    return `${subject} · ${action}`;
+  }
+  return action || subject || 'Apply governed remediation';
+}
+
 export type SidebarStudioActionProgressView = {
   sessionId?: string;
   action: string;
@@ -41,6 +77,7 @@ export type SidebarStudioActionProgressView = {
   safetyConfirmation?: string;
   safetyRefreshCommands?: string[];
   requiresApproval?: boolean;
+  approvalRequest?: SidebarStudioApprovalRequestView;
   nextAction?: 'auto-fix' | 'continue-remediation';
   nextActionLabel?: string;
   changedPaths?: string[];
@@ -72,9 +109,9 @@ const STUDIO_AGENT_TOOL_LABELS: Record<
   { running: string; completed: string; failed: string }
 > = {
   'recover-active-blocker': {
-    running: 'Resolving the active blocker',
-    completed: 'Resolved the active blocker path',
-    failed: 'Source repair is required',
+    running: 'Preparing the repair path',
+    completed: 'Repair path ready',
+    failed: 'Repair path could not be prepared',
   },
   'discover-workspace-files': {
     running: 'Discovering workspace files',
@@ -406,6 +443,7 @@ function phaseLabel(phase?: string): string | undefined {
     'applying-patch': 'Applying reviewed patch',
     fixing: 'Applying fix',
     'running-source-command': 'Running source command',
+    'starting-cli-owned-repair': 'Starting the governed repair session',
   };
   return labels[phase] ?? phase.replace(/-/g, ' ');
 }

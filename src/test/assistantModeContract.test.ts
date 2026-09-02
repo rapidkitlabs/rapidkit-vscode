@@ -4,11 +4,13 @@ import { resolveWorkspaiAssistantModeContract } from '../core/assistantModeContr
 import { createStudioAgentWorkspaiToolRegistry } from '../core/studioAgentWorkspaiTools.js';
 
 const host = {
+  recoverActiveBlocker: async () => ({ ok: true }),
   discover: async () => ({ ok: true }),
   inspect: async () => ({ ok: true }),
   search: async () => ({ ok: true, output: [] }),
   graphSearch: async () => ({ ok: true, output: [] }),
   diagnostics: async () => ({ ok: true }),
+  codeIntelligence: async () => ({ ok: true }),
   inspectChanges: async () => ({ ok: true }),
   applyPatches: async () => ({ ok: true }),
   applyTextEdits: async () => ({ ok: true }),
@@ -79,6 +81,8 @@ describe('Workspai assistant mode contract', () => {
       'search-workspace',
       'query-workspace-graph',
       'inspect-workspace-diagnostics',
+      'inspect-code-intelligence',
+      'inspect-workspace-batch',
       'inspect-workspace-changes',
     ]);
     expect(toolsFor('plan')).not.toContain('apply-workspace-patch');
@@ -97,7 +101,7 @@ describe('Workspai assistant mode contract', () => {
     expect(toolsFor('goal')).toContain('inspect-remediation-plan');
     expect(toolsFor('goal')).toContain('execute-remediation-step');
     expect(toolsFor('goal')).toContain('verify-goal');
-    expect(toolsFor('goal')).not.toContain('recover-active-blocker');
+    expect(toolsFor('goal')).toContain('recover-active-blocker');
     expect(toolsFor('goal')).not.toContain('verify-blocker');
   });
 });

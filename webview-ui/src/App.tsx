@@ -29,6 +29,7 @@ import { HomeImportAdoptHandoff } from '@/components/HomeImportAdoptHandoff';
 import { DashboardEvidenceArtifactsSection } from '@/components/DashboardEvidenceArtifactsSection';
 import { DashboardRepairPanel } from '@/components/DashboardRepairPanel';
 import { WorkspaceGraphExplorer } from '@/components/WorkspaceGraphExplorer';
+import { WorkspaceLiveOperations } from '@/components/WorkspaceLiveOperations';
 import {
   isWorkspaceGraphProjection,
   type WorkspaceGraphProjection,
@@ -539,6 +540,7 @@ export function App() {
       typeof context?.projectPath === 'string' ? context.projectPath : undefined;
     const contextProjectName =
       typeof context?.projectName === 'string' ? context.projectName : undefined;
+    const includeOperations = context?.includeOperations === true;
 
     return {
       workspacePath:
@@ -556,6 +558,7 @@ export function App() {
         selectedProjectForAnalysisRef.current?.name ||
         currentWorkspaceStatus.projectName ||
         undefined,
+      includeOperations,
     };
   }, []);
   const requestDashboardEvidenceFull = useCallback(
@@ -1672,6 +1675,9 @@ export function App() {
     if (!workspaceStatus.workspacePath) {
       return;
     }
+    if (dashboardSectionRef.current === 'live' || dashboardSectionRef.current === 'graph') {
+      return;
+    }
     requestDashboardEvidenceFull({
       workspacePath: workspaceStatus.workspacePath,
       projectPath: selectedProjectForAnalysis?.path,
@@ -1679,6 +1685,49 @@ export function App() {
     });
   }, [
     activeView,
+    requestDashboardEvidenceFull,
+    selectedProjectForAnalysis?.name,
+    selectedProjectForAnalysis?.path,
+    workspaceStatus.workspacePath,
+  ]);
+
+  useEffect(() => {
+    if (
+      activeView !== 'dashboard' ||
+      !['live', 'graph'].includes(dashboardSection) ||
+      !workspaceStatus.workspacePath
+    ) {
+      return;
+    }
+    const refreshHandle = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      requestDashboardEvidenceFull({
+        workspacePath: workspaceStatus.workspacePath,
+        projectPath: selectedProjectForAnalysisRef.current?.path,
+        projectName: selectedProjectForAnalysisRef.current?.name,
+        includeOperations: true,
+      });
+    }, 4_000);
+    return () => window.clearInterval(refreshHandle);
+  }, [activeView, dashboardSection, requestDashboardEvidenceFull, workspaceStatus.workspacePath]);
+
+  useEffect(() => {
+    if (
+      activeView !== 'dashboard' ||
+      !['live', 'graph'].includes(dashboardSection) ||
+      !workspaceStatus.workspacePath
+    ) {
+      return;
+    }
+    requestDashboardEvidenceFull({
+      workspacePath: workspaceStatus.workspacePath,
+      projectPath: selectedProjectForAnalysis?.path,
+      projectName: selectedProjectForAnalysis?.name,
+      includeOperations: true,
+    });
+  }, [
+    activeView,
+    dashboardSection,
     requestDashboardEvidenceFull,
     selectedProjectForAnalysis?.name,
     selectedProjectForAnalysis?.path,
@@ -1724,7 +1773,7 @@ export function App() {
           role="tab"
           aria-selected={activeView === 'dashboard'}
           className={`workspai-view-tab ${activeView === 'dashboard' ? 'is-active' : ''}`}
-          title="Command Center — Home, Run, Repair, Artifacts, Graph, Project, Library"
+          title="Workspai — Home, Run, Repair, Artifacts, Graph, Live, Project, Library"
           onClick={() => {
             setActiveView('dashboard');
           }}
@@ -2060,7 +2109,10 @@ export function App() {
                   recordingState={workspaceGraphRecordingState}
                   workspacePath={workspaceStatus.workspacePath}
                   hasWorkspace={hasActiveWorkspace}
-                  onRefresh={() => handleDashboardCommand('workspaceModel')}
+                  onRefresh={() => {
+                    handleDashboardCommand('workspaceModel');
+                    refreshDashboardEvidenceFull({ includeOperations: true });
+                  }}
                   onSearchCanonical={(query) =>
                     handleDashboardCommand('workspaceGraphSearch', query ? { query } : undefined)
                   }
@@ -2092,6 +2144,37 @@ export function App() {
                     vscode.postMessage('stopWorkspaceGraphRecording', input)
                   }
                   onOpenRecording={() => vscode.postMessage('openWorkspaceGraphRecording')}
+                />
+              ) : null}
+
+              {dashboardSection === 'live' ? (
+                <WorkspaceLiveOperations
+                  panelId="dashboard-panel-live"
+                  evidence={effectiveDashboardEvidence}
+                  workspaceName={
+                    activeWorkspaceName || workspaceStatus.workspaceName || 'Workspace'
+                  }
+                  hasWorkspace={hasActiveWorkspace}
+                  onRefresh={() =>
+                    refreshDashboardEvidenceFull({
+                      includeOperations: true,
+                    })
+                  }
+                  onOpenTerminalLive={() => handleDashboardCommand('live')}
+                  onRunBenchmark={() =>
+                    handleDashboardCommand('workspaceGraphBenchmarkSuite', {
+                      source: 'evidence',
+                      evidenceDirectRun: true,
+                    })
+                  }
+                  onCopyCaption={(text) => vscode.postMessage('copyText', { text })}
+                  onRevealArtifact={(artifactPath) =>
+                    vscode.postMessage('revealEvidence', {
+                      path: artifactPath,
+                      workspacePath: workspaceStatus.workspacePath,
+                      projectPath: dashboardProjectPath,
+                    })
+                  }
                 />
               ) : null}
 

@@ -24,6 +24,8 @@ import type { DashboardEvidenceRefreshContext } from './doctorTelemetryRefresh';
 import type { DashboardSelectedProject } from './welcomePanelDashboardCommands';
 import type { RecentWorkspaceEntry } from './welcomePanelRecentWorkspaces';
 import { readWorkspaceActivityJournal } from '../../core/workspaceActivityJournalReader';
+import { loadWorkspaceOperationsProjection } from '../../core/workspaceOperationsProjection';
+import { VSCodeStudioAgentSessionStore } from '../../core/studioAgentSessionStore';
 
 export type DashboardEvidenceHost = {
   context: vscode.ExtensionContext;
@@ -119,7 +121,10 @@ export async function sendDashboardEvidence(
   const recentWorkspaceCount = recentWorkspaces.length;
   const isFreshInstall = recentWorkspaceCount === 0 && !hasActiveWorkspace;
   const ttfvRecord = getTtfvRecord(host.context);
-  const ttfvLabel = ttfvRecord?.ttfvMs != null ? formatTtfvLabel(ttfvRecord.ttfvMs) : null;
+  const ttfvLabel =
+    ttfvRecord?.ttfvMs !== null && ttfvRecord?.ttfvMs !== undefined
+      ? formatTtfvLabel(ttfvRecord.ttfvMs)
+      : null;
   const retentionMilestones = getRetentionMilestones(host.context);
   const retentionCohortSummary = buildRetentionAnalyticsPayload(host.context);
 
@@ -128,11 +133,20 @@ export async function sendDashboardEvidence(
     Array.isArray(normalizedContext.cardIds) &&
     normalizedContext.cardIds.length > 0;
 
-  const bundle = await buildDashboardEvidenceBundle({
-    workspacePath,
-    projectPath: projectContext.projectPath,
-    projectName: projectContext.projectName,
-  });
+  const [bundle, operations] = await Promise.all([
+    buildDashboardEvidenceBundle({
+      workspacePath,
+      projectPath: projectContext.projectPath,
+      projectName: projectContext.projectName,
+    }),
+    !isPatch && workspacePath && normalizedContext?.includeOperations === true
+      ? new VSCodeStudioAgentSessionStore(host.context)
+          .list(workspacePath)
+          .then((studioSessions) =>
+            loadWorkspaceOperationsProjection({ workspacePath, studioSessions })
+          )
+      : Promise.resolve(undefined),
+  ]);
 
   if (!host.isCurrentEvidenceSendGeneration(sendGeneration)) {
     return;
@@ -225,6 +239,7 @@ export async function sendDashboardEvidence(
           projectName: bundle.projectName,
           cards,
           activity,
+          operations,
           opsChain,
           onboarding: {
             isFreshInstall,

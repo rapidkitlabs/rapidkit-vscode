@@ -301,6 +301,15 @@
       "affectedEvidenceCardIds": ["workspaceModel"],
       "refreshEvidence": false
     },
+    "workspaceGraphBenchmarkSuite": {
+      "id": "workspaceGraphBenchmarkSuite",
+      "label": "Generate Agent Retrieval Benchmark",
+      "scope": "workspace",
+      "handler": "extension-host",
+      "trackActivity": true,
+      "affectedEvidenceCardIds": ["workspaceModel", "workspaceIntelligenceRun"],
+      "refreshEvidence": true
+    },
     "workspaceGraphExportJsonLd": {
       "id": "workspaceGraphExportJsonLd",
       "label": "Export Workspace Graph as JSON-LD",

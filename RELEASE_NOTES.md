@@ -1,10 +1,85 @@
 # Release Notes
 
+## v0.46.0 (August 31, 2026)
+
+### Proof-carrying Studio and live operational assurance
+
+Workspai for VS Code 0.46.0 is validated against Workspai CLI 0.72.0. This
+release connects Agent and Goal source operations to the CLI-owned
+Proof-Carrying Change lifecycle while keeping Ask and Plan read-only. It also
+brings Live, measurable retrieval efficiency, project Graph presentation, and
+bounded project-native command execution onto the current CLI contracts.
+
+Highlights:
+
+- Agent, Goal, autonomous blocker repair, and native Chat establish or resume
+  an immutable Goal Pack before mutation and discover the existing open change
+  through the canonical `change list` projection.
+- Source repairs and structured project commands enter one CLI-owned PCC flow:
+  pinned baseline, bounded authorization, typed effect receipt, fresh Graph
+  re-observation, strict independent verification, and sealed capsule. Read-only
+  commands remain Live observations, proven rollbacks do not become fake
+  effects, and non-reversible Git or external effects require an exact one-run
+  approval plus successful post-effect observation before completion.
+- Deleted files carry CLI-derived deletion tombstones, and a recreated path
+  invalidates the capsule. Blocked or awaiting-human PCC ledgers can resume only
+  after an uncached human decision; history is never replaced or forked.
+- Linked-project source receipts use the workspace contract's portable
+  `external/<project>` identity instead of leaking or trusting absolute paths.
+- Studio keeps exact command approval, serialized execution, complete source
+  checkpoints, rollback, language intelligence, concurrent reads, and durable
+  causal memory while PCC adds tamper-evident change assurance.
+- Exact Agent approvals now render as compact, fingerprint-bound cards inside
+  the Studio conversation with run-once, session, project, and decline scopes;
+  the native VS Code modal remains only as a non-webview fallback.
+- Fresh CLI remediation plans now become durable exact-action continuations:
+  the model receives only the selected immutable `stepId`, approval-required
+  actions pause before execution, and a reload resumes the same fingerprinted
+  boundary. Only a real failed execution widens back to general causal repair.
+- CLI 0.72 runtime prerequisites remain typed through Studio and native Chat.
+  The extension scopes the workspace-wide `nextActionId` to the active finding,
+  shows missing executables as environment setup instead of a completed repair,
+  and never retries a blocked action in the same evidence generation. When no
+  exact CLI action or external prerequisite applies, the model retains the
+  governed discovery, search, inspection, command, and source-repair plane.
+- Goal preflight now follows the CLI-authored canonical freshness recovery once:
+  a `live-input-mismatch` triggers one visible `--refresh` retry before the
+  immutable Goal is activated, while unrelated failures remain fail-closed.
+- Dashboard Live includes an Operations Floor plus focused Operations, Change
+  Assurance, and Command Center views. The Floor correlates Board v1 stages,
+  Studio tool attempts, benchmark provenance, the bounded canonical Graph, and
+  PCC overlays without inventing architecture links from activity. Capsule,
+  lease, prediction, actual Graph delta, surprise report, transaction, and event
+  artifacts open through the governed evidence bridge.
+- Graph can overlay predicted operations, the actual architecture delta, and
+  unpredicted surprises on the canonical project Graph without rewriting its
+  entities or relationships. Live and Graph refresh while visible so the model,
+  operator, and presentation surfaces converge on the same current evidence.
+- Graph presentation can arrange real entities and relationships into the
+  selected project's name, shorten display-only labels, and export the result
+  without mutating canonical Graph records.
+- The extension bundles the integrity-checked Workspai CLI 0.72.0 runtime and
+  mirrors its published contracts and command inventory from the npm authority.
+
+Compatibility:
+
+- VS Code 1.106.0+
+- Workspai CLI 0.72.0+
+- RapidKit Core 0.6.0 only for Python-backed kits/modules
+
+[Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.46.0/releases/RELEASE_NOTES_v0.46.0.md)
+
+Release posture: `proof-carrying-studio-and-live-assurance`
+
+Release gate posture: `validation-required`.
+
+Publication status: prepared for release validation.
+
 ## v0.45.0 (August 28, 2026)
 
 ### Portable project intelligence and evidence-driven agent operations
 
-Workspai for VS Code 0.45.0 is validated against Workspai CLI 0.66.0. This
+Workspai for VS Code 0.45.0 is validated against Workspai CLI 0.67.0. This
 release carries the CLI's project-owned Graph, evidence-selected Skills, and
 dual-era intelligence contracts into the extension without creating a second
 source of architectural truth.
@@ -16,28 +91,69 @@ Highlights:
 - Dashboard and Graph surfaces expose exact inventory completeness, provider
   coverage and budgets, API runtime bindings, project governance, project
   scope, and entity-kind search filters.
+- A deterministic Project name projection turns the selected project's real
+  Graph entities into its Unicode-aware wordmark for interactive presentation,
+  GIF, and MP4 export without adding synthetic entities or relationships.
+  Canvas labels remove redundant project/kind prose while canonical labels stay
+  intact for search, evidence, details, and agent consumers.
 - Artifacts, Studio, Assistant, and Copilot resolve project-owned Graph/context
   files from the selected project's root and expose them as independent,
   clickable contract-backed outputs.
-- Bounded CLI activity journals appear in Recent Commands as observational
-  execution state while the Live command opens the complete CLI Flow Board.
+- Bounded CLI activity journals appear in Recent Commands while Live combines
+  the CLI-owned Board v1 projection with every durable Studio tool call in a
+  continuously refreshed vertical timeline and evidence-aware Command Center.
+  Typed artifact/Graph/proof bindings form a visible provenance bridge; Graph
+  edges are overlaid only when the exact source revision is declared, and
+  Studio Graph-query stages retain the entity/relation/proof IDs consumed by
+  the model.
+- Agent retrieval benchmarks preserve estimated/measured provenance, while
+  evaluation detail exposes token sources, latency, cost, repeated reads,
+  no-progress decisions, and verification-backed outcomes.
 - Skill selection decisions, structured MCP runtime capabilities, and repair
   qualification matrices are schema-checked while older compatible artifacts
   remain readable.
 - Workspace contract sync, planned/runtime-aware workspace execution, and the
   CLI-owned live activity graph are available through governed extension
   commands.
-- The extension bundles the integrity-checked Workspai CLI 0.66.0 runtime and
+- The extension bundles the integrity-checked Workspai CLI 0.67.0 runtime and
   synchronizes its published contracts and command surface from that authority.
 - Agent and Goal now request genuinely blocking user input through an explicit
   pre-mutation protocol, provider-bound cancellation releases sessions
   immediately, and completed Plans carry their inspected output into the
   user-approved **Run with Agent** handoff.
+- Studio now supports exact once, session, and project approval for
+  project-native invasive commands. Every scope remains bound to executable,
+  arguments, working directory, purpose, timeout, and immutable fingerprint;
+  saved approvals expire and can be revoked from the Command Palette. Changed
+  proposals require new approval, while shell execution, privilege escalation,
+  secret forwarding, Workspai CLI bypasses, and workspace escapes remain
+  non-approvable.
+- Exact Git-metadata and external registry, cluster, daemon, or remote actions
+  use a one-run approval only. Their non-source rollback boundary is explicit
+  in the durable receipt. Machine-readable effect domains prevent completion
+  until successful read-only commands observe every matching system domain.
+- Project-native commands run inside a serialized source transaction. Studio
+  creates a byte-complete private checkpoint, reports process lifecycle into
+  Live, restores undeclared mutations automatically, and rolls back partial
+  source changes from failed approved commands before the model continues.
+- Graph-bounded reasoning now composes with VS Code language intelligence for
+  definitions, references, implementations, hover types, document symbols,
+  and workspace symbols. Up to eight independent read-only inspections can run
+  concurrently with deterministic result order; writes remain serialized.
+- Long Studio sessions retain a deterministic causal spine after older events
+  leave the raw prompt window. Sequence-bound failure, verification, steering,
+  checkpoint, and per-tool outcome summaries preserve recovery state without
+  replaying source bodies or trusting a model-authored memory summary.
+- Linked projects participate through canonical Model identity instead of
+  directory ancestry. The model can select arbitrary project-native causal
+  commands through a bounded no-shell executor, while source fingerprints and
+  automatic canonical verification remain controller-owned; missing system
+  toolchains remain explicit operator prerequisites.
 
 Compatibility:
 
 - VS Code 1.106.0+
-- Workspai CLI 0.66.0+
+- Workspai CLI 0.67.0+
 - RapidKit Core 0.6.0 only for Python-backed kits/modules
 
 [Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.45.0/releases/RELEASE_NOTES_v0.45.0.md)

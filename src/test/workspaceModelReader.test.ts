@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   buildWorkspaceModelPromptSection,
+  isRegisteredWorkspaceProjectPath,
   readWorkspaceModelReport,
   workspaceModelToAnalyzeEvidenceSlice,
 } from '../core/workspaceModelReader';
@@ -56,5 +57,25 @@ describe('workspaceModelReader', () => {
       hasTests: true,
       hasDockerfile: true,
     });
+  });
+
+  it('recognizes a linked project from canonical model identity', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'rapidkit-ws-linked-model-'));
+    const linkedProject = await fs.mkdtemp(path.join(os.tmpdir(), 'rapidkit-linked-project-'));
+    tempDirs.push(workspacePath, linkedProject);
+    const reportPath = path.join(workspacePath, '.workspai', 'reports', 'workspace-model.json');
+    await fs.ensureDir(path.dirname(reportPath));
+    await fs.writeJSON(reportPath, {
+      schemaVersion: 'workspace-model.v1',
+      generatedAt: '2026-08-29T12:00:00.000Z',
+      projects: [{ name: 'grpc', path: 'external/grpc', absolutePath: linkedProject }],
+    });
+
+    await expect(isRegisteredWorkspaceProjectPath(workspacePath, linkedProject)).resolves.toBe(
+      true
+    );
+    await expect(
+      isRegisteredWorkspaceProjectPath(workspacePath, path.join(os.tmpdir(), 'not-registered'))
+    ).resolves.toBe(false);
   });
 });

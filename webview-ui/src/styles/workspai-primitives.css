@@ -2981,6 +2981,47 @@
   cursor: pointer;
 }
 
+.workspace-graph-change-overlay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 34%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-focusBorder));
+  font-size: 11px;
+}
+
+.workspace-graph-change-overlay strong {
+  margin-right: 4px;
+  color: var(--vscode-foreground);
+}
+
+.workspace-graph-change-overlay span {
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.workspace-graph-change-overlay .is-predicted {
+  color: var(--vscode-charts-yellow, #fbbf24);
+  border-style: dashed;
+}
+
+.workspace-graph-change-overlay .is-actual {
+  color: var(--vscode-charts-blue, #22d3ee);
+}
+
+.workspace-graph-change-overlay .is-surprise {
+  color: var(--vscode-charts-red, #fb7185);
+}
+
+.workspace-graph-change-overlay small {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+}
+
 .workspace-graph-webgl canvas:active {
   cursor: grabbing;
 }
@@ -3012,6 +3053,12 @@
   letter-spacing: 0.04em;
 }
 
+.workspace-graph-webgl__chrome span {
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  opacity: 0.78;
+}
+
 .workspace-graph-webgl__chrome button {
   padding: 3px 8px;
   border: 0;
@@ -3027,7 +3074,7 @@
 }
 
 .workspace-graph-webgl__chrome select {
-  max-width: 112px;
+  max-width: min(220px, 40vw);
   padding: 3px 22px 3px 8px;
   border: 0;
   border-radius: 999px;
@@ -5269,5 +5316,1326 @@
 
   .repair-flow__decision-tools {
     justify-items: start;
+  }
+}
+/* Live Operations and the presentation-oriented Command Center consume CLI-owned
+   Board/benchmark projections. Visual motion never changes evidence semantics. */
+.ws-live {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.ws-live--presentation {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  overflow: auto;
+  padding: 14px;
+  background: var(--vscode-editor-background);
+}
+
+.ws-live--presentation .ws-live__header p {
+  display: none;
+}
+
+.ws-operations-floor {
+  --floor-blue: var(--vscode-focusBorder, #3794ff);
+  --floor-green: var(--vscode-testing-iconPassed, #4ec9b0);
+  --floor-yellow: var(--vscode-charts-yellow, #cca700);
+  --floor-red: var(--vscode-testing-iconFailed, #f14c4c);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 86%, transparent);
+  border-radius: 7px;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--vscode-editor-foreground) 2.2%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--vscode-editor-foreground) 2.2%, transparent) 1px,
+      transparent 1px
+    ),
+    var(--vscode-editor-background);
+  background-size: 20px 20px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.ws-operations-floor__pulsebar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--vscode-panel-border);
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 88%, transparent);
+}
+
+.ws-operations-floor__pulsebar > div:first-child {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+  padding: 8px 11px;
+}
+
+.ws-operations-floor__pulsebar > div:first-child > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.ws-operations-floor__pulsebar strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-operations-floor__pulsebar small {
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-operations-floor__pulsebar dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(82px, 1fr));
+  min-width: min(52%, 560px);
+  margin: 0;
+  border-left: 1px solid var(--vscode-panel-border);
+}
+
+.ws-operations-floor__pulsebar dl > div {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 6px 9px;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-panel-border) 72%, transparent);
+}
+
+.ws-operations-floor__pulsebar dl > div:first-child {
+  border-left: 0;
+}
+
+.ws-operations-floor__pulsebar dt,
+.ws-operations-floor__ledger dt {
+  color: var(--vscode-descriptionForeground);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ws-operations-floor__pulsebar dd,
+.ws-operations-floor__ledger dd {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ws-operations-floor__pipeline,
+.ws-operations-floor__telemetry > article,
+.ws-operations-floor__mesh,
+.ws-operations-floor__attempts,
+.ws-operations-floor__ledger {
+  min-width: 0;
+  border: 1px solid var(--vscode-panel-border);
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 84%, transparent);
+}
+
+.ws-operations-floor__pipeline {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.ws-operations-floor__pipeline > header,
+.ws-operations-floor__telemetry article > header,
+.ws-operations-floor__mesh > header,
+.ws-operations-floor__attempts > header,
+.ws-operations-floor__ledger > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ws-operations-floor__pipeline > header {
+  display: grid;
+  align-content: center;
+  padding: 8px 10px;
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+.ws-operations-floor__pipeline > header small {
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.ws-operations-floor__pipeline > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  min-width: 0;
+}
+
+.ws-operations-floor__pipeline-stage {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 10px;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-panel-border) 72%, transparent);
+}
+
+.ws-operations-floor__pipeline-stage::after {
+  position: absolute;
+  right: -4px;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  border: 1px solid currentColor;
+  background: var(--vscode-editor-background);
+  content: '';
+  transform: rotate(45deg);
+}
+
+.ws-operations-floor__pipeline-stage:last-child::after {
+  display: none;
+}
+
+.ws-operations-floor__pipeline-stage > span,
+.ws-operations-floor__pipeline-stage > small {
+  color: currentColor;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.ws-operations-floor__pipeline-stage strong {
+  overflow: hidden;
+  color: var(--vscode-foreground);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.ws-operations-floor__pipeline-empty {
+  display: grid;
+  place-items: center;
+  min-height: 50px;
+  padding: 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.ws-operations-floor__telemetry {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr 0.95fr;
+  gap: 8px;
+}
+
+.ws-operations-floor__telemetry > article {
+  display: grid;
+  gap: 8px;
+  min-height: 120px;
+  padding: 9px;
+}
+
+.ws-operations-floor__capabilities {
+  display: grid;
+  gap: 5px;
+}
+
+.ws-operations-floor__capabilities > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(60px, 1.4fr) 36px;
+  align-items: center;
+  gap: 7px;
+  font-size: 8px;
+}
+
+.ws-operations-floor__capabilities i {
+  display: block;
+  height: 2px;
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 28%, transparent);
+}
+
+.ws-operations-floor__capabilities i b {
+  display: block;
+  height: 100%;
+  background: var(--floor-blue);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--floor-blue) 44%, transparent);
+}
+
+.ws-operations-floor__capabilities strong {
+  color: var(--floor-green);
+  font-size: 9px;
+  text-align: right;
+}
+
+.ws-operations-floor__dispatch {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(20px, 1fr));
+  gap: 3px;
+}
+
+.ws-operations-floor__dispatch > span {
+  display: grid;
+  place-items: center;
+  min-height: 23px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-size: 8px;
+}
+
+.ws-operations-floor__dispatch small,
+.ws-operations-floor__depth small {
+  grid-column: 1 / -1;
+  align-self: center;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  text-align: center;
+}
+
+.ws-operations-floor__depth {
+  display: flex;
+  align-items: end;
+  min-height: 76px;
+  gap: 3px;
+  padding: 5px 2px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-descriptionForeground) 34%, transparent);
+}
+
+.ws-operations-floor__depth > i {
+  display: flex;
+  flex: 1 1 0;
+  align-items: end;
+  height: 70px;
+}
+
+.ws-operations-floor__depth > i > b {
+  display: block;
+  width: 100%;
+  min-height: 4px;
+  background: currentColor;
+  opacity: 0.76;
+}
+
+.ws-operations-floor__mesh {
+  display: grid;
+  overflow: hidden;
+}
+
+.ws-operations-floor__mesh > header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.ws-operations-floor__mesh > header > div:first-child {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.ws-operations-floor__mesh > header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ws-operations-floor__mesh > header strong {
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  text-transform: none;
+}
+
+.ws-operations-floor__mesh > header small {
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.ws-operations-floor__mesh-metrics {
+  display: flex;
+  gap: 10px;
+}
+
+.ws-operations-floor__graph-canvas {
+  min-height: 330px;
+  padding: 0 8px;
+}
+
+.ws-operations-floor__graph-canvas .workspace-graph-canvas {
+  min-height: 320px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ws-live--presentation .ws-operations-floor__graph-canvas,
+.ws-live--presentation .ws-operations-floor__graph-canvas .workspace-graph-canvas {
+  min-height: min(440px, 42vh);
+}
+
+.ws-operations-floor__mesh-empty {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  min-height: 300px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.ws-operations-floor__mesh > footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 27px;
+  padding: 5px 9px;
+  border-top: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  font-size: 8px;
+}
+
+.ws-operations-floor__mesh > footer small {
+  margin-left: auto;
+  font-size: 8px;
+}
+
+.ws-operations-floor__mesh .is-evidence {
+  color: var(--floor-blue);
+}
+
+.ws-operations-floor__mesh .is-predicted {
+  color: var(--vscode-charts-purple, #c586c0);
+}
+
+.ws-operations-floor__mesh .is-actual {
+  color: var(--floor-green);
+}
+
+.ws-operations-floor__mesh .is-surprise {
+  color: var(--floor-red);
+}
+
+.ws-operations-floor__lower {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(210px, 1fr);
+  gap: 8px;
+}
+
+.ws-operations-floor__attempts,
+.ws-operations-floor__ledger {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 9px;
+}
+
+.ws-operations-floor__attempts > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.ws-operations-floor__attempts > header strong {
+  color: var(--floor-blue);
+  font-size: 9px;
+}
+
+.ws-operations-floor__attempts > header small {
+  font-size: 8px;
+}
+
+.ws-operations-floor__attempts > div {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(8px, 1fr));
+  gap: 3px;
+}
+
+.ws-operations-floor__attempts > div > span {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-height: 13px;
+  border: 1px solid currentColor;
+  font-size: 7px;
+}
+
+.ws-operations-floor__attempts > div > p {
+  grid-column: 1 / -1;
+  margin: 5px 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+}
+
+.ws-operations-floor__attempts > footer {
+  display: flex;
+  gap: 14px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 8px;
+}
+
+.ws-operations-floor__ledger > strong {
+  font-size: 24px;
+  text-transform: capitalize;
+}
+
+.ws-operations-floor__ledger dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+
+.ws-operations-floor__ledger dl > div {
+  padding: 6px;
+  border-left: 2px solid var(--floor-blue);
+  background: color-mix(in srgb, var(--floor-blue) 5%, transparent);
+}
+
+.ws-operations-floor__ledger p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 8px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.ws-live__header,
+.ws-live__actions,
+.ws-live__mode,
+.ws-live__panel-heading,
+.ws-command-center__label,
+.ws-command-center__actions,
+.ws-live__status,
+.ws-command-center__trust strong {
+  display: flex;
+  align-items: center;
+}
+
+.ws-command-center__evidence-rail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 34%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 6%, transparent);
+}
+
+.ws-command-center__evidence-rail > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #4ec9b0));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ws-command-center__evidence-rail > div {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.ws-command-center__evidence-rail code {
+  flex: 0 0 auto;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 4px 7px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 999px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-command-center__evidence-rail small {
+  grid-column: 2;
+}
+
+.ws-command-center__binding.is-bound {
+  border-color: color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 42%, transparent);
+  background: color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 7%, transparent);
+}
+
+.ws-live__header {
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.ws-live__header h2 {
+  margin: 3px 0 4px;
+  color: var(--vscode-foreground);
+  font-size: 20px;
+}
+
+.ws-live__header p,
+.ws-live__empty-panel,
+.ws-live-empty p {
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.ws-live__eyebrow {
+  color: var(--vscode-charts-green, #4ec9b0);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.ws-live__pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--vscode-charts-green, #4ec9b0);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 15%, transparent);
+}
+
+.ws-live__actions,
+.ws-command-center__actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ws-live__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+  border-radius: 6px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-editorWidget-background));
+  cursor: pointer;
+}
+
+.ws-live__button:hover,
+.ws-live__button.is-primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.ws-live__mode {
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background);
+}
+
+.ws-live__mode button {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ws-live__mode button.is-active {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-focusBorder) 20%, transparent);
+}
+
+.ws-live__kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ws-live__kpi,
+.ws-live__panel,
+.ws-command-center,
+.ws-command-center__graph,
+.ws-command-center__flow,
+.ws-command-center__trust > div {
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 88%, transparent);
+}
+
+.ws-live__kpi {
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+}
+
+.ws-live__kpi span,
+.ws-live__panel-heading span,
+.ws-command-center__trust span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ws-live__kpi strong {
+  font-size: 18px;
+}
+
+.ws-live__kpi small,
+.ws-command-center small,
+.ws-live__stage small {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.ws-live__operations-grid,
+.ws-command-center__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+  gap: 12px;
+}
+
+.ws-change-assurance {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 10px;
+  background:
+    radial-gradient(
+      circle at 85% 0%,
+      color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 10%, transparent),
+      transparent 36%
+    ),
+    var(--vscode-editor-background);
+}
+
+.ws-change-assurance__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ws-change-assurance__header > div {
+  min-width: 0;
+}
+
+.ws-change-assurance__header span,
+.ws-change-assurance__summary span,
+.ws-change-assurance__detail > span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ws-change-assurance__header h3 {
+  overflow: hidden;
+  margin: 4px 0;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-change-assurance__header p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.ws-change-assurance__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ws-change-assurance__summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-widget-border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 82%, transparent);
+}
+
+.ws-change-assurance__summary strong {
+  font-size: 17px;
+}
+
+.ws-change-assurance__body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.ws-change-assurance__timeline {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ws-change-assurance__stage {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.ws-change-assurance__stage > div:last-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--vscode-widget-border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 82%, transparent);
+}
+
+.ws-change-assurance__stage strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.ws-change-assurance__stage span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.ws-change-assurance__stage p {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.ws-change-assurance__detail {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background) 84%, transparent);
+}
+
+.ws-change-assurance__detail > strong {
+  font-size: 18px;
+  text-transform: capitalize;
+}
+
+.ws-change-assurance__detail > small,
+.ws-change-assurance__detail p,
+.ws-change-assurance__detail li {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.ws-change-assurance__detail > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 7px;
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #4ec9b0));
+  background: color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 7%, transparent);
+  font-size: 10px;
+}
+
+.ws-change-assurance__detail ul {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 0;
+  padding-left: 17px;
+}
+
+.ws-change-assurance__detail .ws-change-assurance__deletions {
+  display: grid;
+  align-items: start;
+  gap: 5px;
+  color: var(--vscode-charts-orange, #ce9178);
+  background: color-mix(in srgb, var(--vscode-charts-orange, #ce9178) 7%, transparent);
+}
+
+.ws-change-assurance__deletions ul {
+  min-width: 0;
+  margin: 0;
+}
+
+.ws-change-assurance__deletions code {
+  overflow-wrap: anywhere;
+  color: var(--vscode-foreground);
+}
+
+.ws-change-assurance__detail .ws-change-assurance__artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 0;
+  background: transparent;
+}
+
+.ws-change-assurance__artifacts .ws-live__button {
+  flex: 1 1 132px;
+  justify-content: flex-start;
+  min-width: 0;
+  color: var(--vscode-foreground);
+}
+
+.ws-change-assurance__detail .ws-change-assurance__next {
+  display: grid;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 9px;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 80%, transparent);
+}
+
+.ws-change-assurance__next span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ws-change-assurance__next code {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.ws-live__panel {
+  min-width: 0;
+  padding: 14px;
+}
+
+.ws-live__panel-heading {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.ws-live__panel-heading h3 {
+  margin: 3px 0 0;
+  font-size: 14px;
+}
+
+.ws-live__status {
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.ws-live__timeline {
+  display: grid;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 2px 6px 2px 0;
+  scrollbar-gutter: stable;
+}
+
+.ws-live__timeline-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.ws-live__timeline-row:not(:last-child)::before {
+  position: absolute;
+  top: 28px;
+  bottom: -4px;
+  left: 14px;
+  width: 1px;
+  background: color-mix(in srgb, var(--vscode-focusBorder) 45%, var(--vscode-widget-border));
+  content: '';
+}
+
+.ws-live__timeline-marker {
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: var(--vscode-editor-background);
+  font-size: 9px;
+}
+
+.ws-live__timeline-marker.is-active {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--vscode-focusBorder) 12%, transparent);
+  animation: ws-live-stage-pulse 1.8s ease-in-out infinite;
+}
+
+.ws-live__timeline-content {
+  min-width: 0;
+  margin-bottom: 8px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--vscode-widget-border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 91%, transparent);
+}
+
+.ws-live__timeline-content > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ws-live__timeline-content strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.ws-live__timeline-content p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 6px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.ws-live__source-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-focusBorder) 10%, transparent);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.ws-live__fleet-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.ws-live__fleet-stats > div {
+  padding: 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 72%, transparent);
+}
+
+.ws-live__fleet-stats dt {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.ws-live__fleet-stats dd {
+  margin: 4px 0 0;
+  font-weight: 650;
+}
+
+.ws-live__diagnostic,
+.ws-command-center__binding {
+  display: flex;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 42%, transparent);
+  border-radius: 7px;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 7%, transparent);
+  font-size: 11px;
+}
+
+.ws-command-center {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background:
+    radial-gradient(
+      circle at 18% 20%,
+      color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 13%, transparent),
+      transparent 36%
+    ),
+    radial-gradient(
+      circle at 78% 10%,
+      color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 10%, transparent),
+      transparent 32%
+    ),
+    var(--vscode-editor-background);
+}
+
+.ws-command-center__pulsebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-charts-green, #4ec9b0) 6%, transparent);
+}
+
+.ws-command-center__pulsebar > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ws-command-center__pulsebar small {
+  color: var(--vscode-descriptionForeground);
+}
+
+.ws-command-center__graph,
+.ws-command-center__flow {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-height: 190px;
+  padding: 18px;
+}
+
+.ws-command-center__graph > strong {
+  font-size: clamp(24px, 4vw, 46px);
+  letter-spacing: -0.04em;
+}
+
+.ws-command-center__label {
+  gap: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ws-command-center__flow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.ws-command-center__flow-grid span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.ws-command-center__flow-grid b {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-command-center__flow-grid small {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #4ec9b0));
+}
+
+.ws-command-center__trust {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.ws-command-center__trust > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.ws-command-center__trust strong {
+  gap: 5px;
+  font-size: 17px;
+  text-transform: capitalize;
+}
+
+.ws-live .is-success,
+.ws-live .is-verified {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #4ec9b0));
+}
+
+.ws-live .is-danger {
+  color: var(--vscode-testing-iconFailed, var(--vscode-charts-red, #f14c4c));
+}
+
+.ws-live .is-warning {
+  color: var(--vscode-charts-yellow, #cca700);
+}
+
+.ws-live .is-active {
+  color: var(--vscode-focusBorder);
+}
+
+.ws-live-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 280px;
+  padding: 24px;
+  text-align: center;
+}
+
+.ws-live-empty h2 {
+  margin: 0;
+}
+
+@keyframes ws-live-stage-pulse {
+  50% {
+    box-shadow: 0 0 28px color-mix(in srgb, var(--vscode-focusBorder) 34%, transparent);
+  }
+}
+
+@media (max-width: 860px) {
+  .ws-live__kpis,
+  .ws-command-center__trust {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ws-live__operations-grid,
+  .ws-command-center__hero,
+  .ws-change-assurance__body {
+    grid-template-columns: 1fr;
+  }
+
+  .ws-operations-floor__pulsebar {
+    display: grid;
+  }
+
+  .ws-operations-floor__pulsebar dl {
+    min-width: 0;
+    border-top: 1px solid var(--vscode-panel-border);
+    border-left: 0;
+  }
+
+  .ws-operations-floor__telemetry {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ws-operations-floor__telemetry > article:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .ws-operations-floor__lower {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .ws-live__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ws-live__kpis,
+  .ws-command-center__trust,
+  .ws-change-assurance__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .ws-change-assurance__header {
+    flex-direction: column;
+  }
+
+  .ws-operations-floor__pipeline {
+    grid-template-columns: 1fr;
+  }
+
+  .ws-operations-floor__pipeline > header {
+    border-right: 0;
+    border-bottom: 1px solid var(--vscode-panel-border);
+  }
+
+  .ws-operations-floor__pipeline > div,
+  .ws-operations-floor__telemetry {
+    grid-template-columns: 1fr;
+  }
+
+  .ws-operations-floor__telemetry > article:last-child {
+    grid-column: auto;
+  }
+
+  .ws-operations-floor__pulsebar dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ws-operations-floor__mesh > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ws-operations-floor__mesh > header > div:first-child {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ws-operations-floor__mesh > header small {
+    grid-column: 1 / -1;
+  }
+
+  .ws-operations-floor__attempts > div {
+    grid-template-columns: repeat(12, minmax(8px, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-live__timeline-marker.is-active {
+    animation: none;
   }
 }

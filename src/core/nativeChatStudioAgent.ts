@@ -10,6 +10,7 @@ import { collectSidebarStudioRepairEvidence } from './sidebarStudioPatchBridge.j
 import { inspectStudioAgentFiles } from './sidebarStudioAgentRuntime.js';
 import { StudioAgentSession } from './studioAgentSession.js';
 import { ContractStudioAgentModelAdapter } from './studioAgentModelProtocol.js';
+import type { StudioAgentToolApprovalGrant } from './studioAgentToolRegistry.js';
 import { VSCodeStudioAgentSessionStore } from './studioAgentSessionStore.js';
 import {
   createStudioAgentWorkspaiToolRegistry,
@@ -17,22 +18,32 @@ import {
 } from './studioAgentWorkspaiTools.js';
 import { renderNativeStudioAgentEvent } from './nativeChatToolEventRenderer.js';
 import { buildStudioIncidentGraph } from './studioIncidentGraph.js';
-import { resolveStudioRepairProjectTarget } from './studioRepairProjectTarget.js';
+import {
+  resolveStudioRepairGoalScope,
+  resolveStudioRepairProjectTarget,
+} from './studioRepairProjectTarget.js';
 import {
   discoverStudioWorkspaceFiles,
-  fingerprintStudioWorkspaceSourceState,
   inspectStudioWorkspaceChanges,
   inspectStudioWorkspaceDiagnostics,
   searchStudioWorkspaceSource,
-  STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
 } from './studioWorkspaceInspection.js';
 import { runRapidkitStreaming } from './streamingRapidkitRunner.js';
+import { buildWorkspaceGraphSearchCommand } from './workspaceGraphSearchCommand.js';
 import {
-  describeStudioWorkspaceCommandFailure,
   resolveStudioWorkspaceCommandPlan,
-  runStudioWorkspaceCommand,
   type StudioWorkspaceCommandRequest,
 } from './studioWorkspaceCommand.js';
+import { executeStudioWorkspaceCommandTransaction } from './studioWorkspaceCommandTransaction.js';
+import {
+  studioProofEffectClassesForCommand,
+  StudioProofCarryingChangeSession,
+} from './studioProofCarryingChange.js';
+import {
+  requestVSCodeProofCarryingChangeResume,
+  requestVSCodeStudioToolApproval,
+} from './studioToolApproval.js';
+import { runStudioCodeIntelligenceTool } from './studioCodeIntelligence.js';
 import {
   authorizeStudioWorkspacePatchTargets,
   compileInspectedStudioDeletePatches,
@@ -47,6 +58,7 @@ import {
 import { buildDashboardEvidenceBundle } from './dashboardEvidenceBridge.js';
 import { buildStudioBlockerHandoff } from './studioBlockerHandoffBuilder.js';
 import { resolveStudioCausalProducerRoute } from './studioCausalProducerRouter.js';
+import { buildStudioCausalRecoveryBriefing } from './studioCausalRecoveryBriefing.js';
 import {
   isExpectedDiagnosticFindingExit,
   runIncidentInlineCommand,
@@ -57,6 +69,7 @@ import {
 } from './doctorRemediationPlanReader.js';
 import {
   ensureStudioRemediationRecovery,
+  selectStudioRemediationEnvironmentPrerequisite,
   selectStudioRemediationRecoveryStep,
 } from './studioRemediationRecovery.js';
 import {
@@ -95,6 +108,7 @@ import {
   bootstrapProjectAgent,
   requireReadyProjectAgentBootstrap,
 } from './projectAgentBootstrap.js';
+import { prepareGovernedGoalSession } from './governedGoalSession.js';
 
 type NativeAgentStream = Pick<vscode.ChatResponseStream, 'button' | 'markdown' | 'progress'>;
 
@@ -107,6 +121,12 @@ const REPAIR_DECISIONS = new Set<WorkspaceRepairDecision>([
   'rollback',
   'cancel',
 ]);
+
+function toolOutputRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : { canonicalVerification: value };
+}
 
 export async function runNativeChatStudioAgent(input: {
   extensionContext: vscode.ExtensionContext;
@@ -164,6 +184,28 @@ export async function runNativeChatStudioAgent(input: {
     affectedProjectNames: activeHandoff.affectedProjectNames,
     projectPath: input.projectPath,
   });
+  const governedChangeGoal = await prepareGovernedGoalSession({
+    workspacePath: input.workspacePath,
+    objective: [
+      input.task,
+      `Resolve ${activeHandoff.cardLabel ?? activeHandoff.cardId}.`,
+      ...activeHandoff.blockers.slice(0, 3),
+    ].join(' '),
+    scope: resolveStudioRepairGoalScope({
+      handoffScope: activeHandoff.scope,
+      affectedProjectNames: activeHandoff.affectedProjectNames,
+      projectPath: input.projectPath,
+    }),
+    selectScope: async () => ({ kind: 'workspace' }),
+    onPhase: (label) => input.stream.progress(label),
+  });
+  const proofCarryingChange = new StudioProofCarryingChangeSession({
+    workspacePath: input.workspacePath,
+    goalId: governedChangeGoal.goalPackId,
+    actorId: 'vscode:native-chat-agent',
+    requestResume: requestVSCodeProofCarryingChangeResume,
+  });
+  const receiptedRepairTransactions = new Set<string>();
   const reportProgress = (callback?: (data: Record<string, unknown>) => Promise<void>) =>
     callback ? (progress: WorkspaceRepairProgress) => callback({ repair: progress }) : undefined;
 
@@ -197,7 +239,7 @@ export async function runNativeChatStudioAgent(input: {
       projectPath: input.projectPath,
       handoff: activeHandoff,
     });
-    return presentStudioCliOwnedRepairObservation({
+    const observation = presentStudioCliOwnedRepairObservation({
       result,
       sourceCandidates: selectStudioPostCliSourceCandidates({
         autonomousTargetPaths: repairEvidence.autonomousTargetPaths,
@@ -208,6 +250,19 @@ export async function runNativeChatStudioAgent(input: {
       proposalRejectedInstruction:
         'Do not retry the rejected content. Inspect the exact producer evidence, map its blocking finding to a causal source target, inspect that source, and submit a materially different bounded proposal.',
     });
+    const terminalRepairState = ['closed', 'failed', 'rolled-back', 'cancelled'].includes(
+      result.transaction.state
+    );
+    if (terminalRepairState && !receiptedRepairTransactions.has(result.transaction.transactionId)) {
+      observation.output.proofCarryingChange = await proofCarryingChange.recordRepairEffect({
+        result,
+        projectPath: input.projectPath,
+      });
+      receiptedRepairTransactions.add(result.transaction.transactionId);
+    } else if (proofCarryingChange.activeChangeId) {
+      observation.output.proofCarryingChange = await proofCarryingChange.status();
+    }
+    return observation;
   };
 
   const runCanonicalRepair = async (request: {
@@ -215,14 +270,17 @@ export async function runNativeChatStudioAgent(input: {
     projectPath?: string;
     projectName?: string;
     actionId?: string;
+    approval?: StudioAgentToolApprovalGrant;
     reportProgress?: (data: Record<string, unknown>) => Promise<void>;
   }) => {
+    const approvedBy = request.approval?.approvedBy ?? 'policy:vscode:native-chat-agent';
+    await proofCarryingChange.authorize(['command'], approvedBy);
     const result = await executeCliOwnedCanonicalRepair({
       workspacePath: request.workspacePath,
       cardId: activeHandoff.cardId,
       projectName: request.projectName ?? projectName,
       ...(request.actionId ? { actionId: request.actionId } : {}),
-      approvedBy: 'vscode:native-chat-agent',
+      approvedBy,
       reportProgress: reportProgress(request.reportProgress),
     });
     return presentCliRepairResult(result);
@@ -231,26 +289,6 @@ export async function runNativeChatStudioAgent(input: {
   const host: StudioAgentWorkspaiToolHost = {
     recoverActiveBlocker: async (request) => {
       const producerRoute = resolveStudioCausalProducerRoute(activeHandoff);
-      if (producerRoute) {
-        const producerResult = await host.runGovernedCommand({
-          commandId: producerRoute.commandId,
-          workspacePath: request.workspacePath,
-          projectPath: request.projectPath,
-          reportProgress: request.reportProgress,
-        });
-        return {
-          ...producerResult,
-          changed: false,
-          output: {
-            ...(producerResult.output && typeof producerResult.output === 'object'
-              ? producerResult.output
-              : {}),
-            producerRefreshCommandId: producerRoute.commandId,
-            producerRefreshReason: producerRoute.reason,
-            nextAction: producerResult.ok ? 'verify-blocker' : 'inspect-remediation-plan',
-          },
-        };
-      }
       const recovery = await ensureStudioRemediationRecovery({
         workspacePath: request.workspacePath,
         handoff: {
@@ -262,36 +300,45 @@ export async function runNativeChatStudioAgent(input: {
         actionId: 'native-chat-repair-plan-preflight',
       });
       const step = selectStudioRemediationRecoveryStep(recovery.plan, activeHandoff);
-      if (!step) {
-        return {
-          ok: false,
-          changed: false,
-          evidenceGeneration: repairEvidence.evidenceFingerprint,
-          output: {
-            recoveryPath: 'general-source-repair',
-            nextAction: 'general-source-repair',
-            sourceCandidates: repairEvidence.autonomousTargetPaths,
-            recommendedTools: [
-              'inspect-source',
-              'search-workspace',
-              'inspect-workspace-diagnostics',
-              'run-workspace-command',
-              'apply-workspace-patch',
-            ],
-            remediationPlanRefreshed: recovery.refreshed,
-            ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
-          },
-          error:
-            recovery.refreshError ??
-            'No exact executable action matches the active blocker. Continue with inspected source repair; do not create a card-wide transaction.',
-        };
-      }
-      return runCanonicalRepair({
-        workspacePath: request.workspacePath,
-        projectPath: request.projectPath || step.projectPath,
-        projectName: step.projectName ?? projectName,
-        actionId: step.actionId ?? step.id,
-        reportProgress: request.reportProgress,
+      const environmentPrerequisite = selectStudioRemediationEnvironmentPrerequisite(recovery.plan);
+      return buildStudioCausalRecoveryBriefing({
+        blockers: activeHandoff.blockers,
+        sourceCandidates: repairEvidence.autonomousTargetPaths,
+        evidenceGeneration: repairEvidence.evidenceFingerprint,
+        ...(producerRoute ? { producerRoute } : {}),
+        ...(environmentPrerequisite
+          ? {
+              environmentPrerequisite: {
+                id: environmentPrerequisite.id,
+                summary:
+                  environmentPrerequisite.blockedReason ??
+                  environmentPrerequisite.previewSummary ??
+                  'A required runtime or executable is unavailable.',
+                requirements: environmentPrerequisite.requirements,
+                retryPolicy: environmentPrerequisite.retryPolicy,
+              },
+            }
+          : {}),
+        ...(step
+          ? {
+              remediationStep: {
+                id: step.id,
+                ...(step.actionId ? { actionId: step.actionId } : {}),
+                ...(step.projectName ? { projectName: step.projectName } : {}),
+                ...(step.projectPath ? { projectPath: step.projectPath } : {}),
+                risk: step.risk,
+                canApply: step.canApply,
+                executable: step.executable,
+                executionKind: step.executionKind,
+                executionReady: step.executionReady,
+                requiresApproval: step.requiresApproval,
+                files: step.files,
+                ...(step.verifyCommand ? { verifyCommand: step.verifyCommand } : {}),
+              },
+            }
+          : {}),
+        remediationPlanRefreshed: recovery.refreshed,
+        ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
       });
     },
     discover: async (request) => ({
@@ -334,15 +381,13 @@ export async function runNativeChatStudioAgent(input: {
     graphSearch: async (request) => {
       const limit = Math.min(Math.max(Math.trunc(request.limit ?? 12), 1), 50);
       const execution = await runRapidkitStreaming<unknown>({
-        command: [
-          'workspace',
-          'graph',
-          'search',
-          request.query,
-          '--limit',
-          String(limit),
-          '--json',
-        ],
+        command: buildWorkspaceGraphSearchCommand({
+          query: request.query,
+          limit,
+          ...(request.projectPath
+            ? { scope: `project:${path.basename(request.projectPath)}` }
+            : {}),
+        }),
         cwd: request.workspacePath,
         featureLabel: 'Workspace graph retrieval',
         timeoutMs: 2 * 60_000,
@@ -365,6 +410,7 @@ export async function runNativeChatStudioAgent(input: {
       ok: true,
       output: { diagnostics: inspectStudioWorkspaceDiagnostics(request) },
     }),
+    codeIntelligence: runStudioCodeIntelligenceTool,
     inspectChanges: async (request) => ({
       ok: true,
       output: await inspectStudioWorkspaceChanges(request),
@@ -394,11 +440,13 @@ export async function runNativeChatStudioAgent(input: {
           error: `Inspect every target before editing: ${unauthorized.map((entry) => entry.relativePath).join(', ')}`,
         };
       }
+      await proofCarryingChange.authorize(['filesystem'], 'vscode:native-chat-agent');
       const result = await executeCliOwnedPatchRepair({
         workspacePath: request.workspacePath,
         projectPath: request.projectPath,
         projectName,
         cardId: activeHandoff.cardId,
+        goalId: governedChangeGoal.goalPackId,
         blockerSignature: activeBlockerSignature,
         approvedBy: 'vscode:native-chat-agent',
         patches: normalized.map((patch) => ({
@@ -452,76 +500,66 @@ export async function runNativeChatStudioAgent(input: {
       request: StudioWorkspaceCommandRequest;
       workspacePath: string;
       projectPath?: string;
+      approval?: StudioAgentToolApprovalGrant;
+      signal?: AbortSignal;
+      reportProgress?: (data: Record<string, unknown>) => Promise<void>;
     }) => {
       try {
-        const plan = resolveStudioWorkspaceCommandPlan({
+        const commandPlan = resolveStudioWorkspaceCommandPlan({
           workspacePath: request.workspacePath,
+          projectPath: request.projectPath,
           request: request.request,
         });
-        if (plan.mutatesSource) {
-          return {
-            ok: false,
-            error: 'Mutating commands must be expressed as a CLI-owned patch transaction.',
-          };
+        const proofEffects = studioProofEffectClassesForCommand(commandPlan);
+        if (proofEffects.length > 0) {
+          await proofCarryingChange.authorize(
+            proofEffects,
+            request.approval?.approvedBy ?? 'policy:vscode:native-chat-agent'
+          );
         }
-        const before = await fingerprintStudioWorkspaceSourceState({
+        const execution = await executeStudioWorkspaceCommandTransaction({
           workspacePath: request.workspacePath,
           projectPath: request.projectPath,
-        });
-        if (!before) {
-          return {
-            ok: false,
-            terminalReason: 'workspace-command-fingerprint-unavailable',
-            error: STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
-          };
-        }
-        const execution = await runStudioWorkspaceCommand(plan);
-        const after = await fingerprintStudioWorkspaceSourceState({
-          workspacePath: request.workspacePath,
-          projectPath: request.projectPath,
-        });
-        if (!after || after.fingerprint !== before.fingerprint) {
-          return {
-            ok: false,
-            changed: true,
-            evidenceGeneration: repairEvidence.evidenceFingerprint,
-            requiresUserDecision: true,
-            terminalReason: 'workspace-command-source-mutation-detected',
-            error:
-              'The workspace command changed source state and cannot be accepted outside a CLI-owned repair transaction.',
-            output: {
-              ...execution,
-              observedSourceChange: true,
-              nextAction: 'review-required',
-              requiresUserDecision: true,
-            },
-          };
-        }
-        const diagnosticFindings = isExpectedDiagnosticFindingExit({
-          command: plan.displayCommand,
-          exitCode: execution.exitCode,
-          stdout: execution.stdout,
-          stderr: execution.stderr,
-        });
-        const commandObserved = execution.exitCode === 0 || diagnosticFindings;
-        return {
-          ok: commandObserved,
-          changed: false,
+          request: request.request,
+          approval: request.approval,
           evidenceGeneration: repairEvidence.evidenceFingerprint,
-          output: {
-            ...execution,
-            ...(commandObserved
-              ? { diagnosticOutcome: diagnosticFindings ? 'findings' : 'clean' }
-              : {}),
-            changedPaths: [],
-            observedSourceChange: false,
-            sourceFingerprint: after.fingerprint,
-          },
-          ...(commandObserved
-            ? {}
-            : {
-                error: describeStudioWorkspaceCommandFailure(execution),
-              }),
+          signal: request.signal,
+          reportProcessEvent: request.reportProgress
+            ? (event) => request.reportProgress!({ process: event })
+            : undefined,
+          isExpectedDiagnosticFindingExit,
+        });
+        const commandOutput = execution.output;
+        const observedEffect = Boolean(
+          commandOutput &&
+          !commandOutput.rollback &&
+          (commandOutput.effects.source ||
+            commandOutput.effects.repositoryMetadata ||
+            commandOutput.effects.externalSystem)
+        );
+        const proof =
+          commandOutput && observedEffect
+            ? await proofCarryingChange.recordCommandEffect({
+                transactionId: commandOutput.transactionId,
+                projectPath: request.projectPath,
+                command: [request.request.executable, ...request.request.args],
+                changedPaths: commandOutput.changedPaths,
+                succeeded: execution.ok,
+                effectClass: proofEffects[0],
+                summary: execution.ok
+                  ? `Native Chat command completed: ${request.request.executable}.`
+                  : `Native Chat command failed: ${request.request.executable}.`,
+              })
+            : proofCarryingChange.activeChangeId
+              ? await proofCarryingChange.status()
+              : undefined;
+        return {
+          ...execution,
+          output: commandOutput
+            ? { ...commandOutput, ...(proof ? { proofCarryingChange: proof } : {}) }
+            : proof
+              ? { proofCarryingChange: proof }
+              : undefined,
         };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -696,6 +734,7 @@ export async function runNativeChatStudioAgent(input: {
           generatedAt: plan.generatedAt,
           scope: plan.scope,
           freshness: plan.freshness,
+          execution: plan.execution,
           hiddenStepCount: plan.hiddenStepCount,
           steps: plan.visibleSteps.map((step) => ({
             id: step.id,
@@ -708,6 +747,11 @@ export async function runNativeChatStudioAgent(input: {
             executable: step.executable,
             studioState: step.studioState,
             canApply: step.canApply,
+            executionReady: step.executionReady,
+            invocation: step.invocation,
+            requirements: step.requirements,
+            retryPolicy: step.retryPolicy,
+            blockedReason: step.blockedReason,
             title: step.previewTitle,
             summary: step.previewSummary,
           })),
@@ -726,6 +770,7 @@ export async function runNativeChatStudioAgent(input: {
         workspacePath: request.workspacePath,
         projectPath: request.projectPath,
         actionId: request.stepId,
+        approval: request.approval,
         reportProgress: request.reportProgress,
       }),
     inspectDependencySecurity: async (request) => {
@@ -931,13 +976,45 @@ export async function runNativeChatStudioAgent(input: {
     },
   };
 
+  const canonicalVerify = host.verify.bind(host);
+  host.verify = async (request) => {
+    const verification = await canonicalVerify(request);
+    if (!verification.ok || !proofCarryingChange.activeChangeId) {
+      return verification;
+    }
+    try {
+      const proof = await proofCarryingChange.verifyIfStarted(true);
+      const sealed = proof?.capsule.status === 'sealed';
+      return {
+        ...verification,
+        ok: verification.ok && sealed,
+        cardBlocking: verification.cardBlocking === true || !sealed,
+        output: { ...toolOutputRecord(verification.output), proofCarryingChange: proof },
+        ...(sealed
+          ? {}
+          : {
+              error:
+                proof?.capsule.remainingUncertainty[0] ??
+                'Native Chat verification passed, but the change capsule is not sealed.',
+            }),
+      };
+    } catch (error) {
+      return {
+        ...verification,
+        ok: false,
+        cardBlocking: true,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+
   const objective = [
     input.task,
     `Card: ${activeHandoff.cardLabel ?? activeHandoff.cardId}`,
     `Blockers: ${activeHandoff.blockers.join('; ')}`,
     `Verify command: ${activeHandoff.verifyCommand}`,
     repairEvidence.promptSection,
-    'Inspect causal project source before editing. Canonical .workspai/.rapidkit state and evidence are never source targets. Use apply-workspace-patch for every source mutation. The CLI owns checkpoint, validation, verification, closure, and rollback.',
+    'Inspect causal project source before editing. Canonical .workspai/.rapidkit state and evidence are never source targets. Use apply-workspace-patch for semantic file edits. A repository-native transformation may use run-workspace-command only when its exact structured invocation is the causal operation; Studio will require explicit fingerprint-bound approval when that command may mutate source. The CLI remains the authority for patch checkpoint, validation, verification, closure, and rollback.',
     'JSON files (.json) must contain strictly valid JSON. Never include comments, trailing commas, or non-standard syntax in .json file content.',
   ].join('\n\n');
   const registry = createStudioAgentWorkspaiToolRegistry({
@@ -945,6 +1022,8 @@ export async function runNativeChatStudioAgent(input: {
     cardId: activeHandoff.cardId,
     blockerSignature: activeHandoff.blockerSignature,
     assistantMode: 'agent',
+    goalId: governedChangeGoal.goalPackId,
+    goalCompletionMode: governedChangeGoal.governedGoal.completionMode,
   });
   const model = new ContractStudioAgentModelAdapter(
     objective,
@@ -985,7 +1064,13 @@ export async function runNativeChatStudioAgent(input: {
         : {}),
       permissionLevel: 'autopilot',
       workspaceTrusted: vscode.workspace.isTrusted,
+      requestToolApproval: (request) =>
+        requestVSCodeStudioToolApproval(request, input.extensionContext.workspaceState),
       requiresVerifiedCompletion: true,
+      governedGoal: governedChangeGoal.governedGoal,
+      ...(governedChangeGoal.verifiedGoal ? { goal: governedChangeGoal.verifiedGoal } : {}),
+      goalMaxAttempts: governedChangeGoal.maxAttempts,
+      goalAttemptsUsed: governedChangeGoal.attemptsUsed,
     },
     model,
     registry,

@@ -1,6 +1,6 @@
 # Workspai UI surface guide
 
-> Extension 0.45.0 · Workspai CLI 0.66.0+
+> Extension 0.46.0 · Workspai CLI 0.70.0+
 
 This guide documents the current user-facing surfaces. It is a review aid for
 maintainers; it is not a second command reference.
@@ -127,6 +127,13 @@ Rules:
 ## Graph surface
 
 The Graph tab can show diagram and 3D renderers over the same graph contract.
+The 3D Project name projection may derive display coordinates from the selected
+project's canonical label, but it must preserve the exact visible entity and
+relationship sets. Text-mask samples are presentation state, not Graph data.
+Canvas renderers may derive compact labels for language and file entities, but
+the canonical label must remain available in details, search, and evidence. The
+Project name projection suppresses automatic labels and reveals a compact label
+only for the selected entity so the evidence-backed wordmark remains readable.
 Streaming/reload state must remain visible. Search and evidence queries are
 bounded and proof-carrying; UI labels must not imply live data when the stream is
 paused or stale. Project scope and entity-kind filters are passed to the CLI

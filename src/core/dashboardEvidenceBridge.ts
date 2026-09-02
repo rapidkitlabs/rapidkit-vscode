@@ -44,6 +44,7 @@ import {
   WORKSPACE_KNOWLEDGE_GRAPH_REPORT_PATH,
   WORKSPACE_EVALUATION_LIVE_REPORT_PATH,
   WORKSPACE_EVALUATION_LAST_RUN_REPORT_PATH,
+  WORKSPACE_INTELLIGENCE_BENCHMARK_REPORT_PATH,
   WORKSPACE_CONTRACT_VERIFY_REPORT_PATH,
   RAPIDKIT_MCP_DESIGN_REPORT_PATH,
   resolveWorkspaceArtifactPath,
@@ -2044,30 +2045,159 @@ async function buildWorkspaceIntelligenceCards(
       summary.outcome && typeof summary.outcome === 'object'
         ? (summary.outcome as Record<string, unknown>)
         : {};
+    const tokenSources =
+      summary.tokenSources && typeof summary.tokenSources === 'object'
+        ? (summary.tokenSources as Record<string, unknown>)
+        : {};
+    const efficiency =
+      summary.efficiency && typeof summary.efficiency === 'object'
+        ? (summary.efficiency as Record<string, unknown>)
+        : {};
+    const costs = Array.isArray(summary.costs)
+      ? summary.costs.filter((entry): entry is Record<string, unknown> =>
+          Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
+        )
+      : [];
     const observedTokens = Number(tokens.observedTotal ?? 0);
+    const inputTokens = Number(tokens.input ?? 0);
+    const outputTokens = Number(tokens.output ?? 0);
+    const cachedInputTokens = Number(tokens.cachedInput ?? 0);
+    const reasoningTokens = Number(tokens.reasoning ?? 0);
     const modelCalls = Number(summary.modelCalls ?? 0);
     const toolCalls = Number(summary.toolCalls ?? 0);
+    const latencyMs = Number(summary.latencyMs ?? 0);
+    const providerReportedSources = Number(tokenSources.providerReported ?? 0);
+    const tokenizerCountedSources = Number(tokenSources.tokenizerCounted ?? 0);
+    const estimatedSources = Number(tokenSources.estimated ?? 0);
+    const unavailableSources = Number(tokenSources.unavailable ?? 0);
+    const availableSourceKinds = [
+      providerReportedSources > 0 ? 'provider-reported' : '',
+      tokenizerCountedSources > 0 ? 'tokenizer-counted' : '',
+      estimatedSources > 0 ? 'estimated' : '',
+    ].filter(Boolean);
+    const tokenProvenance =
+      availableSourceKinds.length > 1
+        ? 'mixed'
+        : availableSourceKinds[0] || (unavailableSources > 0 ? 'unavailable' : 'unavailable');
+    const tokensPerVerifiedOutcome =
+      typeof efficiency.tokensPerVerifiedOutcome === 'number'
+        ? efficiency.tokensPerVerifiedOutcome
+        : null;
+    const noProgressDecisions = Number(efficiency.noProgressDecisions ?? 0);
+    const repeatedArtifactReads = Number(efficiency.repeatedArtifactReads ?? 0);
+    const verified = outcome.verified === true;
     const outcomeStatus = typeof outcome.status === 'string' ? outcome.status : 'unknown';
     const reportStatus = typeof evaluation.status === 'string' ? evaluation.status : 'live';
+    const costSummary = costs
+      .map((cost) => {
+        const currency = typeof cost.currency === 'string' ? cost.currency : '';
+        const amount = Number(cost.amount ?? 0);
+        const providerReported = Number(cost.providerReported ?? 0);
+        const estimated = Number(cost.estimated ?? 0);
+        return currency
+          ? `${currency} ${amount.toFixed(4)} (${providerReported > 0 ? 'provider-reported' : estimated > 0 ? 'estimated' : 'unavailable'})`
+          : '';
+      })
+      .filter(Boolean)
+      .join(' · ');
     if (intelligenceRunCard) {
       intelligenceRunCard.summary = `${intelligenceRunCard.summary} · eval ${reportStatus} · ${observedTokens} tokens`;
       intelligenceRunCard.metrics = {
         ...(intelligenceRunCard.metrics ?? {}),
         observedTokens,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+        reasoningTokens,
+        tokenProvenance,
         modelCalls,
         toolCalls,
+        latencyMs,
+        tokensPerVerifiedOutcome: tokensPerVerifiedOutcome ?? 'unavailable',
+        noProgressDecisions,
+        repeatedArtifactReads,
         blockersResolved: Number(outcome.blockersResolved ?? 0),
         evaluationOutcome: outcomeStatus,
+        evaluationVerified: verified ? 'verified' : 'unverified',
       };
       intelligenceRunCard.detailSections = [
         ...(intelligenceRunCard.detailSections ?? []),
         {
           id: 'agent-evaluation',
           title: `Agent evaluation · ${reportStatus}`,
-          body: `${observedTokens} observed tokens · ${modelCalls} model call(s) · ${toolCalls} tool call(s) · outcome ${outcomeStatus}`,
+          body: [
+            `${observedTokens} observed tokens (${tokenProvenance}) · ${inputTokens} input · ${outputTokens} output · ${cachedInputTokens} cached input · ${reasoningTokens} reasoning`,
+            `${modelCalls} model call(s) · ${toolCalls} tool call(s) · ${latencyMs} ms latency`,
+            `${repeatedArtifactReads} repeated artifact read(s) · ${noProgressDecisions} no-progress decision(s) · ${tokensPerVerifiedOutcome ?? 'unavailable'} tokens per verified outcome`,
+            `outcome ${outcomeStatus} · ${verified ? 'verified' : 'not verified'} · ${Number(outcome.blockersResolved ?? 0)} blocker(s) resolved`,
+            costSummary ? `cost ${costSummary}` : 'cost unavailable',
+          ].join('\n'),
         },
       ];
     }
+  }
+
+  const intelligenceBenchmark = await readJsonArtifact(
+    path.join(workspaceRoot, WORKSPACE_INTELLIGENCE_BENCHMARK_REPORT_PATH)
+  );
+  if (intelligenceBenchmark.kind === 'valid' && intelligenceRunCard) {
+    const benchmark = intelligenceBenchmark.raw;
+    const retrieval =
+      benchmark.retrievalSummary && typeof benchmark.retrievalSummary === 'object'
+        ? (benchmark.retrievalSummary as Record<string, unknown>)
+        : {};
+    const graph =
+      benchmark.graph && typeof benchmark.graph === 'object'
+        ? (benchmark.graph as Record<string, unknown>)
+        : {};
+    if (benchmark.schemaVersion === 'workspace-intelligence-benchmark.v1') {
+      const reduction = Number(retrieval.medianEstimatedReductionPercent ?? 0);
+      const medianTokens = Number(retrieval.medianRetrievalEstimatedTokens ?? 0);
+      const matched = Number(retrieval.matchedScenarioCount ?? 0);
+      const scenarios = Number(retrieval.scenarioCount ?? 0);
+      intelligenceRunCard.metrics = {
+        ...(intelligenceRunCard.metrics ?? {}),
+        benchmarkEstimatedReductionPercent: reduction,
+        benchmarkMedianEstimatedTokens: medianTokens,
+        benchmarkMatchedScenarios: matched,
+        benchmarkScenarioCount: scenarios,
+        benchmarkGraphEntities: Number(graph.entityCount ?? 0),
+        benchmarkGraphRelations: Number(graph.relationCount ?? 0),
+        benchmarkGraphProofs: Number(graph.proofCount ?? 0),
+      };
+      intelligenceRunCard.relatedArtifacts = [
+        ...(intelligenceRunCard.relatedArtifacts ?? []),
+        {
+          id: 'workspace-intelligence-benchmark',
+          label: 'Agent Retrieval Benchmark',
+          artifactPath: path.join(workspaceRoot, WORKSPACE_INTELLIGENCE_BENCHMARK_REPORT_PATH),
+          scope: 'workspace',
+          status: retrieval.status === 'passed' ? 'pass' : 'warn',
+          summary: `${reduction.toFixed(1)}% estimated median payload reduction · ${matched}/${scenarios} scenarios`,
+        },
+      ];
+      intelligenceRunCard.detailSections = [
+        ...(intelligenceRunCard.detailSections ?? []),
+        {
+          id: 'workspace-intelligence-benchmark',
+          title: 'Agent retrieval benchmark · estimated',
+          body: `${reduction.toFixed(1)}% estimated median payload reduction · ${medianTokens} median estimated tokens · ${matched}/${scenarios} matched scenarios\nThis retrieval estimate is not provider billing or measured model-token savings.`,
+        },
+      ];
+    }
+  } else if (intelligenceBenchmark.kind !== 'missing' && intelligenceRunCard) {
+    const benchmarkError =
+      'error' in intelligenceBenchmark
+        ? intelligenceBenchmark.error
+        : 'schemaVersion is not workspace-intelligence-benchmark.v1';
+    intelligenceRunCard.detailSections = [
+      ...(intelligenceRunCard.detailSections ?? []),
+      {
+        id: 'workspace-intelligence-benchmark-error',
+        title: 'Agent retrieval benchmark',
+        body: `Benchmark artifact is ${intelligenceBenchmark.kind}: ${benchmarkError}`,
+      },
+    ];
   }
 
   const snapshotRaw = await readJsonIfExists(
@@ -3116,6 +3246,7 @@ export function resolveCardForReportKind(
     case 'project-knowledge-graph-reference':
       return findEvidenceCardById(bundle, 'workspaceModel');
     case 'workspace-intelligence-evaluation':
+    case 'workspace-intelligence-benchmark':
     case 'workspace-intelligence-run':
       return findEvidenceCardById(bundle, 'workspaceIntelligenceRun');
     case 'workspace-model-snapshot':

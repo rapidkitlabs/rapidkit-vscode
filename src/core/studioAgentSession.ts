@@ -5,11 +5,16 @@ import {
   createStudioAgentEvent,
   type StudioAgentEvent,
   type StudioAgentPersistedSession,
+  type StudioAgentRequiredCausalAction,
   type StudioAgentSessionStatus,
 } from './studioAgentEvents.js';
 import type { AssistantExecutionPolicy } from './assistantExecutionPolicy.js';
 import {
   resolveStudioAgentToolPermission,
+  type StudioAgentToolApprovalDecision,
+  type StudioAgentToolApprovalDescriptor,
+  type StudioAgentToolApprovalGrant,
+  type StudioAgentToolApprovalRequest,
   type StudioAgentPermissionLevel,
   type StudioAgentToolContext,
   type StudioAgentToolRegistry,
@@ -49,6 +54,8 @@ export type StudioAgentModelContext = {
   recentObservations?: StudioAgentRecentObservation[];
   sourceRepairDirective?: Record<string, unknown>;
   sourceActionRequired?: boolean;
+  requiredCausalAction?: StudioAgentRequiredCausalAction;
+  pendingEffectVerificationScopes?: string[];
   steering: string[];
 };
 
@@ -71,27 +78,50 @@ export interface StudioAgentSessionStore {
 
 const DURABLE_EVENT_STRING_LIMIT = 2_000;
 const DURABLE_EVENT_ARRAY_LIMIT = 50;
-const GENERAL_SOURCE_REPAIR_TOOL_NAMES = new Set([
+const GENERAL_CAUSAL_RECOVERY_TOOL_NAMES = new Set([
   'discover-workspace-files',
   'inspect-source',
   'inspect-evidence',
   'search-workspace',
   'query-workspace-graph',
   'inspect-workspace-diagnostics',
+  'inspect-workspace-changes',
+  'inspect-remediation-plan',
+  'run-governed-command',
   'run-workspace-command',
+  'execute-remediation-step',
+  'inspect-dependency-security',
+  'repair-dependency-security',
+  'upgrade-dependency-security',
+  'complete-dependency-transaction',
   'apply-workspace-patch',
   'apply-workspace-edits',
   'delete-workspace-files',
-  'inspect-workspace-changes',
+  'verify-blocker',
+  'verify-goal',
 ]);
 
-const CAUSAL_SOURCE_INSPECTION_TOOL_NAMES = new Set([
+const CAUSAL_INSPECTION_TOOL_NAMES = new Set([
   'discover-workspace-files',
   'inspect-source',
   'inspect-evidence',
   'search-workspace',
   'query-workspace-graph',
   'inspect-workspace-diagnostics',
+  'inspect-workspace-changes',
+  'inspect-remediation-plan',
+]);
+
+const CAUSAL_PROGRESS_TOOL_NAMES = new Set([
+  'run-governed-command',
+  'run-workspace-command',
+  'execute-remediation-step',
+  'repair-dependency-security',
+  'upgrade-dependency-security',
+  'complete-dependency-transaction',
+  'apply-workspace-patch',
+  'apply-workspace-edits',
+  'delete-workspace-files',
 ]);
 
 const GOVERNED_SOURCE_MUTATION_TOOL_NAMES = new Set([
@@ -232,6 +262,100 @@ function toolOutputRecord(result: StudioAgentToolResult): Record<string, unknown
     : undefined;
 }
 
+function requiredCausalActionFromResult(
+  result: StudioAgentToolResult
+): StudioAgentRequiredCausalAction | undefined {
+  const output = toolOutputRecord(result);
+  const candidate =
+    output?.requiredAction &&
+    typeof output.requiredAction === 'object' &&
+    !Array.isArray(output.requiredAction)
+      ? (output.requiredAction as Record<string, unknown>)
+      : undefined;
+  const rawInput =
+    candidate?.input && typeof candidate.input === 'object' && !Array.isArray(candidate.input)
+      ? (candidate.input as Record<string, unknown>)
+      : undefined;
+  const stepId = typeof rawInput?.stepId === 'string' ? rawInput.stepId.trim() : '';
+  const executionKind =
+    candidate?.executionKind === 'structured-operation' ||
+    candidate?.executionKind === 'contract-command'
+      ? candidate.executionKind
+      : undefined;
+  if (
+    candidate?.schemaVersion !== 'workspai.studio-required-causal-action.v1' ||
+    candidate.authority !== 'workspai-cli-remediation-plan' ||
+    candidate.toolName !== 'execute-remediation-step' ||
+    !stepId ||
+    !executionKind
+  ) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 'workspai.studio-required-causal-action.v1',
+    authority: 'workspai-cli-remediation-plan',
+    toolName: 'execute-remediation-step',
+    input: { stepId },
+    stepId,
+    executionKind,
+    requiresApproval: candidate.requiresApproval === true,
+    reason:
+      typeof candidate.reason === 'string' && candidate.reason.trim()
+        ? candidate.reason.trim()
+        : 'Execute the exact fresh CLI remediation action selected for the active blocker.',
+    ...(result.evidenceGeneration ? { evidenceGeneration: result.evidenceGeneration } : {}),
+    ...(result.blockerSignature ? { blockerSignature: result.blockerSignature } : {}),
+  };
+}
+
+function matchesRequiredCausalAction(
+  action: StudioAgentModelAction,
+  required: StudioAgentRequiredCausalAction
+): action is Extract<StudioAgentModelAction, { type: 'tool' }> {
+  if (action.type !== 'tool' || action.toolName !== required.toolName) {
+    return false;
+  }
+  const input =
+    action.input && typeof action.input === 'object' && !Array.isArray(action.input)
+      ? (action.input as Record<string, unknown>)
+      : undefined;
+  return input?.stepId === required.stepId && Object.keys(input).every((key) => key === 'stepId');
+}
+
+function requiredCausalActionApproval(
+  action: StudioAgentRequiredCausalAction,
+  projectScoped: boolean
+): StudioAgentToolApprovalDescriptor {
+  const fingerprint = crypto
+    .createHash('sha256')
+    .update(
+      canonicalJson({
+        authority: action.authority,
+        toolName: action.toolName,
+        stepId: action.stepId,
+        executionKind: action.executionKind,
+        evidenceGeneration: action.evidenceGeneration ?? null,
+        blockerSignature: action.blockerSignature ?? null,
+      })
+    )
+    .digest('hex');
+  return {
+    fingerprint,
+    title: 'Approve governed remediation action?',
+    summary:
+      'Workspai selected one immutable action from the fresh CLI remediation contract. The model cannot alter its step identity or command payload.',
+    displayCommand: `Workspai remediation action: ${action.stepId}`,
+    scope: projectScoped ? 'project' : 'workspace',
+    reasons: [
+      action.reason,
+      `Execution kind: ${action.executionKind}`,
+      ...(action.evidenceGeneration ? [`Evidence generation: ${action.evidenceGeneration}`] : []),
+    ],
+    execution: 'once',
+    allowedExecutions: ['once'],
+  };
+}
+
 function requestsGeneralSourceRepair(result: StudioAgentToolResult): boolean {
   const output = toolOutputRecord(result);
   return (
@@ -344,60 +468,6 @@ function cliRepairTransactionState(result: StudioAgentToolResult): string | unde
       ? (output.transaction as Record<string, unknown>)
       : undefined;
   return typeof transaction?.state === 'string' ? transaction.state : undefined;
-}
-
-type GeneralSourceRepairCommandViolation = {
-  commandIdentity: string;
-  message: string;
-};
-
-function generalSourceRepairCommandViolation(
-  action: Extract<StudioAgentModelAction, { type: 'tool' }>
-): GeneralSourceRepairCommandViolation | undefined {
-  if (action.toolName !== 'run-workspace-command') {
-    return undefined;
-  }
-  const input =
-    action.input && typeof action.input === 'object' && !Array.isArray(action.input)
-      ? (action.input as Record<string, unknown>)
-      : undefined;
-  const executable =
-    String(input?.executable ?? '')
-      .split(/[\\/]/)
-      .pop()
-      ?.toLowerCase() ?? '';
-  const args = Array.isArray(input?.args)
-    ? input.args.filter((entry): entry is string => typeof entry === 'string')
-    : [];
-  let command = executable === 'workspai' || executable === 'wspai' ? args : [];
-  if (['npx', 'pnpx', 'bunx', 'npm', 'pnpm', 'yarn'].includes(executable)) {
-    let binaryIndex = -1;
-    for (let index = args.length - 1; index >= 0; index -= 1) {
-      if (args[index] === 'workspai' || args[index] === 'wspai') {
-        binaryIndex = index;
-        break;
-      }
-    }
-    if (binaryIndex >= 0) {
-      command = args.slice(binaryIndex + 1);
-    }
-  }
-  const first = command[0]?.toLowerCase();
-  const second = command[1]?.toLowerCase();
-  if (
-    first === 'doctor' ||
-    (first === 'workspace' &&
-      ['verify', 'remediation-plan', 'intelligence', 'readiness'].includes(second ?? ''))
-  ) {
-    const commandIdentity = command.slice(0, 2).join(' ');
-    return {
-      commandIdentity,
-      message:
-        `The ${commandIdentity} evidence producer is locked during general source repair. ` +
-        'Make a real source change or return a review-required result; the controller owns evidence refresh and verification.',
-    };
-  }
-  return undefined;
 }
 
 function verifiedNonBlockingResult(data: unknown): boolean {
@@ -668,6 +738,9 @@ export type StudioAgentSessionOptions = {
   repairPolicy?: 'diagnose-and-repair' | 'source-repair-then-produce' | 'refresh-producer';
   initialSourceRepairDirective?: Record<string, unknown>;
   restoredSession?: StudioAgentPersistedSession;
+  requestToolApproval?(
+    request: StudioAgentToolApprovalRequest
+  ): Promise<StudioAgentToolApprovalDecision>;
 };
 
 export function studioAgentSessionScopeMatches(
@@ -692,6 +765,7 @@ export class StudioAgentSession {
   private pendingInputResolve: (() => void) | undefined;
   private readonly toolAttemptsByEpoch = new Map<string, number>();
   private readonly exhaustedTools = new Set<string>();
+  private readonly pendingEffectVerificationScopes = new Set<string>();
   private causalEpoch = 0;
   private generalSourceRepairActive = false;
   private sourceRepairDirective: Record<string, unknown> | undefined;
@@ -752,6 +826,11 @@ export class StudioAgentSession {
     this.latestBlockerSignature =
       options.blockerSignature ?? options.restoredSession?.blockerSignature;
     this.latestActiveCardId = options.cardId;
+    for (const scope of options.restoredSession?.pendingEffectVerificationScopes ?? []) {
+      if (scope.trim()) {
+        this.pendingEffectVerificationScopes.add(scope.trim());
+      }
+    }
     if (options.initialSourceRepairDirective) {
       this.generalSourceRepairActive = true;
       this.sourceRepairDirective = structuredClone(options.initialSourceRepairDirective);
@@ -765,6 +844,12 @@ export class StudioAgentSession {
         this.exhaustedTools.clear();
       }
       this.rememberExhaustedTools(data?.output);
+      if (
+        (event.type === 'tool.completed' || event.type === 'tool.failed') &&
+        data?.toolName === 'run-workspace-command'
+      ) {
+        this.rememberWorkspaceCommandEffectVerification(data as StudioAgentToolResult);
+      }
       const result = data as StudioAgentToolResult | undefined;
       if (result && requestsGeneralSourceRepair(result)) {
         this.generalSourceRepairActive = true;
@@ -874,6 +959,7 @@ export class StudioAgentSession {
         );
     let deterministicRecoveryPending =
       isAutonomousWorkspaiAssistantMode(executionMode) &&
+      !this.state.pendingRequiredCausalAction &&
       !this.isFreeFormAgentSession() &&
       this.options.repairPolicy !== 'refresh-producer' &&
       Boolean(this.registry.get('recover-active-blocker')) &&
@@ -896,6 +982,15 @@ export class StudioAgentSession {
       isAutonomousWorkspaiAssistantMode(executionMode) &&
       this.options.repairPolicy === 'refresh-producer';
     try {
+      if (
+        this.state.pendingRequiredCausalAction &&
+        !this.registry.get(this.state.pendingRequiredCausalAction.toolName)
+      ) {
+        throw new StudioAgentTerminalError(
+          'The durable session requires an exact CLI remediation action, but its native Studio tool is unavailable.',
+          'required-causal-tool-unavailable'
+        );
+      }
       if (deterministicProducerRefreshPending && !producerRefreshToolName) {
         throw new StudioAgentTerminalError(
           'This card is producer-owned, but no exact producer refresh tool is registered.',
@@ -961,15 +1056,15 @@ export class StudioAgentSession {
               recoveryPath: 'provider-circuit-breaker',
               cardId: this.latestActiveCardId,
               instruction:
-                'The blocker remains verified. Diagnose and repair its causal source through the general workspace capability plane.',
+                'The blocker remains verified. Use the general workspace capability plane to identify and execute the next evidence-backed causal action.',
             };
             consecutiveModelDecisionsWithoutSemanticProgress = 0;
             await this.emit(
               'model.checkpoint',
               {
                 summary:
-                  'Deterministic verification confirmed the blocker remains. Studio is widening the next model turn to governed source diagnosis instead of stopping.',
-                recovery: 'provider-to-source-repair',
+                  'Deterministic verification confirmed the blocker remains. Studio is widening the next model turn to the governed causal capability plane instead of stopping.',
+                recovery: 'provider-to-causal-recovery',
               },
               requestId
             );
@@ -982,18 +1077,29 @@ export class StudioAgentSession {
               'model.checkpoint',
               {
                 summary:
-                  'The diagnosis loop made no semantic progress. Studio is constraining the next turn to the causal source path instead of repeating evidence producers.',
-                recovery: 'require-causal-source-action',
+                  'The diagnosis loop made no semantic progress. Studio is requiring a new causal action while preserving every governed capability.',
+                recovery: 'require-causal-action',
               },
               requestId
             );
             continue;
           }
           throw new StudioAgentTerminalError(
-            `The model made ${modelDecisionLimit} additional decisions without a causal source change after deterministic verification and constrained recovery.`,
-            'model-source-progress-exhausted'
+            `The model made ${modelDecisionLimit} additional decisions without a new causal action after deterministic verification and constrained recovery.`,
+            'model-causal-progress-exhausted'
           );
         }
+        const modelContextForTurn =
+          deterministicSatisfiedGoalVerificationPending ||
+          deterministicProducerRefreshPending ||
+          deterministicRecoveryPending
+            ? undefined
+            : this.modelContext(
+                latestObservation,
+                this.generalSourceRepairActive &&
+                  consecutiveModelDecisionsWithoutSemanticProgress >=
+                    Math.min(4, Math.max(1, modelDecisionLimit - 1))
+              );
         const action: StudioAgentModelAction | undefined =
           deterministicSatisfiedGoalVerificationPending
             ? {
@@ -1018,14 +1124,7 @@ export class StudioAgentSession {
                     reason:
                       'Run the contract-first blocker recovery prelude before spending a model decision.',
                   }
-                : await this.nextModelAction(
-                    this.modelContext(
-                      latestObservation,
-                      this.generalSourceRepairActive &&
-                        consecutiveModelDecisionsWithoutSemanticProgress >=
-                          Math.min(4, Math.max(1, modelDecisionLimit - 1))
-                    )
-                  );
+                : await this.nextModelAction(modelContextForTurn!);
         if (!action) {
           break;
         }
@@ -1069,6 +1168,54 @@ export class StudioAgentSession {
           consecutiveModelDecisionsWithoutSemanticProgress += 1;
         }
         turnsSinceCheckpoint += 1;
+        const pendingRequiredAction = this.state.pendingRequiredCausalAction;
+        if (
+          modelContextForTurn &&
+          !pendingRequiredAction &&
+          action.type === 'tool' &&
+          !modelContextForTurn.tools.some((tool) => tool.name === action.toolName)
+        ) {
+          latestObservation = {
+            ok: false,
+            error:
+              `${action.toolName} is not available in the current governed capability set. ` +
+              'Choose one of the tools supplied for this turn.',
+          };
+          await this.emit(
+            'model.checkpoint',
+            {
+              summary: latestObservation.error,
+              recovery: 'unavailable-tool-rejected',
+              toolName: action.toolName,
+            },
+            requestId
+          );
+          continue;
+        }
+        if (
+          modelContextForTurn &&
+          pendingRequiredAction &&
+          !matchesRequiredCausalAction(action, pendingRequiredAction)
+        ) {
+          latestObservation = {
+            ok: false,
+            evidenceGeneration: pendingRequiredAction.evidenceGeneration,
+            blockerSignature: pendingRequiredAction.blockerSignature,
+            error:
+              `The fresh CLI remediation contract requires ${pendingRequiredAction.toolName} ` +
+              `with stepId=${pendingRequiredAction.stepId}. Inspection, completion, and alternate mutations are unavailable until this exact action is executed or rejected by its policy boundary.`,
+          };
+          await this.emit(
+            'model.checkpoint',
+            {
+              summary: latestObservation.error,
+              recovery: 'required-causal-action-enforced',
+              requiredAction: pendingRequiredAction,
+            },
+            requestId
+          );
+          continue;
+        }
         if (action.type === 'input') {
           if (!isAutonomousWorkspaiAssistantMode(executionMode) || this.hasMutated()) {
             latestObservation = {
@@ -1241,7 +1388,75 @@ export class StudioAgentSession {
           const blockerSignatureBeforeAction = this.latestBlockerSignature;
           const activeCardBeforeAction = this.latestActiveCardId;
           const effectiveAction = action;
+          const causalRecoveryWasActive = this.generalSourceRepairActive;
+          const requiredActionBeforeExecution = this.state.pendingRequiredCausalAction;
           latestObservation = await this.executeTool(effectiveAction, requestId);
+          if (effectiveAction.toolName === 'recover-active-blocker') {
+            const requiredAction = requiredCausalActionFromResult(latestObservation);
+            if (requiredAction) {
+              this.state.pendingRequiredCausalAction = requiredAction;
+              this.generalSourceRepairActive = false;
+              this.sourceRepairDirective = undefined;
+              this.sourceActionRequired = false;
+              this.proposalRecoveryInspectionRequired = false;
+              this.exhaustedTools.delete(requiredAction.toolName);
+              consecutiveModelDecisionsWithoutSemanticProgress = 0;
+              consecutiveCausalRejections = 0;
+              causalRecoveryAttempts = 0;
+              await this.emit(
+                'model.checkpoint',
+                {
+                  summary:
+                    'Fresh CLI evidence selected one exact remediation action. Studio is handing that bounded action to the model without reopening diagnosis.',
+                  recovery: 'required-causal-action-ready',
+                  requiredAction,
+                },
+                requestId
+              );
+              continue;
+            }
+          }
+          if (
+            requiredActionBeforeExecution &&
+            matchesRequiredCausalAction(effectiveAction, requiredActionBeforeExecution)
+          ) {
+            if (latestObservation.ok !== true) {
+              if (latestObservation.requiresUserDecision === true) {
+                throw new StudioAgentReviewRequiredError(
+                  latestObservation.error ??
+                    'The exact CLI remediation action requires an explicit user decision before Studio can continue.',
+                  latestObservation.terminalReason ?? 'required-causal-action-review'
+                );
+              }
+              delete this.state.pendingRequiredCausalAction;
+              this.generalSourceRepairActive = true;
+              this.sourceRepairDirective = {
+                nextAction: 'general-source-repair',
+                recoveryPath: 'required-remediation-action-failed',
+                failedRequiredAction: requiredActionBeforeExecution,
+                observation:
+                  latestObservation.error ??
+                  'The exact CLI remediation action did not close successfully.',
+                instruction:
+                  'The exact action was attempted once and did not close. Use its transaction and failure evidence to choose a materially different governed capability. Do not retry the same step in this causal generation.',
+              };
+              this.sourceActionRequired = false;
+              consecutiveModelDecisionsWithoutSemanticProgress = 0;
+              await this.emit(
+                'model.checkpoint',
+                {
+                  summary:
+                    'The exact CLI remediation action did not close. Studio is widening the next turn to the governed capability plane with the failure evidence attached.',
+                  recovery: 'required-causal-action-fallback',
+                  requiredAction: requiredActionBeforeExecution,
+                  error: latestObservation.error,
+                },
+                requestId
+              );
+            } else {
+              delete this.state.pendingRequiredCausalAction;
+            }
+          }
           if (
             satisfiedGoalVerificationWasDeterministic &&
             latestObservation.ok === true &&
@@ -1276,27 +1491,74 @@ export class StudioAgentSession {
             this.generalSourceRepairActive = true;
             this.sourceRepairDirective = {
               nextAction: 'general-source-repair',
-              recoveryPath: 'diagnose-causal-source',
+              recoveryPath: 'diagnose-causal-blocker',
               cardId: this.latestActiveCardId,
               producerRefresh: 'completed-but-blocking',
               observation:
                 latestObservation.error ??
                 'The exact CLI producer completed but the card remains blocked.',
               instruction:
-                'Diagnose the causal source defect, inspect the smallest relevant source and evidence set, apply a governed source transaction when warranted, and let the CLI Repair Engine verify closure.',
+                'Diagnose the causal defect from fresh evidence. Select the smallest applicable governed capability: refresh the owning producer, execute an exact remediation step, run a structured project-native command, or submit a source transaction, then verify closure.',
             };
             consecutiveModelDecisionsWithoutSemanticProgress = 0;
             await this.emit(
               'model.checkpoint',
               {
                 summary:
-                  'The exact producer refreshed and the card is still blocked. Studio is transferring the fresh observation to the general source-repair capability plane.',
-                recovery: 'producer-to-source-repair',
+                  'The exact producer refreshed and the card is still blocked. Studio is transferring the fresh observation to the general causal capability plane.',
+                recovery: 'producer-to-causal-recovery',
                 cardId: this.latestActiveCardId,
               },
               requestId
             );
             continue;
+          }
+          const workspaceCommandOutput = toolOutputRecord(latestObservation);
+          if (
+            causalRecoveryWasActive &&
+            effectiveAction.toolName === 'run-workspace-command' &&
+            latestObservation.ok === true &&
+            ['build', 'test'].includes(String(workspaceCommandOutput?.purpose ?? ''))
+          ) {
+            const verificationToolName = this.verificationToolName();
+            if (!verificationToolName) {
+              throw new StudioAgentTerminalError(
+                'A causal project command completed, but the exact card verifier is unavailable.',
+                'causal-command-verification-unavailable'
+              );
+            }
+            await this.emit(
+              'model.checkpoint',
+              {
+                summary:
+                  'The model completed a causal project build/test action without changing source. Studio is running the exact card verifier before accepting progress.',
+                recovery: 'causal-command-verification',
+              },
+              requestId
+            );
+            latestObservation = await this.executeTool(
+              {
+                type: 'tool',
+                toolName: verificationToolName,
+                input: {},
+                reason: 'Verify the blocker after the guarded causal project command.',
+              },
+              requestId
+            );
+            if (latestObservation.ok === true && latestObservation.cardBlocking === false) {
+              await this.emit(
+                'session.completed',
+                {
+                  summary:
+                    'The model-selected project command completed and canonical verification confirmed the blocker is resolved.',
+                  verificationAuthority: 'workspai-cli',
+                  causalCapability: 'run-workspace-command',
+                },
+                requestId
+              );
+              await this.setStatus('completed');
+              return this.snapshot();
+            }
           }
           const cliClosure = verifiedCliRepairClosure(latestObservation);
           if (cliClosure) {
@@ -1668,8 +1930,8 @@ export class StudioAgentSession {
             }
             if (causalRecoveryAttempts >= 2) {
               throw new StudioAgentTerminalError(
-                'Deterministic verification and two constrained causal recoveries produced no new source or blocker evidence.',
-                'causal-source-progress-exhausted'
+                'Deterministic verification and two constrained recoveries produced no new causal workspace state or blocker evidence.',
+                'causal-progress-exhausted'
               );
             }
             if (causalRecoveryAttempts >= 1) {
@@ -1677,10 +1939,10 @@ export class StudioAgentSession {
               this.sourceRepairDirective = {
                 ...(this.sourceRepairDirective ?? {}),
                 nextAction: 'general-source-repair',
-                recoveryPath: 'causal-source-action-required',
+                recoveryPath: 'causal-action-required',
                 cardId: this.latestActiveCardId,
                 instruction:
-                  'Reuse prior observations and advance to an inspected source mutation. Do not repeat the same producer or diagnostic.',
+                  'Reuse prior observations and advance through a materially different governed capability. Do not repeat the same producer, diagnostic, command, remediation step, or source proposal.',
               };
               this.sourceActionRequired = true;
               causalRecoveryAttempts += 1;
@@ -1690,8 +1952,8 @@ export class StudioAgentSession {
                 'model.checkpoint',
                 {
                   summary:
-                    'Verification produced no new evidence. Studio is keeping the session active and constraining the next turn to a causal source action.',
-                  recovery: 'causal-source-escalation',
+                    'Verification produced no new evidence. Studio is keeping the session active and requiring a materially different causal action.',
+                  recovery: 'causal-action-escalation',
                 },
                 requestId
               );
@@ -1818,7 +2080,7 @@ export class StudioAgentSession {
    *
    * This fallback is intentionally Goal-only: incident repair already owns a
    * dedicated recover-active-blocker prelude. It also stays disabled during a
-   * general source-repair epoch, where producer refresh is causally forbidden
+   * general causal-recovery epoch, where duplicate observations are bounded
    * until a real source transaction occurs.
    */
   private async recoverGoalFromCurrentRemediationPlan(
@@ -2010,51 +2272,14 @@ export class StudioAgentSession {
       await this.emit('tool.failed', result, requestId, toolCallId);
       return result;
     }
-    const phaseViolation = this.generalSourceRepairActive
-      ? generalSourceRepairCommandViolation(action)
-      : undefined;
-    if (phaseViolation) {
-      const rejectionKey = `${this.causalEpoch}:source-repair-policy:${phaseViolation.commandIdentity}`;
-      const priorRejections = this.toolAttemptsByEpoch.get(rejectionKey) ?? 0;
-      this.toolAttemptsByEpoch.set(rejectionKey, priorRejections + 1);
-      const repeated = priorRejections >= 1;
-      if (repeated) {
-        this.sourceActionRequired = true;
-      }
-      const result: StudioAgentToolResult = repeated
-        ? {
-            ok: false,
-            error: `${phaseViolation.message} The duplicate producer request was rejected without stopping the session. Continue with a causal source action.`,
-            requiresUserDecision: false,
-            output: {
-              nextAction: 'causal-source-change-required',
-              requiresUserDecision: false,
-              recoveryPath: 'general-source-repair',
-            },
-          }
-        : { ok: false, error: phaseViolation.message };
-      await this.emit(
-        'tool.failed',
-        {
-          toolName: tool.name,
-          input: durableInput,
-          policyRejected: true,
-          repeatedPolicyRejection: repeated,
-          ...result,
-        },
-        requestId,
-        toolCallId
-      );
-      return result;
-    }
     if (this.exhaustedTools.has(tool.name)) {
       const result = {
         ok: false,
         evidenceGeneration: this.latestEvidenceGeneration,
         blockerSignature: this.latestBlockerSignature,
         error:
-          `${tool.name} is exhausted for the current causal source generation. ` +
-          'Use the general workspace capability plane until source or blocker evidence materially changes.',
+          `${tool.name} is exhausted for the current causal generation. ` +
+          'Use a different workspace capability until source, generated state, or blocker evidence materially changes.',
       };
       await this.emit(
         'tool.failed',
@@ -2087,23 +2312,198 @@ export class StudioAgentSession {
       }
       return result;
     }
-    this.toolAttemptsByEpoch.set(toolAttemptKey, attemptsInEpoch + 1);
-    const permission = resolveStudioAgentToolPermission({
+    const authorizationContext: Omit<StudioAgentToolContext, 'approval' | 'reportProgress'> = {
+      sessionId: this.id,
+      requestId,
+      toolCallId,
+      workspacePath: this.options.workspacePath,
+      ...(this.options.projectPath ? { projectPath: this.options.projectPath } : {}),
+      signal: this.abortController.signal,
+    };
+    let authorization;
+    try {
+      authorization = tool.authorize
+        ? await tool.authorize(action.input, authorizationContext)
+        : { risk: tool.risk };
+    } catch (error) {
+      const result = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      await this.emit(
+        'tool.failed',
+        { toolName: tool.name, input: durableInput, authorizationRejected: true, ...result },
+        requestId,
+        toolCallId
+      );
+      return result;
+    }
+    const requiredCausalAction = this.state.pendingRequiredCausalAction;
+    const exactRequiredAction =
+      requiredCausalAction && matchesRequiredCausalAction(action, requiredCausalAction)
+        ? requiredCausalAction
+        : undefined;
+    if (exactRequiredAction?.requiresApproval) {
+      authorization = {
+        ...authorization,
+        approval: requiredCausalActionApproval(
+          exactRequiredAction,
+          Boolean(this.options.projectPath)
+        ),
+      };
+    }
+    const policyPermission = resolveStudioAgentToolPermission({
       level: this.options.permissionLevel,
-      risk: tool.risk,
+      risk: authorization.risk,
       workspaceTrusted: this.options.workspaceTrusted,
     });
+    const permission = exactRequiredAction?.requiresApproval
+      ? {
+          allowed: false,
+          reason:
+            'The fresh CLI remediation contract requires explicit approval for this exact action.',
+          requiresUserConfirmation: true,
+        }
+      : policyPermission;
     await this.emit(
       'tool.permission',
-      { toolName: tool.name, ...permission },
+      {
+        toolName: tool.name,
+        risk: authorization.risk,
+        escalationAvailable: Boolean(
+          permission.requiresUserConfirmation &&
+          authorization.approval &&
+          this.options.requestToolApproval
+        ),
+        ...permission,
+      },
       requestId,
       toolCallId
     );
+    let approval: StudioAgentToolApprovalGrant | undefined;
     if (!permission.allowed) {
-      const result = { ok: false, error: permission.reason };
-      await this.emit('tool.failed', { toolName: tool.name, ...result }, requestId, toolCallId);
-      return result;
+      const descriptor = authorization.approval;
+      if (
+        !permission.requiresUserConfirmation ||
+        !descriptor ||
+        !this.options.requestToolApproval
+      ) {
+        const approvalBoundaryIncomplete = permission.requiresUserConfirmation;
+        const result = {
+          ok: false,
+          error: approvalBoundaryIncomplete
+            ? !descriptor
+              ? 'The operation requires confirmation, but no immutable approval descriptor was produced.'
+              : 'The operation requires confirmation, but this Studio host cannot present an approval decision.'
+            : permission.reason,
+          ...(approvalBoundaryIncomplete
+            ? {
+                requiresUserDecision: true,
+                terminalReason: !descriptor
+                  ? 'approval-contract-missing'
+                  : 'approval-ui-unavailable',
+              }
+            : {}),
+        };
+        await this.emit('tool.failed', { toolName: tool.name, ...result }, requestId, toolCallId);
+        return result;
+      }
+      const approvalRequest: StudioAgentToolApprovalRequest = {
+        ...descriptor,
+        sessionId: this.id,
+        requestId,
+        toolCallId,
+        toolName: tool.name,
+        modelReason: action.reason,
+      };
+      await this.emit(
+        'tool.approval.requested',
+        durableEventValue(approvalRequest) as Record<string, unknown>,
+        requestId,
+        toolCallId
+      );
+      await this.setStatus('waiting-permission');
+      let decision: StudioAgentToolApprovalDecision;
+      try {
+        decision = await this.options.requestToolApproval(approvalRequest);
+      } catch (error) {
+        decision = {
+          approved: false,
+          fingerprint: descriptor.fingerprint,
+          approvedBy: `approval-error:${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      if (!this.abortController.signal.aborted) {
+        await this.setStatus('running');
+      }
+      const exactApproval = decision.fingerprint === descriptor.fingerprint;
+      if (!decision.approved || !exactApproval || this.abortController.signal.aborted) {
+        const result = {
+          ok: false,
+          requiresUserDecision: true,
+          terminalReason: this.abortController.signal.aborted
+            ? 'approval-cancelled'
+            : exactApproval
+              ? 'approval-rejected'
+              : 'approval-fingerprint-mismatch',
+          error: this.abortController.signal.aborted
+            ? 'The session was cancelled while command approval was pending.'
+            : exactApproval
+              ? 'The user declined the exact invasive workspace command.'
+              : 'The approval response did not match the exact command authorization fingerprint.',
+        };
+        await this.emit(
+          'tool.approval.rejected',
+          {
+            toolName: tool.name,
+            fingerprint: descriptor.fingerprint,
+            decisionFingerprint: decision.fingerprint,
+            approved: decision.approved,
+            ...result,
+          },
+          requestId,
+          toolCallId
+        );
+        await this.emit('tool.failed', { toolName: tool.name, ...result }, requestId, toolCallId);
+        return result;
+      }
+      approval = {
+        fingerprint: descriptor.fingerprint,
+        approvedBy: decision.approvedBy?.trim() || 'vscode:explicit-user-command-approval',
+        approvedAt: this.now().toISOString(),
+        execution: decision.execution ?? descriptor.execution,
+      };
+      await this.emit(
+        'tool.approval.approved',
+        {
+          toolName: tool.name,
+          fingerprint: descriptor.fingerprint,
+          approvedBy: approval.approvedBy,
+          approvedAt: approval.approvedAt,
+          execution: approval.execution ?? 'once',
+        },
+        requestId,
+        toolCallId
+      );
+      await this.emit(
+        'tool.permission',
+        {
+          toolName: tool.name,
+          risk: authorization.risk,
+          allowed: true,
+          requiresUserConfirmation: false,
+          reason: `The user approved this exact command for ${approval.execution ?? 'once'} scope.`,
+          authorizationFingerprint: descriptor.fingerprint,
+          approvedBy: approval.approvedBy,
+        },
+        requestId,
+        toolCallId
+      );
     }
+    // A declined or cancelled approval is not an execution attempt. Record the
+    // bounded attempt only after every policy boundary has admitted the tool,
+    // so a durable session may be resumed and approve the same exact action.
+    this.toolAttemptsByEpoch.set(toolAttemptKey, attemptsInEpoch + 1);
     await this.emit(
       'tool.started',
       {
@@ -2111,6 +2511,13 @@ export class StudioAgentSession {
         activity: tool.activity,
         input: durableInput,
         reason: action.reason,
+        ...(approval
+          ? {
+              authorizationFingerprint: approval.fingerprint,
+              approvedBy: approval.approvedBy,
+              approvedAt: approval.approvedAt,
+            }
+          : {}),
       },
       requestId,
       toolCallId
@@ -2121,6 +2528,7 @@ export class StudioAgentSession {
       toolCallId,
       workspacePath: this.options.workspacePath,
       ...(this.options.projectPath ? { projectPath: this.options.projectPath } : {}),
+      ...(approval ? { approval } : {}),
       signal: this.abortController.signal,
       reportProgress: async (data) => {
         const durableProgress = durableEventValue(data) as Record<string, unknown>;
@@ -2246,6 +2654,9 @@ export class StudioAgentSession {
     }
     const durableResult = durableToolResult(result);
     const transientResult = liveToolResult(result);
+    if (tool.name === 'run-workspace-command') {
+      this.rememberWorkspaceCommandEffectVerification(result);
+    }
     await this.emit(
       result.ok ? 'tool.completed' : 'tool.failed',
       { toolName: tool.name, input: durableInput, reason: action.reason, ...durableResult },
@@ -2283,6 +2694,15 @@ export class StudioAgentSession {
 
   private completionPolicyViolation(requestId: string, summary: string): string | undefined {
     const executionMode = this.executionMode();
+    if (
+      isAutonomousWorkspaiAssistantMode(executionMode) &&
+      this.pendingEffectVerificationScopes.size > 0
+    ) {
+      return (
+        'Completion rejected: approved non-source effects still require a successful read-only ' +
+        `observation in these domains: ${[...this.pendingEffectVerificationScopes].sort().join(', ')}.`
+      );
+    }
     if (executionMode === 'ask' || executionMode === 'plan') {
       const inspected = this.state.events.some((event) => {
         if (event.requestId !== requestId || event.type !== 'tool.completed') {
@@ -2417,23 +2837,27 @@ export class StudioAgentSession {
     sourceActionRequired = false
   ): StudioAgentModelContext {
     const mustTakeSourceAction = sourceActionRequired || this.sourceActionRequired;
-    const hasInspectedSource = this.recentObservations.some(
-      (observation) => observation.toolName === 'inspect-source' && observation.result.ok === true
+    const requiredCausalAction = this.state.pendingRequiredCausalAction;
+    const hasCausalObservation = this.recentObservations.some(
+      (observation) =>
+        CAUSAL_INSPECTION_TOOL_NAMES.has(observation.toolName) && observation.result.ok === true
     );
     const tools = this.registry
       .list()
+      .filter((tool) => !requiredCausalAction || tool.name === requiredCausalAction.toolName)
       .filter((tool) => !this.exhaustedTools.has(tool.name))
       .filter(
-        (tool) => !this.generalSourceRepairActive || GENERAL_SOURCE_REPAIR_TOOL_NAMES.has(tool.name)
+        (tool) =>
+          !this.generalSourceRepairActive || GENERAL_CAUSAL_RECOVERY_TOOL_NAMES.has(tool.name)
       )
       .filter(
         (tool) =>
           !mustTakeSourceAction ||
           (this.proposalRecoveryInspectionRequired
-            ? CAUSAL_SOURCE_INSPECTION_TOOL_NAMES.has(tool.name)
-            : hasInspectedSource
-              ? GOVERNED_SOURCE_MUTATION_TOOL_NAMES.has(tool.name)
-              : CAUSAL_SOURCE_INSPECTION_TOOL_NAMES.has(tool.name))
+            ? CAUSAL_INSPECTION_TOOL_NAMES.has(tool.name)
+            : hasCausalObservation
+              ? CAUSAL_PROGRESS_TOOL_NAMES.has(tool.name)
+              : CAUSAL_INSPECTION_TOOL_NAMES.has(tool.name))
       )
       .map((tool) => ({
         name: tool.name,
@@ -2457,8 +2881,40 @@ export class StudioAgentSession {
         ? { sourceRepairDirective: this.sourceRepairDirective }
         : {}),
       ...(mustTakeSourceAction ? { sourceActionRequired: true } : {}),
+      ...(requiredCausalAction
+        ? { requiredCausalAction: structuredClone(requiredCausalAction) }
+        : {}),
+      ...(this.pendingEffectVerificationScopes.size > 0
+        ? {
+            pendingEffectVerificationScopes: [...this.pendingEffectVerificationScopes].sort(),
+          }
+        : {}),
       steering: this.steering.splice(0),
     };
+  }
+
+  private rememberWorkspaceCommandEffectVerification(result: StudioAgentToolResult): void {
+    const output = toolOutputRecord(result);
+    if (!output) {
+      return;
+    }
+    if (result.ok === true) {
+      for (const scope of stringValues(output.observationScopes)) {
+        this.pendingEffectVerificationScopes.delete(scope);
+      }
+    }
+    const effects =
+      output.effects && typeof output.effects === 'object' && !Array.isArray(output.effects)
+        ? (output.effects as Record<string, unknown>)
+        : undefined;
+    for (const scope of stringValues(effects?.verificationScopes)) {
+      this.pendingEffectVerificationScopes.add(scope);
+    }
+    if (this.pendingEffectVerificationScopes.size > 0) {
+      this.state.pendingEffectVerificationScopes = [...this.pendingEffectVerificationScopes].sort();
+    } else {
+      delete this.state.pendingEffectVerificationScopes;
+    }
   }
 
   private rememberExhaustedTools(output: unknown): void {

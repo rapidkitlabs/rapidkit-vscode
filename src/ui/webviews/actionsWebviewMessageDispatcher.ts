@@ -14,6 +14,7 @@ export type ActionsWebviewMessageDispatchHost = {
   runSidebarAdvisorAction: (data: unknown) => Promise<void>;
   runInlineStudioQuery: (data: unknown) => Promise<void>;
   runSidebarStudioAction: (data: unknown) => Promise<void>;
+  resolveStudioToolApproval: (data: unknown) => Promise<void>;
   focusPrimarySidebarView: (data: unknown) => Promise<void>;
   openDashboardSection: (data: unknown) => Promise<void>;
   openWorkspaceFile: (data: unknown) => Promise<void>;
@@ -75,6 +76,10 @@ const ACTIONS_WEBVIEW_MESSAGE_LANES: readonly ActionsWebviewMessageLane[] = [
   {
     command: 'sidebarStudioAction',
     dispatch: (host, data) => host.runSidebarStudioAction(data),
+  },
+  {
+    command: 'sidebarStudioToolApprovalDecision',
+    dispatch: (host, data) => host.resolveStudioToolApproval(data),
   },
   {
     command: 'sidebarFocusView',

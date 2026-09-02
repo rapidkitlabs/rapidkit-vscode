@@ -72,6 +72,228 @@ export type DashboardActivityEntry = {
   runCount?: number;
 };
 
+export type WorkspaceActivityBoardStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'blocked'
+  | 'cancelled'
+  | 'rolled-back'
+  | 'skipped'
+  | 'unknown';
+
+type WorkspaceActivityEvidenceBindingBase = {
+  ref: string;
+  role: 'input' | 'output' | 'verification' | 'subject';
+  provenance: 'authoritative' | 'observed';
+};
+
+export type WorkspaceActivityEvidenceBinding =
+  | (WorkspaceActivityEvidenceBindingBase & {
+      kind: 'artifact' | 'project';
+      graphSourceHash?: string;
+    })
+  | (WorkspaceActivityEvidenceBindingBase & {
+      kind: 'graph-entity' | 'graph-relation' | 'proof';
+      graphSourceHash: string;
+    });
+
+export type WorkspaceActivityBoard = {
+  schemaVersion: 'workspace-activity-board.v1';
+  scopeLabel: string;
+  generatedAt: string;
+  activeRunCount: number;
+  healthyRunCount: number;
+  warningRunCount: number;
+  failedRunCount: number;
+  selectedRunId?: string;
+  runs: Array<{
+    run: {
+      runId: string;
+      status: WorkspaceActivityBoardStatus;
+      startedAt: string;
+      updatedAt: string;
+      durationMs?: number;
+      evidenceBindings?: WorkspaceActivityEvidenceBinding[];
+    } & Record<string, unknown>;
+    commandLabel: string;
+    active: boolean;
+    nodes: Array<{
+      id: string;
+      label: string;
+      status: WorkspaceActivityBoardStatus;
+      order: number;
+      progress?: { current: number; total?: number; unit?: string };
+      durationMs?: number;
+      layoutHint?: 'source' | 'process' | 'gate' | 'sink';
+      group?: string;
+      updatedAt: string;
+      root: boolean;
+      evidenceBindings?: WorkspaceActivityEvidenceBinding[];
+    }>;
+    edges: Array<{
+      id: string;
+      fromBlockId: string;
+      toBlockId: string;
+      kind: 'sequence' | 'parallel' | 'gate' | 'handoff';
+      status: WorkspaceActivityBoardStatus;
+      order: number;
+      updatedAt: string;
+      inferred: boolean;
+    }>;
+    activeBlockCount: number;
+    warningCount: number;
+    scope: { kind: string; label: string };
+    locationLabel: string;
+  }>;
+  diagnostics: string[];
+  global: boolean;
+  scopeCount: number;
+};
+
+export type WorkspaceIntelligenceBenchmarkSummary = {
+  schemaVersion: 'workspace-intelligence-benchmark.v1';
+  generatedAt: string;
+  suite: { id: 'agent-core.v1'; title: string };
+  graph: {
+    sourceHash: string;
+    entityCount: number;
+    relationCount: number;
+    proofCount: number;
+  };
+  retrievalSummary: {
+    provenance: 'estimated';
+    scenarioCount: number;
+    matchedScenarioCount: number;
+    medianRetrievalEstimatedTokens: number;
+    p95RetrievalEstimatedTokens: number;
+    medianEstimatedReductionPercent: number;
+    status: 'passed' | 'partial' | 'unavailable';
+  };
+  evaluation: {
+    availability: 'available' | 'unavailable';
+    provenance: 'measured' | 'mixed' | 'estimated' | 'unavailable';
+    trustedMeasuredReductionPercent: number | null;
+    claimBoundary: string;
+  };
+};
+
+export type WorkspaceOperationsProjection = {
+  board: WorkspaceActivityBoard | null;
+  benchmark: WorkspaceIntelligenceBenchmarkSummary | null;
+  changes: {
+    schemaVersion: 'workspai.extension-proof-carrying-change-projection.v1';
+    availability: 'available' | 'unsupported' | 'unavailable';
+    generatedAt: string;
+    workspaceName: string | null;
+    summary: {
+      total: number;
+      open: number;
+      blocked: number;
+      sealed: number;
+      aborted: number;
+      invalid: number;
+    };
+    changes: Array<{
+      changeId: string;
+      goalId: string | null;
+      state: string | null;
+      status: 'open' | 'blocked' | 'verified' | 'sealed' | 'aborted' | 'invalid';
+      createdAt: string | null;
+      updatedAt: string | null;
+      assurance: { passed: number; total: number };
+      blockers: string[];
+      valid: boolean;
+      errors: string[];
+    }>;
+    selected: {
+      changeId: string;
+      goalId: string;
+      state: string;
+      status: 'open' | 'blocked' | 'verified' | 'sealed' | 'aborted';
+      generatedAt: string;
+      assurances: Array<{
+        id:
+          | 'intent-bound'
+          | 'baseline-pinned'
+          | 'effects-receipted'
+          | 'architecture-reobserved'
+          | 'independently-verified';
+        status: 'passed' | 'failed' | 'pending';
+        summary: string;
+      }>;
+      remainingUncertainty: string[];
+      deletedArtifacts: Array<{
+        artifact: string;
+        observedAt: string;
+        digest: string;
+      }>;
+      graphChange: {
+        prediction: {
+          risk: 'none' | 'low' | 'medium' | 'high';
+          operations: Array<{ operation: string; targetKind: string; targetId: string }>;
+        } | null;
+        actual: {
+          risk: 'none' | 'low' | 'medium' | 'high';
+          impactedEntityIds: string[];
+          changedArtifactCount: number;
+        } | null;
+        surprise: {
+          verdict: 'exact' | 'within-expectation' | 'surprising' | 'no-prediction';
+          matched: Array<{ operation: string; targetKind: string; targetId: string }>;
+          unpredicted: Array<{ operation: string; targetKind: string; targetId: string }>;
+          missing: Array<{ operation: string; targetKind: string; targetId: string }>;
+        } | null;
+      };
+      nextActions: string[];
+      artifactPath: string;
+      artifacts: {
+        capsule: string;
+        lease: string | null;
+        prediction: string | null;
+        actualOverlay: string | null;
+        surpriseReport: string | null;
+        transaction: string | null;
+        events: string | null;
+      };
+    } | null;
+    diagnostics: string[];
+  };
+  studio: {
+    generatedAt: string;
+    activeSessionCount: number;
+    sessionCount: number;
+    toolCallCount: number;
+    failedToolCallCount: number;
+    sessions: Array<{
+      sessionId: string;
+      cardId: string;
+      assistantMode: 'agent' | 'ask' | 'plan' | 'goal';
+      projectPath?: string;
+      status: WorkspaceActivityBoardStatus;
+      active: boolean;
+      startedAt: string;
+      updatedAt: string;
+      toolCallCount: number;
+      failedToolCallCount: number;
+      modelCheckpointCount: number;
+      stages: Array<{
+        id: string;
+        label: string;
+        status: WorkspaceActivityBoardStatus;
+        order: number;
+        startedAt?: string;
+        completedAt?: string;
+        durationMs?: number;
+        detail?: string;
+        evidenceBindings?: WorkspaceActivityEvidenceBinding[];
+      }>;
+    }>;
+  };
+  diagnostics: string[];
+};
+
 export type DashboardOpsChainStep = 'bootstrap' | 'doctor' | 'analyze' | 'readiness';
 
 export type DashboardOpsChainState = {
@@ -191,6 +413,7 @@ export type DashboardEvidencePayload = {
   projectName?: string;
   cards: DashboardEvidenceCard[];
   activity: DashboardActivityEntry[];
+  operations?: WorkspaceOperationsProjection;
   opsChain?: DashboardOpsChainState | null;
   onboarding: DashboardOnboardingState;
   trend?: DashboardTrendSummary | null;

@@ -35,6 +35,8 @@ export const WORKSPACE_EVALUATION_LIVE_REPORT_PATH =
   '.workspai/reports/workspace-intelligence-evaluation-live.json';
 export const WORKSPACE_EVALUATION_LAST_RUN_REPORT_PATH =
   '.workspai/reports/workspace-intelligence-evaluation-last-run.json';
+export const WORKSPACE_INTELLIGENCE_BENCHMARK_REPORT_PATH =
+  '.workspai/reports/workspace-intelligence-benchmark-last-run.json';
 export const WORKSPACE_CONTRACT_VERIFY_REPORT_PATH =
   '.workspai/reports/workspace-contract-verify-last-run.json';
 export const WORKSPACE_COMPATIBILITY_MATRIX_PATH = '.workspai/compatibility-matrix.json';

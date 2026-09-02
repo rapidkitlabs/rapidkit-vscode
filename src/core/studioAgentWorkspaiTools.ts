@@ -1,12 +1,23 @@
 import type { FilePatch } from './patchApplyEngine.js';
 import type { StudioEvidenceRefreshCommandId } from './sidebarStudioAgentRuntime.js';
 import { STUDIO_EVIDENCE_REFRESH_COMMAND_IDS } from './sidebarStudioAgentRuntime.js';
-import { StudioAgentToolRegistry, type StudioAgentToolResult } from './studioAgentToolRegistry.js';
+import {
+  StudioAgentToolRegistry,
+  type StudioAgentToolApprovalGrant,
+  type StudioAgentToolResult,
+} from './studioAgentToolRegistry.js';
 import {
   resolveWorkspaiAssistantModeContract,
   type WorkspaiAssistantMode,
 } from './assistantModeContract.js';
-import type { StudioWorkspaceCommandRequest } from './studioWorkspaceCommand.js';
+import {
+  resolveStudioWorkspaceCommandPlan,
+  type StudioWorkspaceCommandRequest,
+} from './studioWorkspaceCommand.js';
+import type {
+  StudioCodeIntelligenceOperation,
+  StudioCodeIntelligenceResult,
+} from './studioCodeIntelligence.js';
 
 export type StudioAgentSearchMatch = {
   path: string;
@@ -58,6 +69,15 @@ export interface StudioAgentWorkspaiToolHost {
     workspacePath: string;
     projectPath?: string;
   }): Promise<StudioAgentToolResult>;
+  codeIntelligence?(input: {
+    operation: StudioCodeIntelligenceOperation;
+    path?: string;
+    line?: number;
+    column?: number;
+    query?: string;
+    workspacePath: string;
+    projectPath?: string;
+  }): Promise<StudioAgentToolResult<StudioCodeIntelligenceResult>>;
   inspectChanges(input: {
     paths?: string[];
     workspacePath: string;
@@ -94,6 +114,9 @@ export interface StudioAgentWorkspaiToolHost {
     request: StudioWorkspaceCommandRequest;
     workspacePath: string;
     projectPath?: string;
+    approval?: StudioAgentToolApprovalGrant;
+    signal?: AbortSignal;
+    reportProgress?: (data: Record<string, unknown>) => Promise<void>;
   }): Promise<StudioAgentToolResult>;
   inspectRemediationPlan(input: {
     workspacePath: string;
@@ -103,6 +126,7 @@ export interface StudioAgentWorkspaiToolHost {
     stepId: string;
     workspacePath: string;
     projectPath?: string;
+    approval?: StudioAgentToolApprovalGrant;
     reportProgress?: (data: Record<string, unknown>) => Promise<void>;
   }): Promise<StudioAgentToolResult>;
   inspectDependencySecurity?(input: {
@@ -160,6 +184,29 @@ function stringArray(value: unknown, field: string): string[] {
 
 function optionalScope(context: { projectPath?: string }): { projectPath?: string } {
   return context.projectPath ? { projectPath: context.projectPath } : {};
+}
+
+function workspaceCommandRequestFromRaw(raw: unknown): StudioWorkspaceCommandRequest {
+  const value = asRecord(raw);
+  if (typeof value.executable !== 'string' || !value.executable.trim()) {
+    throw new Error('Studio workspace command executable is required.');
+  }
+  if (!Array.isArray(value.args) || !value.args.every((entry) => typeof entry === 'string')) {
+    throw new Error('Studio workspace command args must be a string array.');
+  }
+  if (
+    typeof value.purpose !== 'string' ||
+    !['inspect', 'diagnose', 'test', 'build', 'format', 'dependency'].includes(value.purpose)
+  ) {
+    throw new Error('Studio workspace command purpose is invalid.');
+  }
+  return {
+    executable: value.executable.trim(),
+    args: value.args as string[],
+    purpose: value.purpose as StudioWorkspaceCommandRequest['purpose'],
+    ...(typeof value.cwd === 'string' && value.cwd.trim() ? { cwd: value.cwd.trim() } : {}),
+    ...(typeof value.timeoutMs === 'number' ? { timeoutMs: value.timeoutMs } : {}),
+  };
 }
 
 export function createStudioAgentWorkspaiToolRegistry(input: {
@@ -409,6 +456,201 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
     },
   });
 
+  if (input.host.codeIntelligence) {
+    register({
+      name: 'inspect-code-intelligence',
+      title: 'Inspect language intelligence',
+      description:
+        'Use the active VS Code language providers to resolve definitions, references, implementations, hover types, document symbols, or workspace symbols without guessing from text matches.',
+      inputSchema: {
+        type: 'object',
+        required: ['operation'],
+        additionalProperties: false,
+        properties: {
+          operation: {
+            type: 'string',
+            enum: [
+              'definition',
+              'references',
+              'implementation',
+              'hover',
+              'document-symbols',
+              'workspace-symbols',
+            ],
+          },
+          path: { type: 'string', description: 'Workspace-relative source path.' },
+          line: { type: 'number', minimum: 1 },
+          column: { type: 'number', minimum: 1 },
+          query: { type: 'string', minLength: 1, maxLength: 500 },
+        },
+      },
+      activity: 'inspect',
+      risk: 'read',
+      async execute(raw, context) {
+        const value = asRecord(raw);
+        const operation = value.operation as StudioCodeIntelligenceOperation;
+        if (
+          ![
+            'definition',
+            'references',
+            'implementation',
+            'hover',
+            'document-symbols',
+            'workspace-symbols',
+          ].includes(operation)
+        ) {
+          throw new Error('Code intelligence operation is invalid.');
+        }
+        return input.host.codeIntelligence!({
+          operation,
+          ...(typeof value.path === 'string' ? { path: value.path.trim() } : {}),
+          ...(typeof value.line === 'number' ? { line: value.line } : {}),
+          ...(typeof value.column === 'number' ? { column: value.column } : {}),
+          ...(typeof value.query === 'string' ? { query: value.query.trim() } : {}),
+          workspacePath: context.workspacePath,
+          ...optionalScope(context),
+        });
+      },
+    });
+  }
+
+  register({
+    name: 'inspect-workspace-batch',
+    title: 'Inspect workspace in parallel',
+    description:
+      'Run up to eight independent read-only source, search, Graph, diagnostics, or language-intelligence inspections concurrently. Results preserve request order; mutations and verification are never batched.',
+    inputSchema: {
+      type: 'object',
+      required: ['operations'],
+      additionalProperties: false,
+      properties: {
+        operations: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 8,
+          items: {
+            type: 'object',
+            required: ['id', 'kind'],
+            additionalProperties: true,
+            properties: {
+              id: { type: 'string', minLength: 1, maxLength: 80 },
+              kind: {
+                type: 'string',
+                enum: ['source', 'search', 'graph', 'diagnostics', 'code-intelligence'],
+              },
+            },
+          },
+        },
+      },
+    },
+    activity: 'inspect',
+    risk: 'read',
+    async execute(raw, context) {
+      const value = asRecord(raw);
+      if (
+        !Array.isArray(value.operations) ||
+        value.operations.length < 1 ||
+        value.operations.length > 8
+      ) {
+        throw new Error('Workspace inspection batch requires between one and eight operations.');
+      }
+      const identifiers = new Set<string>();
+      const operations = value.operations.map((entry, index) => {
+        const operation = asRecord(entry);
+        const id = typeof operation.id === 'string' ? operation.id.trim() : '';
+        const kind = typeof operation.kind === 'string' ? operation.kind : '';
+        if (!id || id.length > 80 || identifiers.has(id)) {
+          throw new Error(
+            `Workspace inspection batch operation ${index + 1} has an invalid or duplicate id.`
+          );
+        }
+        identifiers.add(id);
+        return { id, kind, operation };
+      });
+      const results = await Promise.all(
+        operations.map(async ({ id, kind, operation }) => {
+          let result: StudioAgentToolResult;
+          if (kind === 'source') {
+            result = await input.host.inspect({
+              paths: stringArray(operation.paths, `operations.${id}.paths`),
+              kind: 'source',
+              ...(typeof operation.lineStart === 'number'
+                ? { lineStart: operation.lineStart }
+                : {}),
+              ...(typeof operation.lineEnd === 'number' ? { lineEnd: operation.lineEnd } : {}),
+              workspacePath: context.workspacePath,
+              ...optionalScope(context),
+            });
+          } else if (kind === 'search') {
+            if (typeof operation.query !== 'string' || !operation.query.trim()) {
+              throw new Error(`Workspace inspection batch search ${id} requires a query.`);
+            }
+            result = await input.host.search({
+              query: operation.query.trim(),
+              ...(operation.paths
+                ? { paths: stringArray(operation.paths, `operations.${id}.paths`) }
+                : {}),
+              workspacePath: context.workspacePath,
+              ...optionalScope(context),
+            });
+          } else if (kind === 'graph') {
+            if (!input.host.graphSearch) {
+              throw new Error('Workspace Graph search is unavailable for this Studio host.');
+            }
+            if (typeof operation.query !== 'string' || operation.query.trim().length < 2) {
+              throw new Error(`Workspace inspection batch Graph query ${id} is invalid.`);
+            }
+            result = await input.host.graphSearch({
+              query: operation.query.trim(),
+              ...(typeof operation.limit === 'number' ? { limit: operation.limit } : {}),
+              workspacePath: context.workspacePath,
+              ...optionalScope(context),
+            });
+          } else if (kind === 'diagnostics') {
+            result = await input.host.diagnostics({
+              ...(operation.paths
+                ? { paths: stringArray(operation.paths, `operations.${id}.paths`) }
+                : {}),
+              ...(Array.isArray(operation.severities)
+                ? {
+                    severities: operation.severities as Array<
+                      'error' | 'warning' | 'information' | 'hint'
+                    >,
+                  }
+                : {}),
+              workspacePath: context.workspacePath,
+              ...optionalScope(context),
+            });
+          } else if (kind === 'code-intelligence') {
+            if (!input.host.codeIntelligence) {
+              throw new Error('VS Code language intelligence is unavailable for this Studio host.');
+            }
+            result = await input.host.codeIntelligence({
+              operation: operation.operation as StudioCodeIntelligenceOperation,
+              ...(typeof operation.path === 'string' ? { path: operation.path.trim() } : {}),
+              ...(typeof operation.line === 'number' ? { line: operation.line } : {}),
+              ...(typeof operation.column === 'number' ? { column: operation.column } : {}),
+              ...(typeof operation.query === 'string' ? { query: operation.query.trim() } : {}),
+              workspacePath: context.workspacePath,
+              ...optionalScope(context),
+            });
+          } else {
+            throw new Error(`Workspace inspection batch operation kind is invalid: ${kind}`);
+          }
+          return { id, kind, result };
+        })
+      );
+      return {
+        ok: results.every((entry) => entry.result.ok),
+        changed: false,
+        output: { concurrent: true, results },
+        ...(results.every((entry) => entry.result.ok)
+          ? {}
+          : { error: 'One or more parallel workspace inspections failed.' }),
+      };
+    },
+  });
+
   register({
     name: 'inspect-workspace-changes',
     title: 'Inspect workspace changes',
@@ -606,7 +848,7 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
     name: 'run-workspace-command',
     title: 'Run workspace command',
     description:
-      'Run a structured, no-shell, non-mutating project-native command for inspection, diagnostics, tests, or builds. Workspai/wspai commands are forbidden here and must use run-governed-command. All source, formatting, and dependency mutations must use the CLI-owned repair transaction.',
+      'Run any workspace-scoped project-native executable as a structured no-shell argument vector. Safe commands run autonomously; source, repository-metadata, registry, cluster, daemon, and other external effects pause for explicit fingerprint-bound approval of the exact executable, arguments, scope, purpose, and timeout. Non-local effects are one-run only because a source checkpoint cannot roll them back. Shell/escalation primitives and scope escapes remain blocked. Workspai/wspai commands use run-governed-command.',
     inputSchema: {
       type: 'object',
       required: ['executable', 'args', 'purpose'],
@@ -626,37 +868,49 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
         },
         purpose: {
           type: 'string',
-          enum: ['inspect', 'diagnose', 'test', 'build'],
+          enum: ['inspect', 'diagnose', 'test', 'build', 'format', 'dependency'],
         },
         timeoutMs: { type: 'number', minimum: 1000, maximum: 600000 },
       },
     },
     activity: 'change',
     risk: 'guarded-write',
-    async execute(raw, context) {
-      const value = asRecord(raw);
-      if (typeof value.executable !== 'string' || !value.executable.trim()) {
-        throw new Error('Studio workspace command executable is required.');
+    authorize(raw, context) {
+      const request = workspaceCommandRequestFromRaw(raw);
+      const plan = resolveStudioWorkspaceCommandPlan({
+        workspacePath: context.workspacePath,
+        projectPath: context.projectPath,
+        request,
+      });
+      if (!plan.requiresExplicitApproval) {
+        return { risk: 'guarded-write' };
       }
-      if (!Array.isArray(value.args) || !value.args.every((entry) => typeof entry === 'string')) {
-        throw new Error('Studio workspace command args must be a string array.');
-      }
-      if (
-        typeof value.purpose !== 'string' ||
-        !['inspect', 'diagnose', 'test', 'build'].includes(value.purpose)
-      ) {
-        throw new Error('Studio workspace command purpose is invalid.');
-      }
-      return input.host.runWorkspaceCommand({
-        request: {
-          executable: value.executable.trim(),
-          args: value.args as string[],
-          purpose: value.purpose as StudioWorkspaceCommandRequest['purpose'],
-          ...(typeof value.cwd === 'string' && value.cwd.trim() ? { cwd: value.cwd.trim() } : {}),
-          ...(typeof value.timeoutMs === 'number' ? { timeoutMs: value.timeoutMs } : {}),
+      return {
+        risk: 'invasive',
+        approval: {
+          fingerprint: plan.authorizationFingerprint,
+          title: 'Approve exact workspace command',
+          summary: plan.unclassifiedCommand
+            ? 'The model proposes a repository-specific executable whose non-source behavior cannot be inferred from a built-in command family.'
+            : 'The model proposes a project-scoped command that may modify source, repository metadata, dependency state, or an external system.',
+          displayCommand: plan.displayCommand,
+          cwd: plan.cwd,
+          scope: context.projectPath ? 'project' : 'workspace',
+          reasons: plan.approvalReasons,
+          execution: 'once',
+          allowedExecutions: plan.allowedApprovalExecutions,
         },
+      };
+    },
+    async execute(raw, context) {
+      const request = workspaceCommandRequestFromRaw(raw);
+      return input.host.runWorkspaceCommand({
+        request,
         workspacePath: context.workspacePath,
         ...optionalScope(context),
+        ...(context.approval ? { approval: context.approval } : {}),
+        signal: context.signal,
+        reportProgress: context.reportProgress,
       });
     },
   });
@@ -699,6 +953,7 @@ export function createStudioAgentWorkspaiToolRegistry(input: {
         stepId: value.stepId.trim(),
         workspacePath: context.workspacePath,
         ...optionalScope(context),
+        ...(context.approval ? { approval: context.approval } : {}),
         reportProgress: context.reportProgress,
       });
     },

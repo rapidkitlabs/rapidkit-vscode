@@ -528,6 +528,8 @@ describe('Studio Agent model protocol', () => {
         nextAction: 'general-source-repair',
         unresolvedProjects: ['app'],
         sourceCandidates: ['app/package.json'],
+        producerRefreshCommandId: 'workspaceReadiness',
+        remediationStep: { id: 'repair-app', risk: 'guarded' },
         instruction:
           'Inspect any remaining path that still exists:false and create it with apply-workspace-patch using sha256 null.',
       },
@@ -536,10 +538,65 @@ describe('Studio Agent model protocol', () => {
 
     await adapter.next(context);
 
-    expect(prompt).toContain('Source repair phase: ACTIVE');
+    expect(prompt).toContain('Causal recovery phase: ACTIVE');
     expect(prompt).toContain('app/package.json');
-    expect(prompt).toContain('intentionally withheld until a real source transaction');
+    expect(prompt).toContain('workspaceReadiness');
+    expect(prompt).toContain('repair-app');
+    expect(prompt).toContain('Choose the next materially different capability from evidence');
     expect(prompt).toContain('exists:false');
+  });
+
+  it('makes a durable exact remediation continuation explicit to the model', async () => {
+    let prompt = '';
+    const adapter = new ContractStudioAgentModelAdapter('Repair Doctor', async (value) => {
+      prompt = value;
+      return {
+        toolName: 'execute-remediation-step',
+        input: { stepId: 'doctor.exact-action' },
+      };
+    });
+    const context = {
+      session: {
+        schemaVersion: 'workspai.studio-agent-session.v1',
+        id: 'required-action-model-session',
+        workspacePath: '/workspace',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        status: 'running',
+        createdAt: '2026-08-31T00:00:00.000Z',
+        updatedAt: '2026-08-31T00:00:00.000Z',
+        sequence: 0,
+        events: [],
+      },
+      tools: [
+        {
+          name: 'execute-remediation-step',
+          title: 'Execute remediation step',
+          description: 'Execute one immutable CLI remediation action.',
+          inputSchema: { type: 'object', required: ['stepId'] },
+          activity: 'change',
+          risk: 'guarded-write',
+        },
+      ],
+      requiredCausalAction: {
+        schemaVersion: 'workspai.studio-required-causal-action.v1',
+        authority: 'workspai-cli-remediation-plan',
+        toolName: 'execute-remediation-step',
+        input: { stepId: 'doctor.exact-action' },
+        stepId: 'doctor.exact-action',
+        executionKind: 'contract-command',
+        requiresApproval: false,
+        reason: 'Fresh CLI plan selected this action.',
+      },
+      steering: [],
+    } satisfies StudioAgentModelContext;
+
+    await adapter.next(context);
+
+    expect(prompt).toContain('Required causal action: ACTIVE');
+    expect(prompt).toContain('doctor.exact-action');
+    expect(prompt).toContain('Do not inspect again');
+    expect(prompt).toContain('controller-owned');
   });
 
   it('maps native allowlisted tool calls and the explicit completion tool without text JSON', async () => {
@@ -746,6 +803,76 @@ describe('Studio Agent model protocol', () => {
     await adapter.next(context);
     expect(prompt).not.toContain('EXPENSIVE-EVENT-BODY');
     expect(prompt.length).toBeLessThan(20_000);
+  });
+
+  it('preserves the deterministic causal spine when old events leave the raw window', async () => {
+    let prompt = '';
+    const adapter = new ContractStudioAgentModelAdapter(
+      'Repair a long-running blocker',
+      async (value) => {
+        prompt = value;
+        return { toolName: STUDIO_AGENT_COMPLETE_TOOL_NAME, input: { summary: 'Done' } };
+      }
+    );
+    const timestamp = '2026-08-28T00:00:00.000Z';
+    const causalEvents = [
+      {
+        schemaVersion: 'workspai.studio-agent-event.v1' as const,
+        id: 'long-session:1',
+        sessionId: 'long-session',
+        sequence: 1,
+        timestamp,
+        type: 'tool.failed' as const,
+        data: {
+          toolName: 'run-workspace-command',
+          ok: false,
+          error: 'EARLY-CAUSAL-FAILURE: generated cache belongs to another source root',
+          output: { transcript: 'OLD-TRANSCRIPT-'.repeat(2_000) },
+        },
+      },
+      {
+        schemaVersion: 'workspai.studio-agent-event.v1' as const,
+        id: 'long-session:2',
+        sessionId: 'long-session',
+        sequence: 2,
+        timestamp,
+        type: 'model.checkpoint' as const,
+        data: { summary: 'Inspect the generated cache before the next repair.' },
+      },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        schemaVersion: 'workspai.studio-agent-event.v1' as const,
+        id: `long-session:${index + 3}`,
+        sessionId: 'long-session',
+        sequence: index + 3,
+        timestamp,
+        type: 'tool.completed' as const,
+        data: { toolName: `inspection-${index}`, ok: true },
+      })),
+    ];
+
+    await adapter.next({
+      session: {
+        schemaVersion: 'workspai.studio-agent-session.v1',
+        id: 'long-session',
+        workspacePath: '/workspace',
+        cardId: 'workspaceRun',
+        assistantMode: 'agent',
+        status: 'running',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        sequence: causalEvents.length,
+        events: causalEvents,
+      },
+      tools: [],
+      steering: [],
+    });
+
+    expect(prompt).toContain('"compactedEventCount":4');
+    expect(prompt).toContain('EARLY-CAUSAL-FAILURE');
+    expect(prompt).toContain('Inspect the generated cache before the next repair.');
+    expect(prompt).toContain('"first":1,"last":4');
+    expect(prompt).not.toContain('OLD-TRANSCRIPT');
+    expect(prompt.match(/"type":"tool.completed"/g)?.length).toBeLessThanOrEqual(8);
   });
 
   it('keeps the causal dependency next action while dropping execution transcript noise', async () => {

@@ -5,8 +5,12 @@ import fs from 'fs-extra';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  beginStudioWorkspaceSourceTransaction,
   captureStudioWorkspaceSourceSnapshot,
+  disposeStudioWorkspaceSourceTransaction,
   diffStudioWorkspaceSourceSnapshots,
+  inspectStudioWorkspaceSourceTransaction,
+  rollbackStudioWorkspaceSourceTransaction,
 } from '../core/studioWorkspaceSourceSnapshot.js';
 
 const roots: string[] = [];
@@ -67,4 +71,59 @@ describe('Studio workspace source snapshots', () => {
       'existing.ts',
     ]);
   });
+
+  it('restores modified, deleted, and newly created files from a private checkpoint', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-source-rollback-'));
+    roots.push(root);
+    await fs.ensureDir(path.join(root, 'src'));
+    await fs.writeFile(path.join(root, 'src', 'modified.ts'), 'before modified\n');
+    await fs.writeFile(path.join(root, 'src', 'deleted.ts'), 'before deleted\n');
+    const transaction = await beginStudioWorkspaceSourceTransaction({ workspacePath: root });
+    expect(transaction).toBeDefined();
+
+    await fs.writeFile(path.join(root, 'src', 'modified.ts'), 'after modified\n');
+    await fs.remove(path.join(root, 'src', 'deleted.ts'));
+    await fs.writeFile(path.join(root, 'src', 'created.ts'), 'created\n');
+    const inspection = await inspectStudioWorkspaceSourceTransaction(transaction!);
+    expect(inspection?.changedPaths).toEqual([
+      'src/created.ts',
+      'src/deleted.ts',
+      'src/modified.ts',
+    ]);
+
+    const rollback = await rollbackStudioWorkspaceSourceTransaction(
+      transaction!,
+      inspection?.changedPaths
+    );
+    expect(rollback.restoredFingerprint).toBe(transaction!.before.fingerprint);
+    expect(await fs.readFile(path.join(root, 'src', 'modified.ts'), 'utf8')).toBe(
+      'before modified\n'
+    );
+    expect(await fs.readFile(path.join(root, 'src', 'deleted.ts'), 'utf8')).toBe(
+      'before deleted\n'
+    );
+    expect(await fs.pathExists(path.join(root, 'src', 'created.ts'))).toBe(false);
+    await disposeStudioWorkspaceSourceTransaction(transaction!);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'restores symlink identity instead of replacing it with copied target bytes',
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-source-symlink-'));
+      roots.push(root);
+      await fs.writeFile(path.join(root, 'target.txt'), 'target\n');
+      await fs.symlink('target.txt', path.join(root, 'source-link'));
+      const transaction = await beginStudioWorkspaceSourceTransaction({ workspacePath: root });
+      expect(transaction?.before.symlinks['source-link']).toBe('target.txt');
+
+      await fs.remove(path.join(root, 'source-link'));
+      await fs.writeFile(path.join(root, 'source-link'), 'replacement\n');
+      const inspection = await inspectStudioWorkspaceSourceTransaction(transaction!);
+      await rollbackStudioWorkspaceSourceTransaction(transaction!, inspection?.changedPaths);
+
+      expect((await fs.lstat(path.join(root, 'source-link'))).isSymbolicLink()).toBe(true);
+      expect(await fs.readlink(path.join(root, 'source-link'))).toBe('target.txt');
+      await disposeStudioWorkspaceSourceTransaction(transaction!);
+    }
+  );
 });

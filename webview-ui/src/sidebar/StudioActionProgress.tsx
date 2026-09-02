@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Circle, Loader2, Minus } from 'lucide-react';
 import {
   studioFileChangeLineCounts,
+  type SidebarStudioApprovalRequestView,
   type SidebarStudioActionProgressView,
 } from '@/lib/sidebarStudioActionProgress';
 import { compactStudioPathText } from '@/lib/studioDisplayText';
@@ -15,6 +16,10 @@ type StudioActionProgressProps = {
   onOpenFile?: (relativePath: string) => void;
   onOpenDiff?: (relativePath: string, transactionId: string) => void;
   onUndo?: (transactionId: string) => void;
+  onApprovalDecision?: (
+    request: SidebarStudioApprovalRequestView,
+    execution: 'once' | 'session' | 'project' | undefined
+  ) => void;
 };
 
 const STATUS_COPY: Record<
@@ -85,6 +90,7 @@ export function StudioActionProgress({
   onOpenFile,
   onOpenDiff,
   onUndo,
+  onApprovalDecision,
 }: StudioActionProgressProps) {
   const automaticContinuation = Boolean(
     progress.status === 'review' &&
@@ -164,13 +170,88 @@ export function StudioActionProgress({
             </pre>
           </details>
         ) : null}
-        {progress.commandText && !progress.policyRejected ? (
+        {progress.commandText && !progress.policyRejected && !progress.approvalRequest ? (
           <details className="ws-sidebar__studio-action-details">
             <summary>Command</summary>
             <pre className="ws-sidebar__studio-patch-diff" aria-label="Executed command">
               <span data-type="unchanged">$ {progress.commandText}</span>
             </pre>
           </details>
+        ) : null}
+        {progress.approvalRequest && onApprovalDecision && !historical ? (
+          <section className="ws-sidebar__studio-approval" aria-label="Command approval">
+            <div className="ws-sidebar__studio-approval-command">
+              <code title={progress.approvalRequest.command}>
+                {progress.approvalRequest.commandLabel}
+              </code>
+              <span>{progress.approvalRequest.scope}</span>
+            </div>
+            <p>{progress.approvalRequest.summary}</p>
+            <div className="ws-sidebar__studio-approval-actions">
+              {progress.approvalRequest.allowedExecutions.includes('once') ? (
+                <button
+                  type="button"
+                  className="ws-sidebar__inline ws-sidebar__inline--primary"
+                  onClick={() => onApprovalDecision(progress.approvalRequest!, 'once')}
+                >
+                  Run once
+                </button>
+              ) : null}
+              {progress.approvalRequest.allowedExecutions.includes('session') ? (
+                <button
+                  type="button"
+                  className="ws-sidebar__inline"
+                  onClick={() => onApprovalDecision(progress.approvalRequest!, 'session')}
+                >
+                  Allow for session
+                </button>
+              ) : null}
+              {progress.approvalRequest.allowedExecutions.includes('project') ? (
+                <button
+                  type="button"
+                  className="ws-sidebar__inline"
+                  onClick={() => onApprovalDecision(progress.approvalRequest!, 'project')}
+                >
+                  Trust for project
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="ws-sidebar__inline"
+                onClick={() => onApprovalDecision(progress.approvalRequest!, undefined)}
+              >
+                Cancel
+              </button>
+            </div>
+            <details className="ws-sidebar__studio-action-details">
+              <summary>Why this needs approval</summary>
+              <div className="ws-sidebar__studio-approval-detail">
+                {progress.approvalRequest.modelReason ? (
+                  <p>{progress.approvalRequest.modelReason}</p>
+                ) : null}
+                {progress.approvalRequest.reasons.length ? (
+                  <ul>
+                    {progress.approvalRequest.reasons.map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {progress.approvalRequest.cwd ? (
+                  <small>Working directory: {progress.approvalRequest.cwd}</small>
+                ) : null}
+                {progress.approvalRequest.commandLabel !== progress.approvalRequest.command ? (
+                  <small>Exact action: {progress.approvalRequest.command}</small>
+                ) : null}
+                <small title={progress.approvalRequest.fingerprint}>
+                  Exact request: {progress.approvalRequest.fingerprint.slice(0, 12)}…
+                </small>
+                <small>
+                  Approval stays bound to this exact request. Shell escalation, secret forwarding,
+                  and workspace escapes remain blocked.
+                </small>
+              </div>
+            </details>
+          </section>
         ) : null}
         {progress.activityPaths?.length ? (
           <ul className="ws-sidebar__studio-changed-files" aria-label="Inspected files">

@@ -5,6 +5,7 @@ import fs from 'fs-extra';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  assertStudioWorkspaceCommandApproval,
   describeStudioWorkspaceCommandFailure,
   resolveStudioWorkspaceCommandPlan,
   runStudioWorkspaceCommand,
@@ -39,13 +40,55 @@ describe('Studio workspace command capability policy', () => {
     expect(plan.timeoutMs).toBeGreaterThanOrEqual(1_000);
   });
 
-  it('classifies dependency and formatter commands as source mutations', () => {
+  it('accepts a repository-specific PATH tool through exact one-run approval and observation', () => {
     expect(
       resolveStudioWorkspaceCommandPlan({
         workspacePath: '/workspace',
-        request: { executable: 'npm', args: ['install'], purpose: 'dependency' },
-      }).mutatesSource
-    ).toBe(true);
+        request: {
+          executable: 'project-validator',
+          args: ['check', '--profile', 'enterprise'],
+          cwd: 'service',
+          purpose: 'test',
+        },
+      })
+    ).toMatchObject({
+      executable: 'project-validator',
+      args: ['check', '--profile', 'enterprise'],
+      cwd: '/workspace/service',
+      mutatesSource: false,
+      unclassifiedCommand: true,
+      externalSideEffects: true,
+      effectScopes: ['command:project-validator'],
+      requiresExplicitApproval: true,
+      allowedApprovalExecutions: ['once'],
+    });
+    expect(
+      resolveStudioWorkspaceCommandPlan({
+        workspacePath: '/workspace',
+        request: {
+          executable: 'project-validator',
+          args: ['status'],
+          cwd: 'service',
+          purpose: 'inspect',
+        },
+      })
+    ).toMatchObject({
+      externalSideEffects: false,
+      effectScopes: [],
+      observationScopes: ['command:project-validator'],
+      requiresExplicitApproval: true,
+      allowedApprovalExecutions: ['once'],
+    });
+  });
+
+  it('classifies dependency and formatter commands as source mutations', () => {
+    const dependencyPlan = resolveStudioWorkspaceCommandPlan({
+      workspacePath: '/workspace',
+      request: { executable: 'npm', args: ['install'], purpose: 'dependency' },
+    });
+    expect(dependencyPlan.mutatesSource).toBe(true);
+    expect(dependencyPlan.requiresExplicitApproval).toBe(true);
+    expect(dependencyPlan.authorizationFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(
       resolveStudioWorkspaceCommandPlan({
         workspacePath: '/workspace',
@@ -96,6 +139,48 @@ describe('Studio workspace command capability policy', () => {
     ).toBe(true);
   });
 
+  it('binds invasive approval to one exact command proposal', () => {
+    const plan = resolveStudioWorkspaceCommandPlan({
+      workspacePath: '/workspace',
+      request: {
+        executable: 'npm',
+        args: ['install'],
+        purpose: 'dependency',
+      },
+    });
+    expect(() => assertStudioWorkspaceCommandApproval({ plan })).toThrow('scoped user approval');
+    expect(() =>
+      assertStudioWorkspaceCommandApproval({
+        plan,
+        approval: {
+          fingerprint: '0'.repeat(64),
+          approvedBy: 'test:user',
+          approvedAt: '2026-08-29T00:00:00.000Z',
+        },
+      })
+    ).toThrow('does not match');
+    expect(() =>
+      assertStudioWorkspaceCommandApproval({
+        plan,
+        approval: {
+          fingerprint: plan.authorizationFingerprint,
+          approvedBy: 'test:user',
+          approvedAt: '2026-08-29T00:00:00.000Z',
+        },
+      })
+    ).not.toThrow();
+
+    const changedProposal = resolveStudioWorkspaceCommandPlan({
+      workspacePath: '/workspace',
+      request: {
+        executable: 'npm',
+        args: ['install', '--ignore-scripts'],
+        purpose: 'dependency',
+      },
+    });
+    expect(changedProposal.authorizationFingerprint).not.toBe(plan.authorizationFingerprint);
+  });
+
   it.each([
     ['dotnet', ['new', 'webapi']],
     ['go', ['generate', './...']],
@@ -118,13 +203,8 @@ describe('Studio workspace command capability policy', () => {
     { executable: 'bash', args: ['-lc', 'echo unsafe'], purpose: 'diagnose' as const },
     { executable: 'python3', args: ['-c', 'print(1)'], purpose: 'diagnose' as const },
     { executable: 'node', args: ['--eval', 'process.exit()'], purpose: 'diagnose' as const },
-    { executable: 'git', args: ['reset', '--hard'], purpose: 'diagnose' as const },
-    { executable: 'npm', args: ['publish'], purpose: 'build' as const },
+    { executable: 'npm', args: ['login'], purpose: 'build' as const },
     { executable: 'npx', args: ['eslint', '.'], purpose: 'diagnose' as const },
-    { executable: 'terraform', args: ['apply'], purpose: 'build' as const },
-    { executable: 'kubectl', args: ['delete', 'pod', 'api'], purpose: 'diagnose' as const },
-    { executable: 'helm', args: ['upgrade', 'api', './chart'], purpose: 'build' as const },
-    { executable: 'docker', args: ['run', 'image'], purpose: 'build' as const },
     { executable: 'npm', args: ['test', '--', '../../outside'], purpose: 'test' as const },
     { executable: 'pytest', args: ['--config=/etc/passwd'], purpose: 'test' as const },
     { executable: 'git', args: ['show', 'file:///etc/passwd'], purpose: 'inspect' as const },
@@ -133,6 +213,83 @@ describe('Studio workspace command capability policy', () => {
       resolveStudioWorkspaceCommandPlan({ workspacePath: '/workspace', request })
     ).toThrow();
   });
+
+  it.each([
+    {
+      executable: 'git',
+      args: ['reset', '--hard'],
+      purpose: 'diagnose' as const,
+      repositoryMetadataEffects: true,
+      externalSideEffects: false,
+      mutatesSource: true,
+    },
+    {
+      executable: 'npm',
+      args: ['publish'],
+      purpose: 'build' as const,
+      repositoryMetadataEffects: false,
+      externalSideEffects: true,
+      mutatesSource: false,
+    },
+    {
+      executable: 'terraform',
+      args: ['apply'],
+      purpose: 'build' as const,
+      repositoryMetadataEffects: false,
+      externalSideEffects: true,
+      mutatesSource: false,
+    },
+    {
+      executable: 'kubectl',
+      args: ['delete', 'pod', 'api'],
+      purpose: 'diagnose' as const,
+      repositoryMetadataEffects: false,
+      externalSideEffects: true,
+      mutatesSource: false,
+    },
+    {
+      executable: 'helm',
+      args: ['upgrade', 'api', './chart'],
+      purpose: 'build' as const,
+      repositoryMetadataEffects: false,
+      externalSideEffects: true,
+      mutatesSource: true,
+    },
+    {
+      executable: 'docker',
+      args: ['run', 'image'],
+      purpose: 'build' as const,
+      repositoryMetadataEffects: false,
+      externalSideEffects: true,
+      mutatesSource: false,
+    },
+  ])(
+    'routes invasive $executable effects through exact one-run approval',
+    ({ repositoryMetadataEffects, externalSideEffects, mutatesSource, ...request }) => {
+      const plan = resolveStudioWorkspaceCommandPlan({
+        workspacePath: '/workspace',
+        request,
+      });
+      expect(plan).toMatchObject({
+        requiresExplicitApproval: true,
+        repositoryMetadataEffects,
+        externalSideEffects,
+        mutatesSource,
+        allowedApprovalExecutions: ['once'],
+      });
+      expect(() =>
+        assertStudioWorkspaceCommandApproval({
+          plan,
+          approval: {
+            fingerprint: plan.authorizationFingerprint,
+            approvedBy: 'test:user',
+            approvedAt: '2026-08-29T00:00:00.000Z',
+            execution: 'project',
+          },
+        })
+      ).toThrow('not allowed');
+    }
+  );
 
   it('permits local-only package execution and read-only git inspection', () => {
     expect(
@@ -151,6 +308,59 @@ describe('Studio workspace command capability policy', () => {
         request: { executable: 'git', args: ['diff', '--stat'], purpose: 'inspect' },
       }).mutatesSource
     ).toBe(false);
+  });
+
+  it('declares machine-readable effect and observation domains for non-source verification', () => {
+    const push = resolveStudioWorkspaceCommandPlan({
+      workspacePath: '/workspace',
+      request: { executable: 'git', args: ['push', 'origin', 'main'], purpose: 'build' },
+    });
+    expect(push.effectScopes).toEqual(['git-repository', 'git-remote']);
+    expect(push.observationScopes).toEqual(['git-repository']);
+
+    const remoteObservation = resolveStudioWorkspaceCommandPlan({
+      workspacePath: '/workspace',
+      request: { executable: 'git', args: ['ls-remote', 'origin'], purpose: 'inspect' },
+    });
+    expect(remoteObservation.requiresExplicitApproval).toBe(false);
+    expect(remoteObservation.effectScopes).toEqual([]);
+    expect(remoteObservation.observationScopes).toEqual(['git-repository', 'git-remote']);
+
+    expect(
+      resolveStudioWorkspaceCommandPlan({
+        workspacePath: '/workspace',
+        request: { executable: 'kubectl', args: ['get', 'deployment', 'api'], purpose: 'inspect' },
+      }).observationScopes
+    ).toEqual(['kubernetes-cluster']);
+  });
+
+  it('runs bounded diagnostics in a registered linked-project root', () => {
+    const plan = resolveStudioWorkspaceCommandPlan({
+      workspacePath: '/managed/workspace',
+      projectPath: '/linked/grpc',
+      request: {
+        executable: 'cmake',
+        args: ['--fresh', '-S', '.', '-B', 'build'],
+        purpose: 'build',
+      },
+    });
+    expect(plan).toMatchObject({
+      cwd: '/linked/grpc',
+      executable: 'cmake',
+      mutatesSource: false,
+    });
+    expect(() =>
+      resolveStudioWorkspaceCommandPlan({
+        workspacePath: '/managed/workspace',
+        projectPath: '/linked/grpc',
+        request: {
+          executable: 'cmake',
+          args: ['--fresh', '-S', '.', '-B', 'build'],
+          cwd: '../sibling',
+          purpose: 'build',
+        },
+      })
+    ).toThrow('workspace/project');
   });
 
   it.each([

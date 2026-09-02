@@ -13,6 +13,27 @@ export type NpmContractSupportEntry = {
 
 export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
   {
+    contractPath: 'workspace-activity-board.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Dashboard Live Operations and Command Center projection',
+    usage:
+      'Validates the bounded CLI-owned Board projection before rendering ordered activity stages, fleet health, and capture-ready operational summaries.',
+  },
+  {
+    contractPath: 'workspace-activity-monitor-fleet.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Live Operations fleet compatibility boundary',
+    usage:
+      'Ships the canonical multi-monitor fleet schema used by Board projections without independently reconstructing CLI monitoring state.',
+  },
+  {
+    contractPath: 'workspace-activity-monitor-snapshot.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Live Operations monitor snapshot compatibility boundary',
+    usage:
+      'Ships the canonical monitor snapshot schema so future detailed Live views can remain compatible with CLI-owned activity semantics.',
+  },
+  {
     contractPath: 'workspace-activity-event.v1.json',
     mode: 'runtime-consumed',
     extensionSurface:
@@ -117,6 +138,13 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
       'Guards snapshot, delta, hash continuity, revision-gap, resync, provider progress, and control events independently of transport.',
   },
   {
+    contractPath: 'workspace-intelligence/workspace-intelligence-benchmark.v1.json',
+    mode: 'evidence-consumed',
+    extensionSurface: 'Command Center retrieval efficiency and Artifacts evidence',
+    usage:
+      'Reads deterministic benchmark scenarios, token provenance, payload reduction, and verification outcomes without presenting estimates as provider-measured savings.',
+  },
+  {
     contractPath: 'workspace-intelligence/workspace-intelligence-evaluation.v1.json',
     mode: 'evidence-consumed',
     extensionSurface: 'Intelligence Run card and evaluation commands',
@@ -145,9 +173,85 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
   },
   {
     contractPath: 'workspace-intelligence/workspace-knowledge-graph-change-overlay.v1.json',
-    mode: 'mirrored-reserved',
-    extensionSurface: 'Pre-merge graph change-overlay compatibility boundary',
-    usage: 'Preserves the overlay schema for future PR and staged-change visualization.',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Proof-Carrying Change assurance and Graph delta boundary',
+    usage:
+      'Consumes the CLI-derived actual architecture overlay without mutating or reconstructing the canonical Graph.',
+  },
+  {
+    contractPath: 'workspace-intelligence/proof-carrying-change-list.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Live Change Assurance discovery',
+    usage:
+      'Discovers open, blocked, sealed, aborted, and invalid changes through the canonical CLI projection instead of filesystem directory order.',
+  },
+  {
+    contractPath: 'workspace-intelligence/change-operation-result.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Change Assurance detail and Studio command feedback',
+    usage:
+      'Consumes one versioned envelope for status and future approved PCC operations without parsing terminal prose.',
+  },
+  {
+    contractPath: 'workspace-intelligence/proof-carrying-change-capsule.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Change Assurance timeline',
+    usage:
+      'Renders intent, baseline, effect, re-observation, verification, uncertainty, and integrity assurances without becoming a proof owner.',
+  },
+  {
+    contractPath: 'workspace-intelligence/proof-carrying-change-capsule-validation.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Change capsule integrity boundary',
+    usage:
+      'Guards fail-closed validation results before a capsule can be presented as portable or sealed evidence.',
+  },
+  {
+    contractPath: 'workspace-intelligence/proof-carrying-change-capsule-export.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Portable capsule export boundary',
+    usage: 'Preserves the validated export envelope for a future governed IDE export action.',
+  },
+  {
+    contractPath: 'workspace-intelligence/architecture-change-lease.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Pinned PCC architecture baseline',
+    usage:
+      'Guards exact Goal, Model, Graph, and input-generation bindings used by the Change Assurance view.',
+  },
+  {
+    contractPath: 'workspace-intelligence/predicted-architecture-change.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'PCC prediction overlay boundary',
+    usage:
+      'Preserves noncanonical, non-proof prediction semantics so planned architecture is never rendered as observed truth.',
+  },
+  {
+    contractPath: 'workspace-intelligence/architecture-surprise-report.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'PCC prediction-versus-observation comparison',
+    usage:
+      'Guards matched, missing, and unpredicted architecture operations for future Graph comparison rendering.',
+  },
+  {
+    contractPath: 'workspace-intelligence/decision-event.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'PCC causal ledger compatibility',
+    usage:
+      'Guards digest-linked causal events without allowing the extension to rewrite ledger truth.',
+  },
+  {
+    contractPath: 'workspace-intelligence/decision-transaction.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'PCC decision lifecycle projection',
+    usage:
+      'Guards the replay-derived transaction state consumed through Change Assurance and Studio handoffs.',
+  },
+  {
+    contractPath: 'workspace-intelligence/decision-checkpoint.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'PCC ledger generation and head integrity',
+    usage: 'Preserves the compare-and-append checkpoint boundary for IDE compatibility checks.',
   },
   {
     contractPath: 'workspace-intelligence/workspace-knowledge-search.v1.json',
@@ -182,7 +286,7 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
     mode: 'evidence-consumed',
     extensionSurface: 'Studio cross-artifact repair plan and evidence-card remediation',
     usage:
-      'Reads artifact-remediation-plan-last-run.json emitted by workspace remediation-plan --ci --write --include-paths so Studio can consume npm-authored repair actions for all governance cards, not only Doctor.',
+      'Reads artifact-remediation-plan-last-run.json emitted by workspace remediation-plan --ci --write --include-paths, preserves CLI 0.72 typed executable/action requirements, structured invocations, retry boundaries, and canonical nextActionId ordering, and consumes npm-authored repair actions for all governance cards without retrying blocked environment generations.',
   },
   {
     contractPath: 'backend-import-stack-parity.snapshot.json',
@@ -309,7 +413,7 @@ export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
     mode: 'runtime-consumed',
     extensionSurface: 'Studio CLI Repair Engine preflight and decision rendering',
     usage:
-      'Consumes the canonical multi-runtime adapter inventory and fail-closed support boundaries while transaction state remains CLI-owned.',
+      'Consumes the canonical multi-runtime adapter inventory, shared launchability probe, missing-tool environment-change resume boundary, and fail-closed support limits while transaction state remains CLI-owned.',
   },
   {
     contractPath: 'workspace-intelligence-architecture.v1.json',

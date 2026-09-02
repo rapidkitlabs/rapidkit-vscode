@@ -21,6 +21,7 @@ export const DASHBOARD_BACKGROUND_COMMANDS = new Set<DashboardCommand>([
   'workspaceEvaluationReport',
   'workspaceEvaluationStatus',
   'workspaceGraphSearch',
+  'workspaceGraphBenchmarkSuite',
   'workspaceGraphExportJsonLd',
   'workspaceGraphExportGraphMl',
   'workspaceGraphExportGexf',

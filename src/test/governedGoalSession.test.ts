@@ -58,6 +58,21 @@ function result(value: GoalPlanResult | GoalLifecycleResult): GoalCommandResult 
   };
 }
 
+function failure(input: { error: string; code?: string; operation?: string }): GoalCommandResult {
+  return {
+    ok: false,
+    command: {
+      exitCode: 1,
+      stdout: '',
+      stderr: input.error,
+      displayCommand: 'workspai goal',
+    },
+    error: input.error,
+    ...(input.code ? { code: input.code } : {}),
+    ...(input.operation ? { operation: input.operation } : {}),
+  };
+}
+
 function lifecycle(
   operation: GoalLifecycleResult['operation'],
   goal: GoalEntry,
@@ -330,8 +345,13 @@ describe('governed Goal Assistant session', () => {
       },
     });
     const planned = { ...needsInput(goalPackId), result: 'planned' as const };
+    const refreshError =
+      'Canonical model and live graph evidence are required (live-input-mismatch). Retry with --refresh.';
     const run = vi
       .fn()
+      .mockResolvedValueOnce(
+        failure({ error: refreshError, code: 'goal.plan.failed', operation: 'goal.plan' })
+      )
       .mockResolvedValueOnce(result(needsInput('goal-scope-12345678')))
       .mockResolvedValueOnce(result(needsInput('goal-runtime-12345678')))
       .mockResolvedValueOnce(result(planned))
@@ -392,8 +412,9 @@ describe('governed Goal Assistant session', () => {
       readPreparedGoal: async () => verifiedGoal(),
     });
 
-    expect(run.mock.calls.slice(0, 3).map(([call]) => call.args)).toEqual([
+    expect(run.mock.calls.slice(0, 4).map(([call]) => call.args)).toEqual([
       ['Raise test coverage to 75%', '--for-agent', 'generic'],
+      ['Raise test coverage to 75%', '--for-agent', 'generic', '--refresh'],
       ['Raise test coverage to 75%', '--for-agent', 'generic', '--scope', 'projects:api,worker'],
       [
         'Raise test coverage to 75%',
@@ -516,6 +537,156 @@ describe('governed Goal Assistant session', () => {
     expect(run.mock.calls.map(([call]) => call.args)).toEqual([
       [general.objective, '--for-agent', 'generic', '--scope', 'project:api'],
       ['--activate', goalPackId],
+    ]);
+  });
+
+  it('follows the CLI-authored freshness recovery once before activating a Goal', async () => {
+    const general = entry('planned', {
+      objective: 'Resolve the active Workspace Doctor blocker',
+      category: 'defect-repair',
+      scope: {
+        kind: 'project',
+        projects: ['opensearch'],
+        selectionSource: 'explicit',
+      },
+    });
+    const plan: GoalPlanResult = {
+      schemaVersion: 'workspai.goal-plan-result.v1',
+      result: 'planned',
+      resolution: { source: 'explicit', invocationScope: 'workspace' },
+      goalPack: {
+        schemaVersion: 'workspai.goal-pack.v1',
+        id: goalPackId,
+        fingerprint: general.fingerprint,
+      },
+      agentHandoff: {
+        schemaVersion: 'workspai.goal-agent-handoff.v1',
+        goalId: goalPackId,
+        goalFingerprint: general.fingerprint,
+      },
+      writtenArtifacts: [general.goalPack, general.agentHandoff],
+      dryRun: false,
+      resumed: false,
+    };
+    const refreshError =
+      'Canonical model and live graph evidence are required (live-input-mismatch). Run `workspai workspace intelligence run --for-agent generic --strict --json` or retry with --refresh.';
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(
+        failure({ error: refreshError, code: 'goal.plan.failed', operation: 'goal.plan' })
+      )
+      .mockResolvedValueOnce(result(plan))
+      .mockResolvedValueOnce(
+        result(lifecycle('activate', { ...general, lifecycle: 'active' }, null))
+      );
+    const phases: string[] = [];
+
+    await expect(
+      prepareGovernedGoalSession({
+        workspacePath: '/workspace',
+        objective: general.objective,
+        projectName: 'opensearch',
+        run,
+        readIndex: async () => ({
+          kind: 'valid',
+          artifactPath: '/workspace/.workspai/goals/index.json',
+          value: {
+            schemaVersion: 'workspai.goal-index.v1',
+            generatedAt: general.updatedAt,
+            activeGoalId: null,
+            goals: [general],
+          },
+        }),
+        readExecutionPolicy: async () => ({ maxAttempts: 4 }),
+        onPhase: (phase) => phases.push(phase),
+      })
+    ).resolves.toMatchObject({
+      goalPackId,
+      governedGoal: { category: 'defect-repair', completionMode: 'evidence-review' },
+    });
+
+    expect(run.mock.calls.map(([call]) => call.args)).toEqual([
+      [general.objective, '--for-agent', 'generic', '--scope', 'project:opensearch'],
+      [general.objective, '--for-agent', 'generic', '--scope', 'project:opensearch', '--refresh'],
+      ['--activate', goalPackId],
+    ]);
+    expect(phases).toContain('Refreshing canonical Model and Graph evidence...');
+  });
+
+  it('does not disguise unrelated Goal planning failures as freshness recovery', async () => {
+    const run = vi.fn().mockResolvedValue(
+      failure({
+        error: 'Goal scope is not authorized by workspace policy.',
+        code: 'goal.plan.failed',
+        operation: 'goal.plan',
+      })
+    );
+
+    await expect(
+      prepareGovernedGoalSession({
+        workspacePath: '/workspace',
+        objective: 'Change a protected project',
+        run,
+      })
+    ).rejects.toThrow('Goal scope is not authorized by workspace policy.');
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not repeat refresh when the refreshed canonical evidence is still rejected', async () => {
+    const refreshError =
+      'Canonical model and live graph evidence are required (live-input-mismatch). Retry with --refresh.';
+    const needsScope: GoalPlanResult = {
+      schemaVersion: 'workspai.goal-plan-result.v1',
+      result: 'needs-confirmation',
+      resolution: { source: 'explicit', invocationScope: 'workspace' },
+      goalPack: {
+        schemaVersion: 'workspai.goal-pack.v1',
+        id: goalPackId,
+        fingerprint: 'a'.repeat(64),
+      },
+      agentHandoff: {
+        schemaVersion: 'workspai.goal-agent-handoff.v1',
+        goalId: goalPackId,
+        goalFingerprint: 'a'.repeat(64),
+      },
+      writtenArtifacts: [],
+      dryRun: false,
+      resumed: false,
+    };
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(
+        failure({ error: refreshError, code: 'goal.plan.failed', operation: 'goal.plan' })
+      )
+      .mockResolvedValueOnce(result(needsScope))
+      .mockResolvedValueOnce(
+        failure({ error: refreshError, code: 'goal.plan.failed', operation: 'goal.plan' })
+      );
+
+    await expect(
+      prepareGovernedGoalSession({
+        workspacePath: '/workspace',
+        objective: 'Resolve the active blocker',
+        run,
+        readPlanningDecision: async () => ({
+          reason: 'Scope is unresolved.',
+          question: 'Where should this Goal apply?',
+          prerequisites: [],
+          scopeProjects: ['api'],
+          scopeSelectionRequired: true,
+          runtimeChoices: [],
+        }),
+        selectScope: async () => ({ kind: 'workspace' }),
+      })
+    ).rejects.toThrow(refreshError);
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(run.mock.calls[1]?.[0].args).toContain('--refresh');
+    expect(run.mock.calls[2]?.[0].args).toEqual([
+      'Resolve the active blocker',
+      '--for-agent',
+      'generic',
+      '--scope',
+      'workspace',
     ]);
   });
 

@@ -6,6 +6,58 @@ import {
 } from '../core/studioAgentWorkspaiTools.js';
 
 describe('Studio Agent Workspai tool registry', () => {
+  it('classifies mutating project commands as exact one-time approval requests', async () => {
+    const runWorkspaceCommand = vi.fn(async () => ({ ok: true, changed: true }));
+    const host = { runWorkspaceCommand } as unknown as StudioAgentWorkspaiToolHost;
+    const registry = createStudioAgentWorkspaiToolRegistry({
+      host,
+      cardId: 'readiness',
+      assistantMode: 'agent',
+    });
+    const tool = registry.get('run-workspace-command');
+    const context = {
+      sessionId: 'session-approval',
+      requestId: 'request-approval',
+      toolCallId: 'tool-approval',
+      workspacePath: '/workspace',
+      projectPath: '/workspace/web',
+      signal: new AbortController().signal,
+    };
+    const raw = {
+      executable: 'npm',
+      args: ['install'],
+      purpose: 'dependency',
+    };
+
+    const authorization = await tool?.authorize?.(raw, context);
+
+    expect(authorization).toMatchObject({
+      risk: 'invasive',
+      approval: {
+        displayCommand: 'npm install',
+        scope: 'project',
+        execution: 'once',
+      },
+    });
+    const fingerprint = authorization?.approval?.fingerprint;
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    await tool?.execute(raw, {
+      ...context,
+      approval: {
+        fingerprint: fingerprint!,
+        approvedBy: 'test:user',
+        approvedAt: '2026-08-29T00:00:00.000Z',
+      },
+    });
+    expect(runWorkspaceCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: raw,
+        projectPath: '/workspace/web',
+        approval: expect.objectContaining({ fingerprint }),
+      })
+    );
+  });
+
   it('exposes and routes the deterministic blocker recovery prelude when the host supports it', async () => {
     const recoverActiveBlocker = vi.fn(async () => ({ ok: true, changed: true }));
     const host = {
@@ -49,6 +101,7 @@ describe('Studio Agent Workspai tool registry', () => {
       'inspect-evidence',
       'search-workspace',
       'inspect-workspace-diagnostics',
+      'inspect-workspace-batch',
       'inspect-workspace-changes',
       'apply-workspace-patch',
       'run-governed-command',
@@ -81,6 +134,65 @@ describe('Studio Agent Workspai tool registry', () => {
             },
           },
         },
+      },
+    });
+  });
+
+  it('runs independent read-only batch operations concurrently while preserving result order', async () => {
+    const started: string[] = [];
+    let releaseSource!: () => void;
+    let releaseSearch!: () => void;
+    const sourceGate = new Promise<void>((resolve) => {
+      releaseSource = resolve;
+    });
+    const searchGate = new Promise<void>((resolve) => {
+      releaseSearch = resolve;
+    });
+    const host = {
+      inspect: vi.fn(async () => {
+        started.push('source');
+        await sourceGate;
+        return { ok: true, output: ['source-result'] };
+      }),
+      search: vi.fn(async () => {
+        started.push('search');
+        await searchGate;
+        return { ok: true, output: ['search-result'] };
+      }),
+      diagnostics: vi.fn(async () => ({ ok: true, output: [] })),
+    } as unknown as StudioAgentWorkspaiToolHost;
+    const registry = createStudioAgentWorkspaiToolRegistry({
+      host,
+      cardId: 'readiness',
+      assistantMode: 'ask',
+    });
+    const execution = registry.get('inspect-workspace-batch')?.execute(
+      {
+        operations: [
+          { id: 'source-first', kind: 'source', paths: ['src/index.ts'] },
+          { id: 'search-second', kind: 'search', query: 'readiness' },
+        ],
+      },
+      {
+        sessionId: 'batch-session',
+        requestId: 'batch-request',
+        toolCallId: 'batch-tool',
+        workspacePath: '/workspace',
+        signal: new AbortController().signal,
+      }
+    );
+    await vi.waitFor(() => expect(started).toEqual(['source', 'search']));
+    releaseSearch();
+    releaseSource();
+    await expect(execution).resolves.toMatchObject({
+      ok: true,
+      changed: false,
+      output: {
+        concurrent: true,
+        results: [
+          { id: 'source-first', kind: 'source', result: { output: ['source-result'] } },
+          { id: 'search-second', kind: 'search', result: { output: ['search-result'] } },
+        ],
       },
     });
   });
@@ -207,17 +319,21 @@ describe('Studio Agent Workspai tool registry', () => {
         reportProgress: context.reportProgress,
       })
     );
-    expect(host.runWorkspaceCommand).toHaveBeenCalledWith({
-      request: {
-        executable: 'npm',
-        args: ['test'],
-        cwd: 'web',
-        purpose: 'test',
-        timeoutMs: 90_000,
-      },
-      workspacePath: '/workspace',
-      projectPath: '/workspace/web',
-    });
+    expect(host.runWorkspaceCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: {
+          executable: 'npm',
+          args: ['test'],
+          cwd: 'web',
+          purpose: 'test',
+          timeoutMs: 90_000,
+        },
+        workspacePath: '/workspace',
+        projectPath: '/workspace/web',
+        signal: context.signal,
+        reportProgress: context.reportProgress,
+      })
+    );
     expect(host.inspectRemediationPlan).toHaveBeenCalledWith({
       workspacePath: '/workspace',
       projectPath: '/workspace/web',

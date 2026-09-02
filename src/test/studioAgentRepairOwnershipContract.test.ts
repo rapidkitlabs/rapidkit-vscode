@@ -13,6 +13,14 @@ const assistantModeContract = fs.readFileSync(
   path.resolve(process.cwd(), 'src/core/assistantModeContract.ts'),
   'utf8'
 );
+const causalRecoveryBriefing = fs.readFileSync(
+  path.resolve(process.cwd(), 'src/core/studioCausalRecoveryBriefing.ts'),
+  'utf8'
+);
+const nativeChatStudioAgent = fs.readFileSync(
+  path.resolve(process.cwd(), 'src/core/nativeChatStudioAgent.ts'),
+  'utf8'
+);
 
 function productionTypeScriptFiles(directory: string): string[] {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -35,16 +43,23 @@ describe('Studio Agent repair ownership contract', () => {
     expect(provider).toContain('this._activeStudioAgentRepairRuns.delete(repairScopeKey)');
   });
 
-  it('enters the CLI Repair Engine directly from active blocker recovery', () => {
+  it('keeps active blocker recovery as a typed briefing and leaves mutation to governed tools', () => {
     const recoveryStart = provider.indexOf('recoverActiveBlocker: async');
     const recoveryEnd = provider.indexOf('verify: async', recoveryStart);
     const recovery = provider.slice(recoveryStart, recoveryEnd);
     expect(recoveryStart).toBeGreaterThanOrEqual(0);
     expect(recoveryEnd).toBeGreaterThan(recoveryStart);
-    expect(recovery).toContain('return executeCanonicalRepair');
+    expect(recovery).toContain('return buildStudioCausalRecoveryBriefing');
+    expect(recovery).toContain('remediationStep');
+    expect(recovery).not.toContain('return executeCanonicalRepair');
     expect(recovery).not.toContain('runStudioActiveBlockerRecovery');
     expect(recovery).not.toContain('repairDependencySecurity');
     expect(recovery).not.toContain('runIncidentInlineCommand');
+    expect(causalRecoveryBriefing).toContain("? 'execute-remediation-step'");
+    expect(causalRecoveryBriefing).toContain(": 'model-select-causal-capability'");
+    expect(causalRecoveryBriefing).toContain('requiredAction');
+    expect(causalRecoveryBriefing).toContain('producerRefreshCommandId');
+    expect(nativeChatStudioAgent).toContain('return buildStudioCausalRecoveryBriefing');
   });
 
   it('restores the durable card session across causal blocker signature changes', () => {
@@ -61,13 +76,17 @@ describe('Studio Agent repair ownership contract', () => {
     );
   });
 
-  it('routes every active Studio mutation surface through the CLI Repair Engine', () => {
+  it('routes semantic edits through CLI repair and invasive commands through exact approval', () => {
     const autonomousStart = provider.indexOf('private async _runAutonomousStudioAgentOwned');
     const autonomousEnd = provider.indexOf(
       'private async _runSidebarStudioAction',
       autonomousStart
     );
     const autonomousRuntime = provider.slice(autonomousStart, autonomousEnd);
+    const commandTransaction = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/core/studioWorkspaceCommandTransaction.ts'),
+      'utf8'
+    );
     expect(autonomousStart).toBeGreaterThanOrEqual(0);
     expect(autonomousEnd).toBeGreaterThan(autonomousStart);
     expect(autonomousRuntime).toContain('applyPatches: async');
@@ -83,9 +102,9 @@ describe('Studio Agent repair ownership contract', () => {
     expect(assistantModeContract).toContain("'repair-dependency-security',");
     expect(assistantModeContract).toContain("'upgrade-dependency-security',");
     expect(assistantModeContract).toContain("'complete-dependency-transaction',");
-    expect(autonomousRuntime).toContain(
-      'Studio cannot execute mutating workspace commands directly.'
-    );
+    expect(autonomousRuntime).toContain('executeStudioWorkspaceCommandTransaction({');
+    expect(commandTransaction).toContain('assertStudioWorkspaceCommandApproval({');
+    expect(autonomousRuntime).toContain('this._requestInlineStudioToolApproval(request)');
     expect(autonomousRuntime).not.toContain('applySidebarPendingPatches');
     expect(autonomousRuntime).not.toContain('deleteInspectedStudioWorkspaceFiles');
     expect(autonomousRuntime).not.toContain('buildStudioDependencyUpgradeCommand');

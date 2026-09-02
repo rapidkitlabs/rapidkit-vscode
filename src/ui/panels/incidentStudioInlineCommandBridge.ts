@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import path from 'path';
 
 import { createExtensionWebviewMessage } from '../../contracts/webviewProtocol';
 import {
@@ -9,6 +8,7 @@ import {
 import { gateIncidentStudioRapidkitCommand } from '../../core/rapidkitEnterpriseCliGate';
 import { WorkspaceUsageTracker } from '../../utils/workspaceUsageTracker';
 import { resolveStudioMutationBlockReason } from './incidentStudioMutationGate';
+import { isRegisteredWorkspaceProjectPath } from '../../core/workspaceModelReader';
 import type { IncidentStudioTelemetryGateSlice } from './incidentStudioPolicyGateMapper';
 import type { IncidentStudioExecutionTranscript } from './incidentStudioSessionPersistenceBridge';
 
@@ -204,18 +204,6 @@ export async function dispatchIncidentStudioInlineCommand(
   }
 }
 
-function isWorkspacePathAncestor(workspacePath: string | undefined, childPath?: string): boolean {
-  if (!workspacePath || !childPath) {
-    return false;
-  }
-  const normalizedWorkspace = path.resolve(workspacePath);
-  const normalizedChild = path.resolve(childPath);
-  return (
-    normalizedChild === normalizedWorkspace ||
-    normalizedChild.startsWith(`${normalizedWorkspace}${path.sep}`)
-  );
-}
-
 export async function runIncidentInlineCommand(
   options: RunIncidentInlineCommandOptions
 ): Promise<RunIncidentInlineCommandResult> {
@@ -294,7 +282,10 @@ export async function runIncidentInlineCommand(
 
   const workspacePath = options.workspacePath.trim();
   const projectPath = options.projectPath?.trim();
-  const projectBelongsToWorkspace = isWorkspacePathAncestor(workspacePath, projectPath);
+  const projectBelongsToWorkspace = await isRegisteredWorkspaceProjectPath(
+    workspacePath,
+    projectPath
+  );
   const inlineActionId = options.actionId || `inline-${Date.now().toString(36)}`;
   const inlineScopeProps = projectPath && projectBelongsToWorkspace ? { projectPath } : {};
 

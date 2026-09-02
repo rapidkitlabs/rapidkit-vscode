@@ -24,7 +24,15 @@ export type IncidentStudioUiPreferences = {
   incidentPrimaryCtaExperimentVariant: 'single' | 'multi';
   incidentRollbackApprovalMode: 'never' | 'high-risk-only' | 'mutating-only' | 'always';
   incidentRollbackProtectedPaths: string[];
-  dashboardSection: 'overview' | 'repair' | 'evidence' | 'operate' | 'console' | 'catalog';
+  dashboardSection:
+    | 'overview'
+    | 'repair'
+    | 'evidence'
+    | 'graph'
+    | 'live'
+    | 'operate'
+    | 'console'
+    | 'catalog';
   dashboardEvidenceViewMode: 'guided' | 'balanced' | 'expanded';
 };
 
@@ -58,6 +66,8 @@ export function readIncidentStudioUiPreferences(
         ? 'catalog'
         : prefs?.dashboardSection === 'repair' ||
             prefs?.dashboardSection === 'evidence' ||
+            prefs?.dashboardSection === 'graph' ||
+            prefs?.dashboardSection === 'live' ||
             prefs?.dashboardSection === 'operate' ||
             prefs?.dashboardSection === 'console' ||
             prefs?.dashboardSection === 'catalog'

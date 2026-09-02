@@ -2,7 +2,10 @@ import * as path from 'path';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveStudioRepairProjectTarget } from '../core/studioRepairProjectTarget.js';
+import {
+  resolveStudioRepairGoalScope,
+  resolveStudioRepairProjectTarget,
+} from '../core/studioRepairProjectTarget.js';
 
 describe('resolveStudioRepairProjectTarget', () => {
   it('prefers an explicit remediation-step project name', () => {
@@ -45,5 +48,34 @@ describe('resolveStudioRepairProjectTarget', () => {
     expect(
       resolveStudioRepairProjectTarget({ affectedProjectNames: ['api', 'web'] })
     ).toBeUndefined();
+  });
+
+  it('binds a multi-project blocker to a project set instead of the selected UI project', () => {
+    expect(
+      resolveStudioRepairGoalScope({
+        handoffScope: 'workspace',
+        affectedProjectNames: ['nova-api', 'studio-api'],
+        projectPath: path.join('/workspace', 'catalog-api'),
+      })
+    ).toEqual({
+      kind: 'project-set',
+      projects: ['nova-api', 'studio-api'],
+      selectionSource: 'explicit',
+      resolution: 'selected',
+    });
+  });
+
+  it('keeps a workspace Goal workspace-scoped when evidence names no project', () => {
+    expect(
+      resolveStudioRepairGoalScope({
+        handoffScope: 'workspace',
+        projectPath: path.join('/workspace', 'catalog-api'),
+      })
+    ).toEqual({
+      kind: 'workspace',
+      projects: [],
+      selectionSource: 'workspace',
+      resolution: 'selected',
+    });
   });
 });

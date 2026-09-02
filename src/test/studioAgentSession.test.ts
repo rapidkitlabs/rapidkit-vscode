@@ -106,6 +106,412 @@ function closedCliRepairResult(input?: {
 }
 
 describe('Studio Agent session runtime', () => {
+  it('pauses for one-time approval and executes only the exact invasive tool proposal', async () => {
+    const registry = new StudioAgentToolRegistry();
+    let executions = 0;
+    registry.register({
+      name: 'run-workspace-command',
+      title: 'Run workspace command',
+      description: 'Run an exact structured command.',
+      inputSchema: { type: 'object' },
+      activity: 'change',
+      risk: 'guarded-write',
+      authorize() {
+        return {
+          risk: 'invasive',
+          approval: {
+            fingerprint: 'a'.repeat(64),
+            title: 'Approve exact workspace command',
+            summary: 'This command may update dependency state.',
+            displayCommand: 'npm install',
+            cwd: '/workspace',
+            scope: 'workspace',
+            reasons: ['The command may modify package.json and the lockfile.'],
+            execution: 'once',
+          },
+        };
+      },
+      async execute(_input, context) {
+        executions += 1;
+        expect(context.approval).toMatchObject({
+          fingerprint: 'a'.repeat(64),
+          approvedBy: 'test:explicit-user',
+        });
+        return { ok: true, changed: true, output: { exitCode: 0 } };
+      },
+    });
+    const approvalRequests: string[] = [];
+    const session = new StudioAgentSession(
+      {
+        id: 'exact-command-approval-session',
+        workspacePath: '/workspace',
+        cardId: 'assistant:agent',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        requiresVerifiedCompletion: false,
+        async requestToolApproval(request) {
+          approvalRequests.push(request.displayCommand ?? '');
+          return {
+            approved: true,
+            fingerprint: request.fingerprint,
+            approvedBy: 'test:explicit-user',
+          };
+        },
+      },
+      sequenceModel([
+        {
+          type: 'tool',
+          toolName: 'run-workspace-command',
+          input: { executable: 'npm', args: ['install'], purpose: 'dependency' },
+          reason: 'Reconcile the declared dependency state.',
+        },
+        { type: 'complete', summary: 'Dependency state reconciled.' },
+      ]),
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Repair dependency state');
+
+    expect(result.status).toBe('completed');
+    expect(executions).toBe(1);
+    expect(approvalRequests).toEqual(['npm install']);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'session.status',
+          data: { status: 'waiting-permission' },
+        }),
+        expect.objectContaining({ type: 'tool.approval.requested' }),
+        expect.objectContaining({
+          type: 'tool.approval.approved',
+          data: expect.objectContaining({ execution: 'once' }),
+        }),
+        expect.objectContaining({
+          type: 'tool.started',
+          data: expect.objectContaining({ approvedBy: 'test:explicit-user' }),
+        }),
+      ])
+    );
+  });
+
+  it('rejects completion until every approved non-source effect domain is observed', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'run-workspace-command',
+      title: 'Run workspace command',
+      description: 'Run or observe an exact structured command.',
+      inputSchema: { type: 'object' },
+      activity: 'change',
+      risk: 'guarded-write',
+      authorize(raw) {
+        const action = (raw as { action?: string }).action;
+        return action === 'push'
+          ? {
+              risk: 'invasive' as const,
+              approval: {
+                fingerprint: 'c'.repeat(64),
+                title: 'Approve Git push',
+                summary: 'This command changes repository metadata and a remote.',
+                displayCommand: 'git push origin main',
+                scope: 'workspace' as const,
+                reasons: ['Git repository and remote effects require observation.'],
+                execution: 'once' as const,
+              },
+            }
+          : { risk: 'guarded-write' as const };
+      },
+      async execute(raw) {
+        const action = (raw as { action?: string }).action;
+        if (action === 'push') {
+          return {
+            ok: true,
+            output: {
+              observationScopes: ['git-repository'],
+              effects: { verificationScopes: ['git-repository', 'git-remote'] },
+            },
+          };
+        }
+        return {
+          ok: true,
+          output: {
+            observationScopes:
+              action === 'status' ? ['git-repository'] : ['git-repository', 'git-remote'],
+            effects: { verificationScopes: [] },
+          },
+        };
+      },
+    });
+    const session = new StudioAgentSession(
+      {
+        id: 'external-effect-observation-session',
+        workspacePath: '/workspace',
+        cardId: 'assistant:agent',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        requiresVerifiedCompletion: false,
+        async requestToolApproval(request) {
+          return {
+            approved: true,
+            fingerprint: request.fingerprint,
+            approvedBy: 'test:explicit-user',
+          };
+        },
+      },
+      sequenceModel([
+        {
+          type: 'tool',
+          toolName: 'run-workspace-command',
+          input: { action: 'push' },
+          reason: 'Publish the approved repository state.',
+        },
+        { type: 'complete', summary: 'Push completed.' },
+        {
+          type: 'tool',
+          toolName: 'run-workspace-command',
+          input: { action: 'status' },
+          reason: 'Observe the local repository state.',
+        },
+        { type: 'complete', summary: 'Local state is clean.' },
+        {
+          type: 'tool',
+          toolName: 'run-workspace-command',
+          input: { action: 'ls-remote' },
+          reason: 'Observe the remote repository state.',
+        },
+        { type: 'complete', summary: 'Local and remote Git state were observed.' },
+      ]),
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Push the verified change');
+
+    expect(result.status).toBe('completed');
+    const completionCheckpoints = result.events.filter(
+      (event) =>
+        event.type === 'model.checkpoint' &&
+        String((event.data as Record<string, unknown>).recovery) === 'completion-contract'
+    );
+    expect(completionCheckpoints).toHaveLength(2);
+    expect(JSON.stringify(completionCheckpoints[0])).toContain('git-remote');
+    expect(JSON.stringify(completionCheckpoints[0])).toContain('git-repository');
+    expect(JSON.stringify(completionCheckpoints[1])).toContain('git-remote');
+    expect(JSON.stringify(completionCheckpoints[1])).not.toContain('git-repository');
+  });
+
+  it('preserves non-source observation obligations across a durable session resume', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'run-workspace-command',
+      title: 'Run workspace command',
+      description: 'Observe an exact external effect domain.',
+      inputSchema: { type: 'object' },
+      activity: 'inspect',
+      risk: 'read',
+      async execute() {
+        return {
+          ok: true,
+          output: {
+            observationScopes: ['git-remote'],
+            effects: { verificationScopes: [] },
+          },
+        };
+      },
+    });
+    const restoredSession: StudioAgentPersistedSession = {
+      schemaVersion: 'workspai.studio-agent-session.v1',
+      id: 'restored-effect-observation-session',
+      workspacePath: '/workspace',
+      cardId: 'assistant:agent',
+      assistantMode: 'agent',
+      status: 'waiting-input',
+      pendingEffectVerificationScopes: ['git-remote'],
+      createdAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:00.000Z',
+      sequence: 0,
+      events: [],
+    };
+    const session = new StudioAgentSession(
+      {
+        id: restoredSession.id,
+        workspacePath: restoredSession.workspacePath,
+        cardId: restoredSession.cardId,
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        requiresVerifiedCompletion: false,
+        restoredSession,
+      },
+      sequenceModel([
+        { type: 'complete', summary: 'The external effect is complete.' },
+        {
+          type: 'tool',
+          toolName: 'run-workspace-command',
+          input: { executable: 'git', args: ['ls-remote'] },
+          reason: 'Observe the durable remote effect before closure.',
+        },
+        { type: 'complete', summary: 'The external effect was observed.' },
+      ]),
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Resume the approved external operation');
+
+    expect(result.status).toBe('completed');
+    expect(result.pendingEffectVerificationScopes).toBeUndefined();
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'model.checkpoint',
+          data: expect.objectContaining({ recovery: 'completion-contract' }),
+        }),
+      ])
+    );
+  });
+
+  it('resumes a durable exact remediation continuation without rerunning discovery', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'execute-remediation-step',
+      title: 'Execute remediation step',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(input) {
+        expect(input).toEqual({ stepId: 'doctor.persisted-action' });
+        return closedCliRepairResult({ transactionId: 'repair-persisted-action' });
+      },
+    });
+    const restoredSession: StudioAgentPersistedSession = {
+      schemaVersion: 'workspai.studio-agent-session.v1',
+      id: 'restored-required-action-session',
+      workspacePath: '/workspace',
+      cardId: 'doctor',
+      assistantMode: 'agent',
+      status: 'failed',
+      pendingRequiredCausalAction: {
+        schemaVersion: 'workspai.studio-required-causal-action.v1',
+        authority: 'workspai-cli-remediation-plan',
+        toolName: 'execute-remediation-step',
+        input: { stepId: 'doctor.persisted-action' },
+        stepId: 'doctor.persisted-action',
+        executionKind: 'contract-command',
+        requiresApproval: false,
+        reason: 'Resume the exact fresh CLI action.',
+        evidenceGeneration: 'doctor-plan-persisted',
+      },
+      createdAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:00.000Z',
+      sequence: 0,
+      events: [],
+    };
+    let modelTurns = 0;
+    const session = new StudioAgentSession(
+      {
+        id: restoredSession.id,
+        workspacePath: restoredSession.workspacePath,
+        cardId: restoredSession.cardId,
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        restoredSession,
+      },
+      {
+        async next(context) {
+          modelTurns += 1;
+          expect(context.tools.map((tool) => tool.name)).toEqual(['execute-remediation-step']);
+          expect(context.requiredCausalAction?.stepId).toBe('doctor.persisted-action');
+          return {
+            type: 'tool',
+            toolName: 'execute-remediation-step',
+            input: { stepId: 'doctor.persisted-action' },
+            reason: 'Resume the exact action.',
+          };
+        },
+      },
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Resume the Doctor repair');
+
+    expect(result.status).toBe('completed');
+    expect(modelTurns).toBe(1);
+    expect(
+      result.events
+        .filter((event) => event.type === 'tool.requested')
+        .map((event) => (event.data as { toolName?: string }).toolName)
+    ).toEqual(['execute-remediation-step']);
+  });
+
+  it('does not execute an invasive tool when the exact command is declined', async () => {
+    const registry = new StudioAgentToolRegistry();
+    let executions = 0;
+    registry.register({
+      name: 'run-workspace-command',
+      title: 'Run workspace command',
+      activity: 'change',
+      risk: 'guarded-write',
+      authorize() {
+        return {
+          risk: 'invasive',
+          approval: {
+            fingerprint: 'b'.repeat(64),
+            title: 'Approve exact workspace command',
+            summary: 'This command may update dependency state.',
+            displayCommand: 'npm install',
+            scope: 'workspace',
+            reasons: ['Source mutation is expected.'],
+            execution: 'once',
+          },
+        };
+      },
+      async execute() {
+        executions += 1;
+        return { ok: true };
+      },
+    });
+    const session = new StudioAgentSession(
+      {
+        id: 'declined-command-approval-session',
+        workspacePath: '/workspace',
+        cardId: 'assistant:agent',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        requiresVerifiedCompletion: false,
+        async requestToolApproval(request) {
+          return { approved: false, fingerprint: request.fingerprint };
+        },
+      },
+      sequenceModel([
+        {
+          type: 'tool',
+          toolName: 'run-workspace-command',
+          input: { executable: 'npm', args: ['install'], purpose: 'dependency' },
+          reason: 'Reconcile dependencies.',
+        },
+        { type: 'complete', summary: 'The user declined the proposed command.' },
+      ]),
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Repair dependency state');
+
+    expect(result.status).toBe('completed');
+    expect(executions).toBe(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.approval.rejected',
+        data: expect.objectContaining({ terminalReason: 'approval-rejected' }),
+      })
+    );
+  });
+
   it('waits on an explicit input action and resumes from user steering', async () => {
     const session = new StudioAgentSession(
       {
@@ -350,6 +756,465 @@ describe('Studio Agent session runtime', () => {
     );
   });
 
+  it('stops immediately on a typed environment prerequisite instead of entering recovery loops', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'recover-active-blocker',
+      title: 'Resolve active blocker',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return {
+          ok: false,
+          changed: false,
+          cardBlocking: true,
+          requiresUserDecision: false,
+          terminalReason: 'environment-prerequisite-required',
+          output: {
+            recoveryPath: 'contract-prerequisite',
+            nextAction: 'environment-change-and-fresh-plan',
+            missingExecutable: 'go',
+          },
+          error: 'Required repair executable is unavailable: go (nova-api).',
+        };
+      },
+    });
+    let modelTurns = 0;
+    const session = new StudioAgentSession(
+      {
+        id: 'environment-prerequisite-session',
+        workspacePath: '/workspace',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        blockerSignature: 'doctor-go-v1',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      {
+        async next() {
+          modelTurns += 1;
+          return { type: 'complete', summary: 'must not be called' };
+        },
+      },
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Fix Workspace Doctor');
+
+    expect(result.status).toBe('failed');
+    expect(modelTurns).toBe(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.failed',
+        data: expect.objectContaining({
+          terminalReason: 'environment-prerequisite-required',
+          requiresUserDecision: false,
+          error: 'Required repair executable is unavailable: go (nova-api).',
+        }),
+      })
+    );
+  });
+
+  it('constrains the next model turn to the exact fresh CLI remediation action', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'recover-active-blocker',
+      title: 'Prepare blocker recovery',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return {
+          ok: true,
+          changed: false,
+          evidenceGeneration: 'doctor-plan-v3',
+          blockerSignature: 'doctor-blocker-v3',
+          output: {
+            recoveryPath: 'contract-remediation-action',
+            nextAction: 'execute-remediation-step',
+            requiredAction: {
+              schemaVersion: 'workspai.studio-required-causal-action.v1',
+              authority: 'workspai-cli-remediation-plan',
+              toolName: 'execute-remediation-step',
+              input: { stepId: 'doctor.service.materialize-dependencies' },
+              stepId: 'doctor.service.materialize-dependencies',
+              executionKind: 'contract-command',
+              requiresApproval: false,
+              reason: 'Fresh CLI plan selected this action.',
+            },
+          },
+        };
+      },
+    });
+    registry.register({
+      name: 'inspect-evidence',
+      title: 'Inspect evidence',
+      activity: 'inspect',
+      risk: 'read',
+      async execute() {
+        throw new Error('Exact remediation must not reopen inspection.');
+      },
+    });
+    registry.register({
+      name: 'execute-remediation-step',
+      title: 'Execute remediation step',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(input) {
+        expect(input).toEqual({ stepId: 'doctor.service.materialize-dependencies' });
+        return closedCliRepairResult({ transactionId: 'repair-exact-remediation' });
+      },
+    });
+    const store = new MemoryStore();
+    let modelTurns = 0;
+    const session = new StudioAgentSession(
+      {
+        id: 'exact-remediation-continuation',
+        workspacePath: '/workspace',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        blockerSignature: 'doctor-blocker-v2',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      {
+        async next(context) {
+          modelTurns += 1;
+          expect(context.tools.map((tool) => tool.name)).toEqual(['execute-remediation-step']);
+          expect(context.requiredCausalAction).toMatchObject({
+            stepId: 'doctor.service.materialize-dependencies',
+            evidenceGeneration: 'doctor-plan-v3',
+          });
+          return {
+            type: 'tool',
+            toolName: 'execute-remediation-step',
+            input: { stepId: 'doctor.service.materialize-dependencies' },
+            reason: 'Execute the exact CLI-selected action.',
+          };
+        },
+      },
+      registry,
+      store
+    );
+
+    const result = await session.run('Fix the active Doctor blocker');
+
+    expect(result.status).toBe('completed');
+    expect(modelTurns).toBe(1);
+    expect(result.pendingRequiredCausalAction).toBeUndefined();
+    expect(
+      store.saved.some(
+        (snapshot) =>
+          snapshot.pendingRequiredCausalAction?.stepId === 'doctor.service.materialize-dependencies'
+      )
+    ).toBe(true);
+    expect(
+      result.events
+        .filter((event) => event.type === 'tool.requested')
+        .map((event) => (event.data as { toolName?: string }).toolName)
+    ).toEqual(['recover-active-blocker', 'execute-remediation-step']);
+  });
+
+  it('binds required remediation approval to the exact durable action and resumes after rejection', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'recover-active-blocker',
+      title: 'Prepare blocker recovery',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return {
+          ok: true,
+          evidenceGeneration: 'doctor-plan-approval-v1',
+          blockerSignature: 'doctor-blocker-approval-v1',
+          output: {
+            requiredAction: {
+              schemaVersion: 'workspai.studio-required-causal-action.v1',
+              authority: 'workspai-cli-remediation-plan',
+              toolName: 'execute-remediation-step',
+              input: { stepId: 'doctor.gradle.materialize' },
+              stepId: 'doctor.gradle.materialize',
+              executionKind: 'contract-command',
+              requiresApproval: true,
+              reason: 'The fresh Doctor plan requires explicit approval.',
+            },
+          },
+        };
+      },
+    });
+    let executions = 0;
+    registry.register({
+      name: 'execute-remediation-step',
+      title: 'Execute remediation step',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(_input, context) {
+        executions += 1;
+        expect(context.approval?.approvedBy).toBe('test:explicit-remediation-approval');
+        return closedCliRepairResult({ transactionId: 'repair-approved-remediation' });
+      },
+    });
+    const store = new MemoryStore();
+    const exactActionModel = {
+      async next(context: Parameters<StudioAgentModelAdapter['next']>[0]) {
+        expect(context.requiredCausalAction?.stepId).toBe('doctor.gradle.materialize');
+        return {
+          type: 'tool' as const,
+          toolName: 'execute-remediation-step',
+          input: { stepId: 'doctor.gradle.materialize' },
+          reason: 'Execute the exact CLI remediation action.',
+        };
+      },
+    };
+    const first = new StudioAgentSession(
+      {
+        id: 'required-remediation-approval',
+        workspacePath: '/workspace',
+        projectPath: '/workspace/opensearch',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        async requestToolApproval(request) {
+          expect(request).toMatchObject({
+            toolName: 'execute-remediation-step',
+            displayCommand: 'Workspai remediation action: doctor.gradle.materialize',
+            scope: 'project',
+            execution: 'once',
+            allowedExecutions: ['once'],
+          });
+          expect(request.fingerprint).toHaveLength(64);
+          return {
+            approved: false,
+            fingerprint: request.fingerprint,
+            approvedBy: 'test:user-declined',
+          };
+        },
+      },
+      exactActionModel,
+      registry,
+      store
+    );
+
+    const rejected = await first.run('Repair the Doctor blocker');
+    expect(rejected.status).toBe('failed');
+    expect(rejected.pendingRequiredCausalAction?.stepId).toBe('doctor.gradle.materialize');
+    expect(executions).toBe(0);
+    expect(
+      rejected.events.some(
+        (event) =>
+          event.type === 'tool.started' &&
+          (event.data as { toolName?: string }).toolName === 'execute-remediation-step'
+      )
+    ).toBe(false);
+
+    const resumed = new StudioAgentSession(
+      {
+        id: rejected.id,
+        workspacePath: rejected.workspacePath,
+        projectPath: '/workspace/opensearch',
+        cardId: rejected.cardId,
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+        restoredSession: rejected,
+        async requestToolApproval(request) {
+          return {
+            approved: true,
+            fingerprint: request.fingerprint,
+            approvedBy: 'test:explicit-remediation-approval',
+          };
+        },
+      },
+      exactActionModel,
+      registry,
+      store
+    );
+
+    const completed = await resumed.run('Resume the exact approved action');
+    expect(completed.status).toBe('completed');
+    expect(completed.pendingRequiredCausalAction).toBeUndefined();
+    expect(executions).toBe(1);
+  });
+
+  it('rejects renewed inspection while an exact CLI action is pending', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'recover-active-blocker',
+      title: 'Prepare blocker recovery',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return {
+          ok: true,
+          output: {
+            requiredAction: {
+              schemaVersion: 'workspai.studio-required-causal-action.v1',
+              authority: 'workspai-cli-remediation-plan',
+              toolName: 'execute-remediation-step',
+              input: { stepId: 'doctor.exact-action' },
+              stepId: 'doctor.exact-action',
+              executionKind: 'structured-operation',
+              requiresApproval: false,
+              reason: 'Use the exact operation.',
+            },
+          },
+        };
+      },
+    });
+    let inspections = 0;
+    registry.register({
+      name: 'inspect-evidence',
+      title: 'Inspect evidence',
+      activity: 'inspect',
+      risk: 'read',
+      async execute() {
+        inspections += 1;
+        return { ok: true };
+      },
+    });
+    registry.register({
+      name: 'execute-remediation-step',
+      title: 'Execute remediation step',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return closedCliRepairResult({ transactionId: 'repair-after-rejected-inspection' });
+      },
+    });
+    let turn = 0;
+    const session = new StudioAgentSession(
+      {
+        workspacePath: '/workspace',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      {
+        async next() {
+          turn += 1;
+          return turn === 1
+            ? {
+                type: 'tool',
+                toolName: 'inspect-evidence',
+                input: {},
+                reason: 'Try to inspect again.',
+              }
+            : {
+                type: 'tool',
+                toolName: 'execute-remediation-step',
+                input: { stepId: 'doctor.exact-action' },
+                reason: 'Execute the exact action.',
+              };
+        },
+      },
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Repair Doctor');
+
+    expect(result.status).toBe('completed');
+    expect(inspections).toBe(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'model.checkpoint',
+        data: expect.objectContaining({ recovery: 'required-causal-action-enforced' }),
+      })
+    );
+  });
+
+  it('widens from a failed exact action using its failure evidence without retrying it', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'recover-active-blocker',
+      title: 'Prepare blocker recovery',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return {
+          ok: true,
+          output: {
+            requiredAction: {
+              schemaVersion: 'workspai.studio-required-causal-action.v1',
+              authority: 'workspai-cli-remediation-plan',
+              toolName: 'execute-remediation-step',
+              input: { stepId: 'doctor.failed-action' },
+              stepId: 'doctor.failed-action',
+              executionKind: 'contract-command',
+              requiresApproval: false,
+              reason: 'Use the exact command.',
+            },
+          },
+        };
+      },
+    });
+    let exactAttempts = 0;
+    registry.register({
+      name: 'execute-remediation-step',
+      title: 'Execute remediation step',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        exactAttempts += 1;
+        return { ok: false, changed: false, error: 'The project-native command failed.' };
+      },
+    });
+    registry.register({
+      name: 'apply-workspace-patch',
+      title: 'Apply source repair',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return closedCliRepairResult({ transactionId: 'repair-general-fallback' });
+      },
+    });
+    let turn = 0;
+    const session = new StudioAgentSession(
+      {
+        workspacePath: '/workspace',
+        cardId: 'doctor',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      {
+        async next(context) {
+          turn += 1;
+          if (turn === 1) {
+            expect(context.tools.map((tool) => tool.name)).toEqual(['execute-remediation-step']);
+            return {
+              type: 'tool',
+              toolName: 'execute-remediation-step',
+              input: { stepId: 'doctor.failed-action' },
+              reason: 'Execute the exact action.',
+            };
+          }
+          expect(context.requiredCausalAction).toBeUndefined();
+          expect(context.sourceRepairDirective).toMatchObject({
+            recoveryPath: 'required-remediation-action-failed',
+          });
+          expect(context.tools.map((tool) => tool.name)).toContain('apply-workspace-patch');
+          return {
+            type: 'tool',
+            toolName: 'apply-workspace-patch',
+            input: { patches: [] },
+            reason: 'Use the exact failure evidence to select a different causal repair.',
+          };
+        },
+      },
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Repair Doctor');
+
+    expect(result.status).toBe('completed');
+    expect(exactAttempts).toBe(1);
+    expect(turn).toBe(2);
+  });
+
   it('refreshes producer-owned cards through their exact producer without a model decision', async () => {
     const registry = new StudioAgentToolRegistry();
     registry.register({
@@ -438,7 +1303,7 @@ describe('Studio Agent session runtime', () => {
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: 'model.checkpoint',
-        data: expect.objectContaining({ recovery: 'producer-to-source-repair' }),
+        data: expect.objectContaining({ recovery: 'producer-to-causal-recovery' }),
       })
     );
   });
@@ -2497,7 +3362,7 @@ describe('Studio Agent session runtime', () => {
       expect.objectContaining({
         type: 'session.failed',
         data: expect.objectContaining({
-          terminalReason: 'causal-source-progress-exhausted',
+          terminalReason: 'model-causal-progress-exhausted',
           requiresUserDecision: false,
         }),
       })
@@ -2792,14 +3657,14 @@ describe('Studio Agent session runtime', () => {
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: 'model.checkpoint',
-        data: expect.objectContaining({ recovery: 'provider-to-source-repair' }),
+        data: expect.objectContaining({ recovery: 'provider-to-causal-recovery' }),
       })
     );
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: 'session.failed',
         data: expect.objectContaining({
-          terminalReason: 'model-source-progress-exhausted',
+          terminalReason: 'model-causal-progress-exhausted',
           requiresUserDecision: false,
         }),
       })
@@ -3132,10 +3997,9 @@ describe('Studio Agent session runtime', () => {
             nextAction: 'general-source-repair',
             unresolvedProjects: ['polyglot-api', 'polyglot-app'],
           });
-          expect(context.tools.map((tool) => tool.name)).toEqual([
-            'inspect-source',
-            'apply-workspace-patch',
-          ]);
+          expect(context.tools.map((tool) => tool.name)).toEqual(
+            expect.arrayContaining(['inspect-source', 'apply-workspace-patch'])
+          );
           return {
             type: 'tool',
             toolName: 'apply-workspace-patch',
@@ -3165,6 +4029,105 @@ describe('Studio Agent session runtime', () => {
       expect.objectContaining({
         type: 'tool.requested',
         data: expect.objectContaining({ toolName: 'inspect-remediation-plan' }),
+      })
+    );
+  });
+
+  it('lets the model choose an arbitrary causal build command and verifies it without requiring a source mutation', async () => {
+    const registry = new StudioAgentToolRegistry();
+    registry.register({
+      name: 'recover-active-blocker',
+      title: 'Resolve active blocker',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute() {
+        return {
+          ok: false,
+          changed: false,
+          output: {
+            recoveryPath: 'general-source-repair',
+            nextAction: 'model-select-causal-capability',
+            recommendedTools: ['run-workspace-command'],
+          },
+          error: 'Select a causal capability from the blocker evidence.',
+        };
+      },
+    });
+    let commandRuns = 0;
+    registry.register({
+      name: 'run-workspace-command',
+      title: 'Run workspace command',
+      activity: 'change',
+      risk: 'guarded-write',
+      async execute(input) {
+        commandRuns += 1;
+        expect(input).toMatchObject({
+          executable: 'project-validator',
+          args: ['refresh'],
+          cwd: '.',
+          purpose: 'build',
+        });
+        return { ok: true, changed: false, output: { exitCode: 0, purpose: 'build' } };
+      },
+    });
+    let verificationRuns = 0;
+    registry.register({
+      name: 'verify-blocker',
+      title: 'Verify blocker',
+      activity: 'verify',
+      risk: 'read',
+      async execute() {
+        verificationRuns += 1;
+        return { ok: true, cardBlocking: false, blockerSignature: 'resolved' };
+      },
+    });
+    let modelTurns = 0;
+    const session = new StudioAgentSession(
+      {
+        id: 'causal-command-repair-session',
+        workspacePath: '/workspace',
+        projectPath: '/linked/grpc',
+        cardId: 'workspaceRun',
+        assistantMode: 'agent',
+        permissionLevel: 'autopilot',
+        workspaceTrusted: true,
+      },
+      {
+        async next(context) {
+          modelTurns += 1;
+          expect(context.sourceRepairDirective).toMatchObject({
+            nextAction: 'model-select-causal-capability',
+          });
+          expect(context.tools.map((tool) => tool.name)).toEqual(
+            expect.arrayContaining(['run-workspace-command', 'verify-blocker'])
+          );
+          return {
+            type: 'tool',
+            toolName: 'run-workspace-command',
+            input: {
+              executable: 'project-validator',
+              args: ['refresh'],
+              cwd: '.',
+              purpose: 'build',
+            },
+            reason: 'Execute the evidence-backed project-native recovery.',
+          };
+        },
+      },
+      registry,
+      new MemoryStore()
+    );
+
+    const result = await session.run('Resolve the project-native runtime blocker');
+
+    expect(result.status).toBe('completed');
+    expect(modelTurns).toBe(1);
+    expect(commandRuns).toBe(1);
+    expect(verificationRuns).toBe(1);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: 'model.checkpoint',
+        data: expect.objectContaining({ recovery: 'causal-command-verification' }),
       })
     );
   });
@@ -3240,7 +4203,8 @@ describe('Studio Agent session runtime', () => {
         async next(context) {
           modelTurns += 1;
           if (context.sourceActionRequired) {
-            expect(context.tools.map((tool) => tool.name)).toEqual(['apply-workspace-patch']);
+            expect(context.tools.map((tool) => tool.name)).toContain('apply-workspace-patch');
+            expect(context.tools.map((tool) => tool.name)).not.toContain('inspect-source');
             return {
               type: 'tool',
               toolName: 'apply-workspace-patch',
@@ -3574,7 +4538,7 @@ describe('Studio Agent session runtime', () => {
             sourceCandidates: ['polyglot-app/package.json'],
             unresolvedProjects: ['polyglot-app'],
           });
-          expect(context.tools.map((tool) => tool.name)).toEqual(['apply-workspace-patch']);
+          expect(context.tools.map((tool) => tool.name)).toContain('apply-workspace-patch');
           return {
             type: 'tool',
             toolName: 'apply-workspace-patch',
@@ -4577,7 +5541,7 @@ describe('Studio Agent session runtime', () => {
     expect(correlatedEvents.every((event) => event.toolCallId === 'provider-call-17')).toBe(true);
   });
 
-  it('keeps a repeated controller-owned evidence command inside the source-repair loop', async () => {
+  it('returns a misrouted governed command to the model without encoding producer errors in the session controller', async () => {
     const registry = new StudioAgentToolRegistry();
     registry.register({
       name: 'recover-active-blocker',
@@ -4612,7 +5576,10 @@ describe('Studio Agent session runtime', () => {
       activity: 'change',
       risk: 'guarded-write',
       async execute() {
-        throw new Error('The phase policy must reject this command before execution.');
+        return {
+          ok: false,
+          error: 'Workspai commands use run-governed-command.',
+        };
       },
     });
     registry.register({
@@ -4640,7 +5607,7 @@ describe('Studio Agent session runtime', () => {
       {
         async next(context) {
           modelTurns += 1;
-          if (context.sourceActionRequired) {
+          if (modelTurns > 1) {
             return {
               type: 'tool',
               toolName: 'apply-workspace-patch',
@@ -4662,7 +5629,7 @@ describe('Studio Agent session runtime', () => {
             input: {
               executable: 'npx',
               args: ['--no-install', 'workspai', 'doctor', 'workspace', '--json'],
-              cwd: modelTurns === 1 ? '.' : 'atlas-api',
+              cwd: '.',
               purpose: 'inspect',
             },
             reason: 'Refresh Doctor evidence.',
@@ -4676,16 +5643,13 @@ describe('Studio Agent session runtime', () => {
     const result = await session.run('Repair the Doctor blocker');
 
     expect(result.status).toBe('completed');
-    expect(modelTurns).toBe(3);
+    expect(modelTurns).toBe(2);
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: 'tool.failed',
         data: expect.objectContaining({
-          policyRejected: true,
-          repeatedPolicyRejection: true,
-          output: expect.objectContaining({
-            nextAction: 'causal-source-change-required',
-          }),
+          toolName: 'run-workspace-command',
+          error: 'Workspai commands use run-governed-command.',
         }),
       })
     );

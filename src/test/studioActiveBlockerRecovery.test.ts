@@ -513,4 +513,69 @@ describe('Studio active blocker recovery', () => {
     });
     expect(result.error).toContain('Continue through the general source-repair plane');
   });
+
+  it('honors a CLI 0.72 environment prerequisite without retrying a blocked runtime action', async () => {
+    const executeRemediationStep = vi.fn(async () => ({ ok: true, changed: true }));
+    const inspectRemediationPlan = vi.fn(async () => ({
+      ok: true,
+      output: {
+        execution: {
+          nextActionId: 'environment.runtime.go',
+          eligibleActionIds: [],
+          blockedActionIds: ['doctor.api.dependencies'],
+        },
+        steps: [
+          {
+            id: 'environment.runtime.go',
+            order: 1,
+            risk: 'safe',
+            studioState: 'guidance-only',
+            executable: false,
+            blockedReason: 'The required executable go is unavailable.',
+            requirements: [
+              {
+                kind: 'executable',
+                id: 'executable:go',
+                status: 'missing',
+                executable: 'go',
+                message: 'Install or configure Go.',
+              },
+            ],
+            retryPolicy: { sameGeneration: 'forbidden', resumeWhen: 'environment-changed' },
+          },
+          {
+            id: 'doctor.api.dependencies',
+            order: 2,
+            risk: 'guarded',
+            studioState: 'blocked',
+            executable: true,
+            dependsOn: ['environment.runtime.go'],
+          },
+        ],
+      },
+    }));
+
+    const result = await runStudioActiveBlockerRecovery({
+      blockers: ['api: Go dependencies are not downloaded (go.sum missing)'],
+      dependencyProjectNames: ['api'],
+      evidenceGeneration: 'doctor-go-v1',
+      workspacePath: '/workspace',
+      host: host({ inspectRemediationPlan, executeRemediationStep }),
+    });
+
+    expect(executeRemediationStep).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      changed: false,
+      requiresUserDecision: false,
+      terminalReason: 'environment-prerequisite-required',
+      output: {
+        recoveryPath: 'contract-prerequisite',
+        nextAction: 'environment-change-and-fresh-plan',
+        requiredActionId: 'environment.runtime.go',
+        retryPolicy: { sameGeneration: 'forbidden', resumeWhen: 'environment-changed' },
+      },
+      error: 'The required executable go is unavailable.',
+    });
+  });
 });

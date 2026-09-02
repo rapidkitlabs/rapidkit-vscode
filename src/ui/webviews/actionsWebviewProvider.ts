@@ -96,8 +96,14 @@ import {
   type StudioBlockerHandoff,
 } from '../../contracts/studio-blocker-handoff-contract.js';
 import { buildStudioBlockerHandoff } from '../../core/studioBlockerHandoffBuilder.js';
+import { isRegisteredWorkspaceProjectPath } from '../../core/workspaceModelReader.js';
 import { recordStudioBlockerCommandRun } from '../../core/studioBlockerCommandLedger.js';
 import { runRapidkitStreaming } from '../../core/streamingRapidkitRunner.js';
+import { buildWorkspaceGraphSearchCommand } from '../../core/workspaceGraphSearchCommand.js';
+import {
+  studioProofEffectClassesForCommand,
+  StudioProofCarryingChangeSession,
+} from '../../core/studioProofCarryingChange.js';
 import { gateIncidentStudioRapidkitCommand } from '../../core/rapidkitEnterpriseCliGate.js';
 import { normalizeBootstrapComplianceCommand } from '../../core/bootstrapComplianceRemediation.js';
 import {
@@ -136,6 +142,7 @@ import {
 } from '../../core/doctorRemediationPlanReader.js';
 import {
   ensureStudioRemediationRecovery,
+  selectStudioRemediationEnvironmentPrerequisite,
   selectStudioRemediationRecoveryStep,
 } from '../../core/studioRemediationRecovery.js';
 import { resolveDashboardCommandContractByVscodeCommand } from '../../core/dashboardCommandContracts.js';
@@ -149,6 +156,7 @@ import {
 import { collectSidebarStudioRepairEvidence } from '../../core/sidebarStudioPatchBridge.js';
 import type { StudioEvidenceRefreshCommandId } from '../../core/sidebarStudioAgentRuntime.js';
 import { resolveStudioCausalProducerRoute } from '../../core/studioCausalProducerRouter.js';
+import { buildStudioCausalRecoveryBriefing } from '../../core/studioCausalRecoveryBriefing.js';
 import { normalizePatchesForWorkspaceScope, type FilePatch } from '../../core/patchApplyEngine.js';
 import {
   clearSidebarPendingPatches,
@@ -205,24 +213,32 @@ import {
 } from '../../core/studioRepairReceipt.js';
 import { VSCodeStudioAgentSessionStore } from '../../core/studioAgentSessionStore.js';
 import { ContractStudioAgentModelAdapter } from '../../core/studioAgentModelProtocol.js';
+import type {
+  StudioAgentApprovalExecution,
+  StudioAgentToolApprovalGrant,
+  StudioAgentToolApprovalDecision,
+  StudioAgentToolApprovalRequest,
+} from '../../core/studioAgentToolRegistry.js';
 import {
   createStudioAgentWorkspaiToolRegistry,
   type StudioAgentWorkspaiToolHost,
 } from '../../core/studioAgentWorkspaiTools.js';
 import { inspectStudioAgentFiles } from '../../core/sidebarStudioAgentRuntime.js';
 import {
-  describeStudioWorkspaceCommandFailure,
   resolveStudioWorkspaceCommandPlan,
-  runStudioWorkspaceCommand,
   type StudioWorkspaceCommandRequest,
 } from '../../core/studioWorkspaceCommand.js';
+import { executeStudioWorkspaceCommandTransaction } from '../../core/studioWorkspaceCommandTransaction.js';
+import {
+  requestVSCodeProofCarryingChangeResume,
+  requestStudioToolApproval,
+} from '../../core/studioToolApproval.js';
+import { runStudioCodeIntelligenceTool } from '../../core/studioCodeIntelligence.js';
 import {
   discoverStudioWorkspaceFiles,
-  fingerprintStudioWorkspaceSourceState,
   inspectStudioWorkspaceChanges,
   inspectStudioWorkspaceDiagnostics,
   searchStudioWorkspaceSource,
-  STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
 } from '../../core/studioWorkspaceInspection.js';
 import {
   decideCliOwnedRepair,
@@ -242,7 +258,10 @@ import {
   compileInspectedStudioDeletePatches,
   compileInspectedStudioTextEdits,
 } from '../../core/studioWorkspaceFileTransactions.js';
-import { resolveStudioRepairProjectTarget } from '../../core/studioRepairProjectTarget.js';
+import {
+  resolveStudioRepairGoalScope,
+  resolveStudioRepairProjectTarget,
+} from '../../core/studioRepairProjectTarget.js';
 import {
   deduplicateStudioMessage,
   describeStudioRepairOutcome,
@@ -925,6 +944,14 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
   private _studioEvidenceChangedPaths = new Set<string>();
   private readonly _activeStudioAgentSessions = new Map<string, StudioAgentSession>();
   private readonly _activeStudioAgentRepairRuns = new Map<string, Promise<void>>();
+  private readonly _pendingStudioToolApprovals = new Map<
+    string,
+    {
+      id: symbol;
+      request: StudioAgentToolApprovalRequest;
+      resolve: (execution: StudioAgentApprovalExecution | undefined) => void;
+    }
+  >();
   private readonly _createPlanApprovals = new CreatePlanApprovalStore<AICreationPlan>();
   private readonly _activeCreatePlanningTokens = new Map<string, vscode.CancellationTokenSource>();
 
@@ -957,6 +984,12 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((rawMessage) => {
       void dispatchActionsWebviewMessage(this._actionsWebviewMessageDispatchHost(), rawMessage);
     });
+    webviewView.onDidDispose(() => {
+      if (this._view === webviewView) {
+        this._view = undefined;
+      }
+      this._cancelPendingStudioToolApprovals();
+    });
   }
 
   private _actionsWebviewMessageDispatchHost(): ActionsWebviewMessageDispatchHost {
@@ -971,6 +1004,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       runSidebarAdvisorAction: (data) => this._runSidebarAdvisorAction(data),
       runInlineStudioQuery: (data) => this._runInlineStudioQuery(data),
       runSidebarStudioAction: (data) => this._runSidebarStudioAction(data),
+      resolveStudioToolApproval: (data) => this._resolveStudioToolApproval(data),
       focusPrimarySidebarView: (data) => this._focusPrimarySidebarView(data),
       openDashboardSection: (data) => this._openDashboardSection(data),
       openWorkspaceFile: (data) => this._openSidebarWorkspaceFile(data),
@@ -1320,6 +1354,80 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         source: 'workspai-secondary-sidebar',
         version: '1',
       })
+    );
+  }
+
+  private _studioToolApprovalKey(
+    request: Pick<StudioAgentToolApprovalRequest, 'sessionId' | 'toolCallId' | 'fingerprint'>
+  ): string {
+    return `${request.sessionId}:${request.toolCallId}:${request.fingerprint}`;
+  }
+
+  private _cancelPendingStudioToolApprovals(sessionId?: string): void {
+    for (const [key, pending] of this._pendingStudioToolApprovals) {
+      if (sessionId && pending.request.sessionId !== sessionId) {
+        continue;
+      }
+      this._pendingStudioToolApprovals.delete(key);
+      pending.resolve(undefined);
+    }
+  }
+
+  private async _requestInlineStudioToolApproval(
+    request: StudioAgentToolApprovalRequest
+  ): Promise<StudioAgentToolApprovalDecision> {
+    return requestStudioToolApproval(
+      request,
+      async (approvalRequest) => {
+        if (!this._view) {
+          return undefined;
+        }
+        const key = this._studioToolApprovalKey(approvalRequest);
+        const id = Symbol(key);
+        return new Promise<StudioAgentApprovalExecution | undefined>((resolve) => {
+          const existing = this._pendingStudioToolApprovals.get(key);
+          existing?.resolve(undefined);
+          this._pendingStudioToolApprovals.set(key, { id, request: approvalRequest, resolve });
+        }).finally(() => {
+          if (this._pendingStudioToolApprovals.get(key)?.id === id) {
+            this._pendingStudioToolApprovals.delete(key);
+          }
+        });
+      },
+      this._context?.workspaceState
+    );
+  }
+
+  private async _resolveStudioToolApproval(data: unknown): Promise<void> {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return;
+    }
+    const value = data as Record<string, unknown>;
+    const sessionId = typeof value.sessionId === 'string' ? value.sessionId.trim() : '';
+    const toolCallId = typeof value.toolCallId === 'string' ? value.toolCallId.trim() : '';
+    const fingerprint = typeof value.fingerprint === 'string' ? value.fingerprint.trim() : '';
+    if (!sessionId || !toolCallId || !fingerprint) {
+      return;
+    }
+    const key = this._studioToolApprovalKey({ sessionId, toolCallId, fingerprint });
+    const pending = this._pendingStudioToolApprovals.get(key);
+    if (!pending) {
+      this._postInlineCreate('sidebarStudioToolApprovalUnavailable', {
+        sessionId,
+        toolCallId,
+        fingerprint,
+        summary:
+          'This approval request is no longer active. Resume the session to obtain a fresh, exact request.',
+      });
+      return;
+    }
+    const requestedExecution =
+      value.approved === true && ['once', 'session', 'project'].includes(String(value.execution))
+        ? (String(value.execution) as StudioAgentApprovalExecution)
+        : undefined;
+    const allowed = pending.request.allowedExecutions ?? [pending.request.execution];
+    pending.resolve(
+      requestedExecution && allowed.includes(requestedExecution) ? requestedExecution : undefined
     );
   }
 
@@ -2914,7 +3022,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       goalMaxAttempts = restored.maxAttempts;
       goalAttemptsUsed = restored.attemptsUsed;
     }
-    if (input.assistantMode === 'goal' && !governedGoal) {
+    if ((input.assistantMode === 'goal' || input.assistantMode === 'agent') && !governedGoal) {
       const projectName = resolveStudioRepairProjectTarget({
         explicitProjectName: input.projectName,
         affectedProjectNames: input.handoff?.affectedProjectNames,
@@ -2923,7 +3031,12 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       const prepared = await prepareGovernedGoalSession({
         workspacePath: input.workspacePath,
         objective: intentRoute?.normalizedRequest ?? input.task,
-        ...(input.projectPath && projectName ? { projectName } : {}),
+        scope: resolveStudioRepairGoalScope({
+          handoffScope: input.handoff?.scope ?? (input.projectPath ? 'project' : 'workspace'),
+          affectedProjectNames: input.handoff?.affectedProjectNames,
+          explicitProjectName: projectName,
+          projectPath: input.projectPath,
+        }),
         selectScope: selectGovernedGoalScope,
         selectCoverageRuntime: selectGovernedGoalRuntime,
         onPhase: (label) =>
@@ -2947,6 +3060,19 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         : undefined;
     const effectiveProjectPath = input.projectPath ?? verifiedGoalProject?.path;
     const effectiveProjectName = input.projectName ?? verifiedGoalProject?.name;
+    if (mode.canMutateWorkspace && !governedGoalId) {
+      throw new Error(
+        'Mutation-capable Studio sessions require an active CLI Goal Pack before tools are exposed.'
+      );
+    }
+    const proofCarryingChange = governedGoalId
+      ? new StudioProofCarryingChangeSession({
+          workspacePath: input.workspacePath,
+          goalId: governedGoalId,
+          actorId: `vscode:${input.assistantMode}`,
+          requestResume: requestVSCodeProofCarryingChangeResume,
+        })
+      : undefined;
     if (effectiveProjectPath && !input.projectPath) {
       const projectBootstrap = await bootstrapProjectAgent({
         projectPath: effectiveProjectPath,
@@ -3100,11 +3226,16 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           workspacePath: input.workspacePath,
         }
       : undefined;
+    // A real card handoff is always more specific than the synthetic Goal
+    // prerequisite scope. Keep one identity for plan selection, execution,
+    // evidence refresh, and receipts so an exact action cannot be selected
+    // from one blocker and executed against another.
+    const activeRemediationHandoff = input.handoff ?? goalRemediationHandoff;
     const presentAssistantCliRepairResult = async (
       result: Awaited<ReturnType<typeof executeCliOwnedCanonicalRepair>>,
       request: { workspacePath: string; projectPath?: string }
     ) => {
-      const handoff = input.handoff ?? goalRemediationHandoff;
+      const handoff = activeRemediationHandoff;
       const repairEvidence = handoff
         ? await collectSidebarStudioRepairEvidence({
             workspacePath: request.workspacePath,
@@ -3127,6 +3258,76 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       });
     };
     const host: StudioAgentWorkspaiToolHost = {
+      // Only a real card handoff may select a deterministic remediation target.
+      // An arbitrary Goal's synthetic Doctor scope is useful for later plan
+      // inspection, but it is not exact enough to authorize a first-action
+      // shortcut from a workspace-wide queue.
+      recoverActiveBlocker: input.handoff
+        ? async (request) => {
+            const handoff = input.handoff!;
+            const [recovery, repairEvidence] = await Promise.all([
+              ensureStudioRemediationRecovery({
+                workspacePath: request.workspacePath,
+                handoff: {
+                  ...handoff,
+                  ...(request.projectPath ? { projectPath: request.projectPath } : {}),
+                },
+                projectPath: request.projectPath,
+                maxSteps: 64,
+                actionId: 'assistant-repair-plan-preflight',
+              }),
+              collectSidebarStudioRepairEvidence({
+                workspacePath: request.workspacePath,
+                projectPath: request.projectPath,
+                handoff,
+              }),
+            ]);
+            const step = selectStudioRemediationRecoveryStep(recovery.plan, handoff);
+            const environmentPrerequisite = selectStudioRemediationEnvironmentPrerequisite(
+              recovery.plan
+            );
+            const producerRoute = resolveStudioCausalProducerRoute(handoff);
+            return buildStudioCausalRecoveryBriefing({
+              blockers: handoff.blockers,
+              sourceCandidates: repairEvidence.autonomousTargetPaths,
+              evidenceGeneration: repairEvidence.evidenceFingerprint,
+              ...(producerRoute ? { producerRoute } : {}),
+              ...(environmentPrerequisite
+                ? {
+                    environmentPrerequisite: {
+                      id: environmentPrerequisite.id,
+                      summary:
+                        environmentPrerequisite.blockedReason ??
+                        environmentPrerequisite.previewSummary ??
+                        'A required runtime or executable is unavailable.',
+                      requirements: environmentPrerequisite.requirements,
+                      retryPolicy: environmentPrerequisite.retryPolicy,
+                    },
+                  }
+                : {}),
+              ...(step
+                ? {
+                    remediationStep: {
+                      id: step.id,
+                      ...(step.actionId ? { actionId: step.actionId } : {}),
+                      ...(step.projectName ? { projectName: step.projectName } : {}),
+                      ...(step.projectPath ? { projectPath: step.projectPath } : {}),
+                      risk: step.risk,
+                      canApply: step.canApply,
+                      executable: step.executable,
+                      executionKind: step.executionKind,
+                      executionReady: step.executionReady,
+                      requiresApproval: step.requiresApproval,
+                      files: step.files,
+                      ...(step.verifyCommand ? { verifyCommand: step.verifyCommand } : {}),
+                    },
+                  }
+                : {}),
+              remediationPlanRefreshed: recovery.refreshed,
+              ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
+            });
+          }
+        : undefined,
       discover: async (request: { workspacePath: string; glob?: string; limit?: number }) => ({
         ok: true,
         output: {
@@ -3175,18 +3376,21 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       }) => {
         return { ok: true, output: await searchStudioWorkspaceSource(request) };
       },
-      graphSearch: async (request: { query: string; limit?: number; workspacePath: string }) => {
+      graphSearch: async (request: {
+        query: string;
+        limit?: number;
+        workspacePath: string;
+        projectPath?: string;
+      }) => {
         const limit = Math.min(Math.max(Math.trunc(request.limit ?? 12), 1), 50);
         const execution = await runRapidkitStreaming<unknown>({
-          command: [
-            'workspace',
-            'graph',
-            'search',
-            request.query,
-            '--limit',
-            String(limit),
-            '--json',
-          ],
+          command: buildWorkspaceGraphSearchCommand({
+            query: request.query,
+            limit,
+            ...(request.projectPath
+              ? { scope: `project:${path.basename(request.projectPath)}` }
+              : {}),
+          }),
           cwd: request.workspacePath,
           featureLabel: 'Workspace graph retrieval',
           timeoutMs: 2 * 60_000,
@@ -3221,6 +3425,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           diagnostics: inspectStudioWorkspaceDiagnostics(request),
         },
       }),
+      codeIntelligence: runStudioCodeIntelligenceTool,
       inspectChanges: async (request: {
         paths?: string[];
         workspacePath: string;
@@ -3239,6 +3444,12 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         projectPath?: string;
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
+        if (!proofCarryingChange) {
+          return {
+            ok: false,
+            error: 'No Goal-bound Proof-Carrying Change session is available for mutation.',
+          };
+        }
         if (input.handoff?.selectedTarget?.sourceMutation === 'forbidden') {
           return {
             ok: false,
@@ -3292,6 +3503,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           projectPath: request.projectPath,
           actionLabel: 'Workspai Assistant inspected workspace patch',
         });
+        await proofCarryingChange.authorize(['filesystem'], `vscode:${input.assistantMode}`);
         const result = await executeCliOwnedPatchRepair({
           workspacePath: request.workspacePath,
           projectPath: request.projectPath ?? input.handoff?.selectedTarget?.projectPath,
@@ -3318,7 +3530,15 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             ? (progress: WorkspaceRepairProgress) => request.reportProgress!({ repair: progress })
             : undefined,
         });
-        return presentAssistantCliRepairResult(result, request);
+        const proof = await proofCarryingChange.recordRepairEffect({
+          result,
+          projectPath: request.projectPath,
+        });
+        const observation = await presentAssistantCliRepairResult(result, request);
+        return {
+          ...observation,
+          output: { ...observation.output, proofCarryingChange: proof },
+        };
       },
       applyTextEdits: async (request: {
         edits: Array<{ relativePath: string; oldText: string; newText: string }>;
@@ -3405,6 +3625,13 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           governedRepair: { contractAuthorized: true, reversible: true },
         });
         try {
+          if (!proofCarryingChange) {
+            return {
+              ok: false,
+              error: 'No Goal-bound Proof-Carrying Change session is available for deletion.',
+            };
+          }
+          await proofCarryingChange.authorize(['filesystem'], `vscode:${input.assistantMode}`);
           const result = await executeCliOwnedPatchRepair({
             workspacePath: request.workspacePath,
             projectPath: request.projectPath ?? input.handoff?.selectedTarget?.projectPath,
@@ -3430,7 +3657,15 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
               ? (progress: WorkspaceRepairProgress) => request.reportProgress!({ repair: progress })
               : undefined,
           });
-          return presentAssistantCliRepairResult(result, request);
+          const proof = await proofCarryingChange.recordRepairEffect({
+            result,
+            projectPath: request.projectPath,
+          });
+          const observation = await presentAssistantCliRepairResult(result, request);
+          return {
+            ...observation,
+            output: { ...observation.output, proofCarryingChange: proof },
+          };
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
         }
@@ -3441,7 +3676,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         projectPath?: string;
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
-        const governedHandoff = input.handoff ?? goalRemediationHandoff;
+        const governedHandoff = activeRemediationHandoff;
         const governedEvidence = governedHandoff
           ? await collectSidebarStudioRepairEvidence({
               workspacePath: request.workspacePath,
@@ -3578,8 +3813,17 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         request: StudioWorkspaceCommandRequest;
         workspacePath: string;
         projectPath?: string;
+        approval?: StudioAgentToolApprovalGrant;
+        signal?: AbortSignal;
+        reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
         try {
+          if (!proofCarryingChange) {
+            return {
+              ok: false,
+              error: 'No Goal-bound Proof-Carrying Change session is available for execution.',
+            };
+          }
           if (verifiedGoal) {
             assertVerifiedGoalCommandSafety({
               goal: verifiedGoal,
@@ -3587,76 +3831,60 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
               args: request.request.args,
             });
           }
-          const plan = resolveStudioWorkspaceCommandPlan({
+          const commandPlan = resolveStudioWorkspaceCommandPlan({
             workspacePath: request.workspacePath,
+            projectPath: request.projectPath,
             request: request.request,
           });
-          if (plan.mutatesSource) {
-            return {
-              ok: false,
-              error:
-                'Studio cannot execute mutating workspace commands directly. Submit a source proposal or start a CLI-owned repair transaction.',
-            };
+          const proofEffects = studioProofEffectClassesForCommand(commandPlan);
+          if (proofEffects.length > 0) {
+            await proofCarryingChange.authorize(
+              proofEffects,
+              request.approval?.approvedBy ?? `policy:vscode:${input.assistantMode}`
+            );
           }
-          const before = await fingerprintStudioWorkspaceSourceState({
+          const execution = await executeStudioWorkspaceCommandTransaction({
             workspacePath: request.workspacePath,
             projectPath: request.projectPath,
+            request: request.request,
+            approval: request.approval,
+            signal: request.signal,
+            reportProcessEvent: request.reportProgress
+              ? (event) => request.reportProgress!({ process: event })
+              : undefined,
+            isExpectedDiagnosticFindingExit,
           });
-          if (!before) {
-            return {
-              ok: false,
-              error: STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
-              terminalReason: 'workspace-command-fingerprint-unavailable',
-            };
-          }
-          const execution = await runStudioWorkspaceCommand(plan);
-          const after = await fingerprintStudioWorkspaceSourceState({
-            workspacePath: request.workspacePath,
-            projectPath: request.projectPath,
-          });
-          if (!after || after.fingerprint !== before.fingerprint) {
-            return {
-              ok: false,
-              changed: true,
-              error:
-                'The supposedly non-mutating workspace command changed source state. Studio stopped before using its result; review the worktree and move the change into a CLI-owned repair transaction.',
-              requiresUserDecision: true,
-              terminalReason: 'workspace-command-source-mutation-detected',
-              output: {
-                ...execution,
-                beforeFingerprint: before.fingerprint,
-                afterFingerprint: after?.fingerprint,
-                changedPaths: after?.status.split(/\r?\n/).filter(Boolean).slice(0, 100) ?? [],
-                observedSourceChange: true,
-                nextAction: 'review-required',
-                requiresUserDecision: true,
-              },
-            };
-          }
-          const diagnosticFindings = isExpectedDiagnosticFindingExit({
-            command: plan.displayCommand,
-            exitCode: execution.exitCode,
-            stdout: execution.stdout,
-            stderr: execution.stderr,
-          });
-          const commandObserved = execution.exitCode === 0 || diagnosticFindings;
+          const commandOutput = execution.output;
+          const observedEffect = Boolean(
+            commandOutput &&
+            !commandOutput.rollback &&
+            (commandOutput.effects.source ||
+              commandOutput.effects.repositoryMetadata ||
+              commandOutput.effects.externalSystem)
+          );
+          const proof =
+            commandOutput && observedEffect
+              ? await proofCarryingChange.recordCommandEffect({
+                  transactionId: commandOutput.transactionId,
+                  projectPath: request.projectPath,
+                  command: [request.request.executable, ...request.request.args],
+                  changedPaths: commandOutput.changedPaths,
+                  succeeded: execution.ok,
+                  effectClass: proofEffects[0],
+                  summary: execution.ok
+                    ? `Studio command completed: ${request.request.executable}.`
+                    : `Studio command failed: ${request.request.executable}.`,
+                })
+              : proofCarryingChange.activeChangeId
+                ? await proofCarryingChange.status()
+                : undefined;
           return {
-            ok: commandObserved,
-            changed: false,
-            output: {
-              ...execution,
-              ...(commandObserved
-                ? { diagnosticOutcome: diagnosticFindings ? 'findings' : 'clean' }
-                : {}),
-              changedPaths: [],
-              observedSourceChange: false,
-              sourceFingerprint: after.fingerprint,
-            },
-            ...(commandObserved
-              ? {}
-              : {
-                  error: describeStudioWorkspaceCommandFailure(execution),
-                }),
+            ...execution,
+            output: commandOutput
+              ? { ...commandOutput, ...(proof ? { proofCarryingChange: proof } : {}) }
+              : proof
+                ? { proofCarryingChange: proof }
+                : undefined,
           };
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -3670,12 +3898,20 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
         try {
+          if (!proofCarryingChange) {
+            return {
+              ok: false,
+              error:
+                'No Goal-bound Proof-Carrying Change session is available for dependency repair.',
+            };
+          }
           await this._assertSidebarStudioMutationAllowed({
             workspacePath: request.workspacePath,
             projectPath: request.projectPath,
             actionLabel: 'Workspai Assistant CLI-owned dependency repair',
             governedRepair: { contractAuthorized: true, reversible: true },
           });
+          await proofCarryingChange.authorize(['dependency'], `vscode:${input.assistantMode}`);
           const result = await executeCliOwnedCanonicalRepair({
             workspacePath: request.workspacePath,
             cardId: input.handoff?.cardId ?? 'doctor',
@@ -3690,13 +3926,22 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
               ? (progress: WorkspaceRepairProgress) => request.reportProgress!({ repair: progress })
               : undefined,
           });
-          return presentAssistantCliRepairResult(result, request);
+          const proof = await proofCarryingChange.recordRepairEffect({
+            result,
+            projectPath: request.projectPath,
+            effectClass: 'dependency',
+          });
+          const observation = await presentAssistantCliRepairResult(result, request);
+          return {
+            ...observation,
+            output: { ...observation.output, proofCarryingChange: proof },
+          };
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
         }
       },
       inspectRemediationPlan: async (request: { workspacePath: string; projectPath?: string }) => {
-        if (!goalRemediationHandoff) {
+        if (!activeRemediationHandoff) {
           return {
             ok: false,
             error: 'A blocker card or governed Goal is required to resolve a remediation plan.',
@@ -3706,7 +3951,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         const plan = await readDoctorRemediationPlanForStudio({
           workspacePath: request.workspacePath,
           handoff: {
-            ...goalRemediationHandoff,
+            ...activeRemediationHandoff,
             ...(request.projectPath ? { projectPath: request.projectPath, scope: 'project' } : {}),
           },
           maxSteps: 64,
@@ -3726,6 +3971,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             generatedAt: plan.generatedAt,
             scope: plan.scope,
             freshness: plan.freshness,
+            execution: plan.execution,
             hiddenStepCount: plan.hiddenStepCount,
             steps: plan.visibleSteps.map((step) => ({
               id: step.id,
@@ -3738,6 +3984,11 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
               executable: step.executable,
               studioState: step.studioState,
               canApply: step.canApply,
+              executionReady: step.executionReady,
+              invocation: step.invocation,
+              requirements: step.requirements,
+              retryPolicy: step.retryPolicy,
+              blockedReason: step.blockedReason,
               requiresApproval: step.requiresApproval,
               title: step.previewTitle,
               summary: step.previewSummary,
@@ -3756,9 +4007,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         stepId: string;
         workspacePath: string;
         projectPath?: string;
+        approval?: StudioAgentToolApprovalGrant;
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
-        if (!goalRemediationHandoff) {
+        if (!activeRemediationHandoff) {
           return {
             ok: false,
             error: 'A blocker card or governed Goal is required to execute a remediation step.',
@@ -3768,7 +4020,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         const plan = await readDoctorRemediationPlanForStudio({
           workspacePath: request.workspacePath,
           handoff: {
-            ...goalRemediationHandoff,
+            ...activeRemediationHandoff,
             ...(request.projectPath ? { projectPath: request.projectPath, scope: 'project' } : {}),
           },
           maxSteps: 64,
@@ -3777,6 +4029,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         if (
           !step ||
           plan?.freshness.verdict === 'stale' ||
+          (plan?.execution.nextActionId !== null &&
+            plan?.execution.nextActionId !== request.stepId) ||
           step.risk === 'invasive' ||
           (!step.executable && !step.canApply) ||
           (step.studioState !== 'ready' && step.studioState !== 'review-required')
@@ -3793,17 +4047,34 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           actionLabel: `CLI-owned Goal prerequisite ${request.stepId}`,
           governedRepair: { contractAuthorized: true, reversible: true },
         });
+        if (!proofCarryingChange) {
+          return {
+            ok: false,
+            error: 'No Goal-bound Proof-Carrying Change session is available for remediation.',
+          };
+        }
+        const approvedBy = request.approval?.approvedBy ?? 'policy:vscode:goal-agent';
+        await proofCarryingChange.authorize(['command'], approvedBy);
         const result = await executeCliOwnedCanonicalRepair({
           workspacePath: request.workspacePath,
-          cardId: goalRemediationHandoff.cardId,
+          cardId: activeRemediationHandoff.cardId,
           projectName: step.projectName || effectiveProjectName,
           actionId: request.stepId,
-          approvedBy: 'vscode:goal-agent',
+          approvedBy,
           reportProgress: request.reportProgress
             ? (progress: WorkspaceRepairProgress) => request.reportProgress!({ repair: progress })
             : undefined,
         });
-        return presentAssistantCliRepairResult(result, request);
+        const proof = await proofCarryingChange.recordRepairEffect({
+          result,
+          projectPath: request.projectPath,
+          effectClass: 'command',
+        });
+        const observation = await presentAssistantCliRepairResult(result, request);
+        return {
+          ...observation,
+          output: { ...observation.output, proofCarryingChange: proof },
+        };
       },
       verify: async (request: { workspacePath: string; projectPath?: string; goalId?: string }) => {
         if (input.assistantMode === 'goal') {
@@ -3957,6 +4228,44 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         };
       },
     };
+    const canonicalVerify = host.verify.bind(host);
+    host.verify = async (request) => {
+      const verification = await canonicalVerify(request);
+      if (!verification.ok || !proofCarryingChange?.activeChangeId) {
+        return verification;
+      }
+      try {
+        const proof = await proofCarryingChange.verifyIfStarted(true);
+        const sealed = proof?.capsule.status === 'sealed';
+        return {
+          ...verification,
+          ok: verification.ok && sealed,
+          cardBlocking: verification.cardBlocking === true || !sealed,
+          output: {
+            ...(verification.output &&
+            typeof verification.output === 'object' &&
+            !Array.isArray(verification.output)
+              ? (verification.output as Record<string, unknown>)
+              : { canonicalVerification: verification.output }),
+            proofCarryingChange: proof,
+          },
+          ...(sealed
+            ? {}
+            : {
+                error:
+                  proof?.capsule.remainingUncertainty[0] ??
+                  'The change passed its local verifier but its Proof-Carrying Change capsule is not sealed.',
+              }),
+        };
+      } catch (error) {
+        return {
+          ...verification,
+          ok: false,
+          cardBlocking: true,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
     const scopeId =
       governedGoalId ??
       verifiedGoal?.id ??
@@ -3980,6 +4289,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       permissionLevel: mode.permissionLevel,
       requiresVerifiedCompletion: mode.requiresVerifiedCompletion,
       workspaceTrusted: vscode.workspace.isTrusted,
+      requestToolApproval: (request: StudioAgentToolApprovalRequest) =>
+        this._requestInlineStudioToolApproval(request),
       ...(governedGoal ? { governedGoal } : {}),
       ...(verifiedGoal ? { goal: verifiedGoal } : {}),
       ...(goalMaxAttempts ? { goalMaxAttempts } : {}),
@@ -4210,11 +4521,69 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       projectPath: input.projectPath,
       handoff: activeHandoff,
     });
+    const governedProjectName = resolveStudioRepairProjectTarget({
+      explicitProjectName: activeHandoff.selectedTarget?.projectName,
+      affectedProjectNames: activeHandoff.affectedProjectNames,
+      projectPath: input.projectPath ?? activeHandoff.selectedTarget?.projectPath,
+    });
+    const store = new VSCodeStudioAgentSessionStore(this._context);
+    const persistedCandidate = input.sessionId ? await store.load(input.sessionId) : undefined;
+    const persisted =
+      persistedCandidate &&
+      studioAgentSessionScopeMatches(persistedCandidate, input) &&
+      persistedCandidate.cardId === activeHandoff.cardId &&
+      persistedCandidate.blockerSignature === activeHandoff.blockerSignature &&
+      persistedCandidate.assistantMode === 'agent' &&
+      persistedCandidate.status !== 'completed' &&
+      persistedCandidate.status !== 'cancelled'
+        ? persistedCandidate
+        : undefined;
+    const governedChangeGoal =
+      persisted?.governedGoal || persisted?.goal
+        ? await restoreOrRenewGovernedGoalSession({
+            workspacePath: input.workspacePath,
+            ...(persisted.governedGoal ? { governedGoal: persisted.governedGoal } : {}),
+            ...(persisted.goal ? { verifiedGoal: persisted.goal } : {}),
+            onPhase: (label) =>
+              this._postInlineCreate('sidebarStudioThinking', {
+                sessionId: input.sessionId,
+                label,
+              }),
+          })
+        : await prepareGovernedGoalSession({
+            workspacePath: input.workspacePath,
+            objective: [
+              input.task,
+              `Resolve ${activeHandoff.cardLabel ?? activeHandoff.cardId}.`,
+              ...activeHandoff.blockers.slice(0, 3),
+            ].join(' '),
+            scope: resolveStudioRepairGoalScope({
+              handoffScope: activeHandoff.scope,
+              affectedProjectNames: activeHandoff.affectedProjectNames,
+              explicitProjectName: governedProjectName,
+              projectPath: input.projectPath,
+            }),
+            selectScope: selectGovernedGoalScope,
+            selectCoverageRuntime: selectGovernedGoalRuntime,
+            onPhase: (label) =>
+              this._postInlineCreate('sidebarStudioThinking', {
+                sessionId: input.sessionId,
+                label,
+              }),
+          });
+    const proofCarryingChange = new StudioProofCarryingChangeSession({
+      workspacePath: input.workspacePath,
+      goalId: governedChangeGoal.goalPackId,
+      actorId: 'vscode:studio-agent',
+      requestResume: requestVSCodeProofCarryingChangeResume,
+    });
+    const receiptedRepairTransactions = new Set<string>();
     const objective = [
       input.task,
       `Card: ${activeHandoff.cardLabel ?? activeHandoff.cardId}`,
       `Blockers: ${activeHandoff.blockers.join('; ')}`,
       `Selected causal target: ${JSON.stringify(activeHandoff.selectedTarget ?? null)}`,
+      `Resolution hints: ${JSON.stringify(activeHandoff.resolutionHints ?? [])}`,
       `Verify command: ${activeHandoff.verifyCommand ?? 'resolve from governed evidence'}`,
       'Use Studio inspect tools to load file bodies only when needed. Generated reports must be refreshed through their governed producers, never patched.',
       'Canonical .workspai/.rapidkit state, repair transactions, goals, registries, and evidence are control-plane inputs, never model-owned source targets.',
@@ -4226,6 +4595,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       `Authorized evidence paths: ${JSON.stringify(repairEvidence.authorizedEvidencePaths)}`,
       `Initial source candidates (not exclusive; inspect-source dynamically authorizes any workspace source): ${JSON.stringify(repairEvidence.autonomousTargetPaths.slice(0, 20))}`,
       `Missing required evidence: ${JSON.stringify(repairEvidence.missingRequired.slice(0, 20))}`,
+      'A missing required evidence path is a fact, not an instruction to retry reading it. Use its governed producer when one exists; otherwise continue from available causal evidence.',
     ].join('\n\n');
     const commandGenerations = new Map<StudioEvidenceRefreshCommandId, string>();
     const commandAttempts = new Map<
@@ -4245,23 +4615,6 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         ...(target.projectPath ? { projectPath: target.projectPath } : {}),
       };
     };
-    const bindSelectedRemediationStep = (step: DoctorRemediationPlanStepView): void => {
-      const actionId = step.actionId ?? step.id;
-      bindSelectedTarget({
-        findingId: step.issueId ?? actionId,
-        ...(step.causalKey ? { causalKey: step.causalKey } : {}),
-        actionIds: [actionId],
-        ...(step.files.length > 0 ? { sourcePaths: step.files } : {}),
-        ...(step.projectName && step.projectName !== 'workspace'
-          ? { projectName: step.projectName }
-          : {}),
-        ...(step.projectPath ? { projectPath: step.projectPath } : {}),
-        repairMode: step.repairMode,
-        sourceMutation: step.sourceMutation,
-        ...(step.verifyCommand ? { verifyCommand: step.verifyCommand } : {}),
-      });
-    };
-
     const refreshDependencyDoctorEvidence = async (workspacePath: string) => {
       const plan = resolveDashboardCommandExecutionPlan('checkWorkspaceHealth');
       if (plan.cliArgs.length === 0) {
@@ -4343,18 +4696,21 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       }) => {
         return { ok: true, output: await searchStudioWorkspaceSource(request) };
       },
-      graphSearch: async (request: { query: string; limit?: number; workspacePath: string }) => {
+      graphSearch: async (request: {
+        query: string;
+        limit?: number;
+        workspacePath: string;
+        projectPath?: string;
+      }) => {
         const limit = Math.min(Math.max(Math.trunc(request.limit ?? 12), 1), 50);
         const execution = await runRapidkitStreaming<unknown>({
-          command: [
-            'workspace',
-            'graph',
-            'search',
-            request.query,
-            '--limit',
-            String(limit),
-            '--json',
-          ],
+          command: buildWorkspaceGraphSearchCommand({
+            query: request.query,
+            limit,
+            ...(request.projectPath
+              ? { scope: `project:${path.basename(request.projectPath)}` }
+              : {}),
+          }),
           cwd: request.workspacePath,
           featureLabel: 'Workspace graph retrieval',
           timeoutMs: 2 * 60_000,
@@ -4387,6 +4743,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         output: {
           diagnostics: inspectStudioWorkspaceDiagnostics(request),
         },
+        evidenceGeneration: repairEvidence.evidenceFingerprint,
+      }),
+      codeIntelligence: async (request) => ({
+        ...(await runStudioCodeIntelligenceTool(request)),
         evidenceGeneration: repairEvidence.evidenceFingerprint,
       }),
       inspectChanges: async (request: { paths?: string[]; workspacePath: string }) => {
@@ -4446,6 +4806,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           actionLabel: 'Studio Agent CLI-owned source repair',
           governedRepair: { contractAuthorized: true, reversible: true },
         });
+        await proofCarryingChange.authorize(['filesystem'], 'vscode:studio-agent');
         const result = await executeCliOwnedPatchRepair({
           workspacePath: request.workspacePath,
           projectPath: request.projectPath ?? activeHandoff.selectedTarget?.projectPath,
@@ -4455,6 +4816,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             projectPath: request.projectPath ?? activeHandoff.selectedTarget?.projectPath,
           }),
           cardId: activeHandoff.cardId,
+          goalId: governedChangeGoal.goalPackId,
           blockerSignature: activeBlockerSignature,
           targetActionIds: activeHandoff.selectedTarget?.actionIds,
           approvedBy: 'vscode:studio-agent',
@@ -4537,6 +4899,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           actionLabel: 'Studio Agent CLI-owned source deletion',
           governedRepair: { contractAuthorized: true, reversible: true },
         });
+        await proofCarryingChange.authorize(['filesystem'], 'vscode:studio-agent');
         const result = await executeCliOwnedPatchRepair({
           workspacePath: request.workspacePath,
           projectPath: request.projectPath ?? activeHandoff.selectedTarget?.projectPath,
@@ -4546,6 +4909,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             projectPath: request.projectPath ?? activeHandoff.selectedTarget?.projectPath,
           }),
           cardId: activeHandoff.cardId,
+          goalId: governedChangeGoal.goalPackId,
           blockerSignature: activeBlockerSignature,
           targetActionIds: activeHandoff.selectedTarget?.actionIds,
           approvedBy: 'vscode:studio-agent',
@@ -4738,82 +5102,66 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         request: StudioWorkspaceCommandRequest;
         workspacePath: string;
         projectPath?: string;
+        approval?: StudioAgentToolApprovalGrant;
+        signal?: AbortSignal;
+        reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
         try {
-          const plan = resolveStudioWorkspaceCommandPlan({
+          const commandPlan = resolveStudioWorkspaceCommandPlan({
             workspacePath: request.workspacePath,
+            projectPath: request.projectPath,
             request: request.request,
           });
-          if (plan.mutatesSource) {
-            return {
-              ok: false,
-              evidenceGeneration: repairEvidence.evidenceFingerprint,
-              error:
-                'Studio cannot execute mutating workspace commands directly. Submit a source proposal or start a CLI-owned repair transaction.',
-            };
+          const proofEffects = studioProofEffectClassesForCommand(commandPlan);
+          if (proofEffects.length > 0) {
+            await proofCarryingChange.authorize(
+              proofEffects,
+              request.approval?.approvedBy ?? 'policy:vscode:studio-agent'
+            );
           }
-          const before = await fingerprintStudioWorkspaceSourceState({
+          const execution = await executeStudioWorkspaceCommandTransaction({
             workspacePath: request.workspacePath,
             projectPath: request.projectPath,
-          });
-          if (!before) {
-            return {
-              ok: false,
-              evidenceGeneration: repairEvidence.evidenceFingerprint,
-              terminalReason: 'workspace-command-fingerprint-unavailable',
-              error: STUDIO_SOURCE_FINGERPRINT_UNAVAILABLE_MESSAGE,
-            };
-          }
-          const execution = await runStudioWorkspaceCommand(plan);
-          const after = await fingerprintStudioWorkspaceSourceState({
-            workspacePath: request.workspacePath,
-            projectPath: request.projectPath,
-          });
-          if (!after || after.fingerprint !== before.fingerprint) {
-            return {
-              ok: false,
-              changed: true,
-              evidenceGeneration: repairEvidence.evidenceFingerprint,
-              requiresUserDecision: true,
-              terminalReason: 'workspace-command-source-mutation-detected',
-              error:
-                'The supposedly non-mutating workspace command changed source state. Studio stopped before using its result; review the worktree and move the change into a CLI-owned repair transaction.',
-              output: {
-                ...execution,
-                beforeFingerprint: before.fingerprint,
-                afterFingerprint: after?.fingerprint,
-                changedPaths: after?.status.split(/\r?\n/).filter(Boolean).slice(0, 100) ?? [],
-                observedSourceChange: true,
-                nextAction: 'review-required',
-                requiresUserDecision: true,
-              },
-            };
-          }
-          const diagnosticFindings = isExpectedDiagnosticFindingExit({
-            command: plan.displayCommand,
-            exitCode: execution.exitCode,
-            stdout: execution.stdout,
-            stderr: execution.stderr,
-          });
-          const commandObserved = execution.exitCode === 0 || diagnosticFindings;
-          return {
-            ok: commandObserved,
-            changed: false,
+            request: request.request,
+            approval: request.approval,
             evidenceGeneration: repairEvidence.evidenceFingerprint,
-            output: {
-              ...execution,
-              ...(commandObserved
-                ? { diagnosticOutcome: diagnosticFindings ? 'findings' : 'clean' }
-                : {}),
-              changedPaths: [],
-              observedSourceChange: false,
-              sourceFingerprint: after.fingerprint,
-            },
-            ...(commandObserved
-              ? {}
-              : {
-                  error: describeStudioWorkspaceCommandFailure(execution),
-                }),
+            signal: request.signal,
+            reportProcessEvent: request.reportProgress
+              ? (event) => request.reportProgress!({ process: event })
+              : undefined,
+            isExpectedDiagnosticFindingExit,
+          });
+          const commandOutput = execution.output;
+          const observedEffect = Boolean(
+            commandOutput &&
+            !commandOutput.rollback &&
+            (commandOutput.effects.source ||
+              commandOutput.effects.repositoryMetadata ||
+              commandOutput.effects.externalSystem)
+          );
+          const proof =
+            commandOutput && observedEffect
+              ? await proofCarryingChange.recordCommandEffect({
+                  transactionId: commandOutput.transactionId,
+                  projectPath: request.projectPath,
+                  command: [request.request.executable, ...request.request.args],
+                  changedPaths: commandOutput.changedPaths,
+                  succeeded: execution.ok,
+                  effectClass: proofEffects[0],
+                  summary: execution.ok
+                    ? `Studio command completed: ${request.request.executable}.`
+                    : `Studio command failed: ${request.request.executable}.`,
+                })
+              : proofCarryingChange.activeChangeId
+                ? await proofCarryingChange.status()
+                : undefined;
+          return {
+            ...execution,
+            output: commandOutput
+              ? { ...commandOutput, ...(proof ? { proofCarryingChange: proof } : {}) }
+              : proof
+                ? { proofCarryingChange: proof }
+                : undefined,
           };
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -4827,6 +5175,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
         try {
+          await proofCarryingChange.authorize(['dependency'], 'vscode:studio-agent');
           await this._assertSidebarStudioMutationAllowed({
             workspacePath: request.workspacePath,
             projectPath: request.projectPath,
@@ -4880,6 +5229,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             policyProfile: plan.policyProfile,
             scope: plan.scope,
             freshness: plan.freshness,
+            execution: plan.execution,
             hiddenStepCount: plan.hiddenStepCount,
             steps: plan.visibleSteps.map((step) => ({
               id: step.id,
@@ -4898,6 +5248,11 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
               diffSummary: step.diffSummary,
               files: step.files,
               canApply: step.canApply,
+              executionReady: step.executionReady,
+              invocation: step.invocation,
+              requirements: step.requirements,
+              retryPolicy: step.retryPolicy,
+              blockedReason: step.blockedReason,
               hasDeterministicOperation: Boolean(step.operation),
               verifyCommand: step.verifyCommand,
             })),
@@ -4915,6 +5270,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         stepId: string;
         workspacePath: string;
         projectPath?: string;
+        approval?: StudioAgentToolApprovalGrant;
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
         const priorAttempt = remediationStepAttempts.get(request.stepId);
@@ -4938,6 +5294,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           actionLabel: `CLI-owned Studio remediation step ${request.stepId}`,
           governedRepair: { contractAuthorized: true, reversible: true },
         });
+        const approvedBy = request.approval?.approvedBy ?? 'policy:vscode:studio-agent';
+        await proofCarryingChange.authorize(['command'], approvedBy);
         const result = await executeCliOwnedCanonicalRepair({
           workspacePath: request.workspacePath,
           cardId: activeHandoff.cardId,
@@ -4946,7 +5304,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
             projectPath: request.projectPath,
           }),
           actionId: request.stepId,
-          approvedBy: 'vscode:studio-agent',
+          approvedBy,
           reportProgress: request.reportProgress
             ? (progress: WorkspaceRepairProgress) => request.reportProgress!({ repair: progress })
             : undefined,
@@ -5102,26 +5460,6 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         reportProgress?: (data: Record<string, unknown>) => Promise<void>;
       }) => {
         const producerRoute = resolveStudioCausalProducerRoute(activeHandoff);
-        if (producerRoute) {
-          const producerResult = await host.runGovernedCommand({
-            commandId: producerRoute.commandId,
-            workspacePath: request.workspacePath,
-            projectPath: request.projectPath,
-            reportProgress: request.reportProgress,
-          });
-          return {
-            ...producerResult,
-            changed: false,
-            output: {
-              ...(producerResult.output && typeof producerResult.output === 'object'
-                ? producerResult.output
-                : {}),
-              producerRefreshCommandId: producerRoute.commandId,
-              producerRefreshReason: producerRoute.reason,
-              nextAction: producerResult.ok ? 'verify-blocker' : 'inspect-remediation-plan',
-            },
-          };
-        }
         // The prelude must bind the CLI transaction to one exact causal action.
         // A card id is presentation scope, not a repair target: sending only
         // `doctor` can mix unrelated findings into one all-or-nothing plan.
@@ -5136,41 +5474,47 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           actionId: 'sidebar-repair-plan-preflight',
         });
         const step = selectStudioRemediationRecoveryStep(recovery.plan, activeHandoff);
-        if (!step) {
-          // A persisted plan is an optimization, not the source of truth. The
-          // CLI builds the current canonical plan under lock and selects one
-          // causal family. Only its bounded result may delegate to source
-          // diagnosis; absence of an IDE-side plan must never authorize an
-          // arbitrary card-wide model patch.
-          return {
-            ok: false,
-            changed: false,
-            evidenceGeneration: repairEvidence.evidenceFingerprint,
-            output: {
-              recoveryPath: 'general-source-repair',
-              nextAction: 'general-source-repair',
-              sourceCandidates: repairEvidence.autonomousTargetPaths,
-              recommendedTools: [
-                'inspect-source',
-                'search-workspace',
-                'inspect-workspace-diagnostics',
-                'run-workspace-command',
-                'apply-workspace-patch',
-              ],
-              remediationPlanRefreshed: recovery.refreshed,
-              ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
-            },
-            error:
-              recovery.refreshError ??
-              'No exact executable action matches the active blocker. Continue with inspected source repair; do not create a card-wide transaction.',
-          };
-        }
-        bindSelectedRemediationStep(step);
-        return executeCanonicalRepair({
-          workspacePath: request.workspacePath,
-          projectPath: request.projectPath || step.projectPath,
-          projectName: step.projectName,
-          actionId: step.actionId ?? step.id,
+        const environmentPrerequisite = selectStudioRemediationEnvironmentPrerequisite(
+          recovery.plan
+        );
+        return buildStudioCausalRecoveryBriefing({
+          blockers: activeHandoff.blockers,
+          sourceCandidates: repairEvidence.autonomousTargetPaths,
+          evidenceGeneration: repairEvidence.evidenceFingerprint,
+          ...(producerRoute ? { producerRoute } : {}),
+          ...(environmentPrerequisite
+            ? {
+                environmentPrerequisite: {
+                  id: environmentPrerequisite.id,
+                  summary:
+                    environmentPrerequisite.blockedReason ??
+                    environmentPrerequisite.previewSummary ??
+                    'A required runtime or executable is unavailable.',
+                  requirements: environmentPrerequisite.requirements,
+                  retryPolicy: environmentPrerequisite.retryPolicy,
+                },
+              }
+            : {}),
+          ...(step
+            ? {
+                remediationStep: {
+                  id: step.id,
+                  ...(step.actionId ? { actionId: step.actionId } : {}),
+                  ...(step.projectName ? { projectName: step.projectName } : {}),
+                  ...(step.projectPath ? { projectPath: step.projectPath } : {}),
+                  risk: step.risk,
+                  canApply: step.canApply,
+                  executable: step.executable,
+                  executionKind: step.executionKind,
+                  executionReady: step.executionReady,
+                  requiresApproval: step.requiresApproval,
+                  files: step.files,
+                  ...(step.verifyCommand ? { verifyCommand: step.verifyCommand } : {}),
+                },
+              }
+            : {}),
+          remediationPlanRefreshed: recovery.refreshed,
+          ...(recovery.refreshError ? { remediationPlanError: recovery.refreshError } : {}),
         });
       },
       verify: async (request: { workspacePath: string; projectPath?: string }) => {
@@ -5261,6 +5605,45 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       },
     };
 
+    const canonicalAutonomousVerify = host.verify.bind(host);
+    host.verify = async (request) => {
+      const verification = await canonicalAutonomousVerify(request);
+      if (!verification.ok || !proofCarryingChange.activeChangeId) {
+        return verification;
+      }
+      try {
+        const proof = await proofCarryingChange.verifyIfStarted(true);
+        const sealed = proof?.capsule.status === 'sealed';
+        return {
+          ...verification,
+          ok: verification.ok && sealed,
+          cardBlocking: verification.cardBlocking === true || !sealed,
+          output: {
+            ...(verification.output &&
+            typeof verification.output === 'object' &&
+            !Array.isArray(verification.output)
+              ? (verification.output as Record<string, unknown>)
+              : { canonicalVerification: verification.output }),
+            proofCarryingChange: proof,
+          },
+          ...(sealed
+            ? {}
+            : {
+                error:
+                  proof?.capsule.remainingUncertainty[0] ??
+                  'Canonical repair passed, but its Proof-Carrying Change capsule is not sealed.',
+              }),
+        };
+      } catch (error) {
+        return {
+          ...verification,
+          ok: false,
+          cardBlocking: true,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
+
     // Studio is a model/UI client of the CLI Repair Engine. Mutation-capable
     // host methods are defined once on the host above and delegate directly to
     // this canonical transaction boundary. The extension may inspect and
@@ -5299,6 +5682,22 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           'complete-dependency-transaction',
         ],
       });
+      const terminalRepairState = ['closed', 'failed', 'rolled-back', 'cancelled'].includes(
+        result.transaction.state
+      );
+      if (
+        terminalRepairState &&
+        !receiptedRepairTransactions.has(result.transaction.transactionId)
+      ) {
+        const proof = await proofCarryingChange.recordRepairEffect({
+          result,
+          projectPath: input.projectPath ?? activeHandoff.selectedTarget?.projectPath,
+        });
+        receiptedRepairTransactions.add(result.transaction.transactionId);
+        observation.output.proofCarryingChange = proof;
+      } else if (proofCarryingChange.activeChangeId) {
+        observation.output.proofCarryingChange = await proofCarryingChange.status();
+      }
       if (activeHandoff.selectedTarget) {
         observation.output.selectedTarget = activeHandoff.selectedTarget;
       }
@@ -5357,6 +5756,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       actionId?: string;
       reportProgress?: (data: Record<string, unknown>) => Promise<void>;
     }) => {
+      await proofCarryingChange.authorize(['command'], 'vscode:studio-agent');
       await this._assertSidebarStudioMutationAllowed({
         workspacePath: request.workspacePath,
         projectPath: request.projectPath,
@@ -5397,19 +5797,9 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       cardId: activeHandoff.cardId,
       blockerSignature: activeHandoff.blockerSignature,
       assistantMode: 'agent',
+      goalId: governedChangeGoal.goalPackId,
+      goalCompletionMode: governedChangeGoal.governedGoal.completionMode,
     });
-    const store = new VSCodeStudioAgentSessionStore(this._context);
-    const persistedCandidate = input.sessionId ? await store.load(input.sessionId) : undefined;
-    const persisted =
-      persistedCandidate &&
-      studioAgentSessionScopeMatches(persistedCandidate, input) &&
-      persistedCandidate.cardId === activeHandoff.cardId &&
-      persistedCandidate.blockerSignature === activeHandoff.blockerSignature &&
-      persistedCandidate.assistantMode === 'agent' &&
-      persistedCandidate.status !== 'completed' &&
-      persistedCandidate.status !== 'cancelled'
-        ? persistedCandidate
-        : undefined;
     const options = {
       id: input.sessionId,
       workspacePath: input.workspacePath,
@@ -5421,7 +5811,13 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       repairPolicy: cardRepairCapability.repairPolicy,
       permissionLevel: 'autopilot' as const,
       workspaceTrusted: vscode.workspace.isTrusted,
+      requestToolApproval: (request: StudioAgentToolApprovalRequest) =>
+        this._requestInlineStudioToolApproval(request),
       requiresVerifiedCompletion: true,
+      governedGoal: governedChangeGoal.governedGoal,
+      ...(governedChangeGoal.verifiedGoal ? { goal: governedChangeGoal.verifiedGoal } : {}),
+      goalMaxAttempts: governedChangeGoal.maxAttempts,
+      goalAttemptsUsed: governedChangeGoal.attemptsUsed,
       ...(persisted ? { restoredSession: persisted } : {}),
     };
     const model = new ContractStudioAgentModelAdapter(
@@ -5668,6 +6064,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         if (!session) {
           throw new Error('The Studio Agent session is not currently running.');
         }
+        this._cancelPendingStudioToolApprovals(sessionId);
         session.cancel();
         return;
       }
@@ -5996,6 +6393,20 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         if (!step) {
           throw new Error('Selected remediation step is no longer present in the latest plan.');
         }
+        if (plan?.execution.nextActionId && plan.execution.nextActionId !== step.id) {
+          throw new Error(
+            `The CLI remediation contract requires ${plan.execution.nextActionId} first. Refresh after that causal prerequisite is complete.`
+          );
+        }
+        if (
+          step.retryPolicy?.sameGeneration === 'forbidden' ||
+          step.requirements.some((requirement) => requirement.status !== 'satisfied')
+        ) {
+          throw new Error(
+            step.blockedReason ||
+              'This remediation action cannot run in the current evidence generation. Change the required environment, then refresh the plan.'
+          );
+        }
         const autonomous = payloadRecord.autonomous === true;
         if (!autonomous && (step.requiresApproval || step.studioState === 'review-required')) {
           const approvalLabel = 'Apply through CLI Repair Engine';
@@ -6099,6 +6510,20 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         const step = plan?.visibleSteps.find((entry) => entry.id === stepId);
         if (!step || !step.originalCommand || step.originalCommand !== commandText) {
           throw new Error('Selected remediation command is no longer present in the latest plan.');
+        }
+        if (plan?.execution.nextActionId && plan.execution.nextActionId !== step.id) {
+          throw new Error(
+            `The CLI remediation contract requires ${plan.execution.nextActionId} first. Refresh after that causal prerequisite is complete.`
+          );
+        }
+        if (
+          step.retryPolicy?.sameGeneration === 'forbidden' ||
+          step.requirements.some((requirement) => requirement.status !== 'satisfied')
+        ) {
+          throw new Error(
+            step.blockedReason ||
+              'This remediation command cannot run in the current evidence generation. Change the required environment, then refresh the plan.'
+          );
         }
         const stepProjectPath = await resolveProjectPathFromRemediationStep({
           step,
@@ -6389,7 +6814,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           command: commandText,
           workspacePath: scope.workspacePath,
           projectPath: scope.projectPath,
-          projectBelongsToWorkspace: scope.projectBelongsToWorkspace,
+          projectBelongsToWorkspace: await isRegisteredWorkspaceProjectPath(
+            scope.workspacePath,
+            scope.projectPath
+          ),
         });
         if ('error' in executionPlan) {
           throw new Error(executionPlan.error);
@@ -6677,6 +7105,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       action: 'auto-fix',
       status: 'running',
       phase: 'starting-cli-owned-repair',
+      title: 'Starting governed repair',
       summary:
         'Studio is starting the model loop. Every source change will be planned, checkpointed, executed, verified, and rolled back by the Workspai CLI.',
     });

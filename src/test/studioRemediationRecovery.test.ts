@@ -76,6 +76,7 @@ describe('Studio remediation recovery preflight', () => {
   it('never selects an executable advisory for an unrelated blocking Doctor finding', () => {
     const mixedPlan = {
       freshness: { verdict: 'fresh' },
+      execution: { nextActionId: 'doctor.api.coverage' },
       visibleSteps: [
         {
           id: 'doctor.autoresearch.coverage',

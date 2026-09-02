@@ -4,11 +4,19 @@ import {
   enrichSidebarStudioActionProgressWithHandoff,
   isCanonicalStudioRepairDecision,
   parseSidebarStudioActionProgress,
+  studioApprovalCommandLabel,
   studioAgentToolProgressCopy,
 } from '../../webview-ui/src/lib/sidebarStudioActionProgress';
 import { parseStudioActionFailure } from '../../webview-ui/src/lib/studioVerifyFailure';
 
 describe('sidebarStudioActionProgress', () => {
+  it('shortens only the display label for an exact governed remediation identity', () => {
+    const exact =
+      'Workspai remediation action: doctor.opensearch.runtime-dependency-materialization.dependency-materialization';
+    expect(studioApprovalCommandLabel(exact)).toBe('Opensearch · Dependency materialization');
+    expect(studioApprovalCommandLabel('npm install')).toBe('npm install');
+  });
+
   it('preserves policy rejections and combined occurrence counts for compact transcripts', () => {
     expect(
       parseSidebarStudioActionProgress({
@@ -24,7 +32,7 @@ describe('sidebarStudioActionProgress', () => {
 
   it('uses concise Copilot-style labels for native Agent tool activity', () => {
     expect(studioAgentToolProgressCopy('recover-active-blocker', 'running')).toEqual({
-      title: 'Resolving the active blocker',
+      title: 'Preparing the repair path',
       phase: 'recover-active-blocker',
     });
     expect(studioAgentToolProgressCopy('inspect-dependency-security', 'running')).toEqual({

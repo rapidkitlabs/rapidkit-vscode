@@ -20,7 +20,11 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
   const creationNavigation = read('src/ui/panels/welcomePanelCreationNavigationMessages.ts');
 
   it('posts the studio outbound commands the host handles', () => {
-    for (const command of ['sidebarStudioQuery', 'sidebarStudioAction']) {
+    for (const command of [
+      'sidebarStudioQuery',
+      'sidebarStudioAction',
+      'sidebarStudioToolApprovalDecision',
+    ]) {
       expect(secondary, `React should post "${command}"`).toContain(`'${command}'`);
       expect(dispatcher, `host should handle "${command}"`).toContain(`command: '${command}'`);
     }
@@ -53,14 +57,22 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     );
   });
 
-  it('keeps mutation, receipts, timeline truth, and native diff on the CLI transaction plane', () => {
+  it('keeps semantic mutations on CLI repair and invasive commands on exact approval', () => {
     const cliClient = read('src/core/workspaceRepairCliClient.ts');
     const actionProgress = read('webview-ui/src/sidebar/StudioActionProgress.tsx');
     expect(provider).toContain('repairDependencySecurity: (request) =>');
     expect(provider).toContain('upgradeDependencySecurity: (request) =>');
     expect(provider).toContain('executeCliOwnedCanonicalRepair');
     expect(provider).toContain('executeCliOwnedPatchRepair');
-    expect(provider).toContain('Studio cannot execute mutating workspace commands directly.');
+    expect(provider).toContain('executeStudioWorkspaceCommandTransaction({');
+    expect(provider).toContain('this._requestInlineStudioToolApproval(request)');
+    expect(provider).toContain('requestStudioToolApproval(');
+    expect(provider).toContain('_pendingStudioToolApprovals');
+    expect(secondary).toContain("eventType === 'tool.approval.requested'");
+    expect(secondary).toContain("'sidebarStudioToolApprovalDecision'");
+    expect(actionProgress).toContain('progress.approvalRequest');
+    expect(actionProgress).toContain('Run once');
+    expect(actionProgress).toContain('Why this needs approval');
     expect(provider).not.toContain('STUDIO_MUTATION_AUTHORITY');
     expect(provider).not.toContain('host.repairDependencySecurity =');
     expect(provider).not.toContain('host.upgradeDependencySecurity =');

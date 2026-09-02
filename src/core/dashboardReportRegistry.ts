@@ -29,6 +29,7 @@ export type DashboardReportKind =
   | 'workspace-knowledge-graph'
   | 'project-knowledge-graph-reference'
   | 'workspace-intelligence-evaluation'
+  | 'workspace-intelligence-benchmark'
   | 'workspace-model-snapshot'
   | 'workspace-model-diff'
   | 'workspace-impact'
@@ -234,6 +235,15 @@ const REPORT_BINDINGS: Array<{
     binding: {
       kind: 'workspace-intelligence-evaluation',
       command: 'workspaceEvaluationReport',
+      cardId: 'workspaceIntelligenceRun',
+      scope: 'workspace',
+    },
+  },
+  {
+    match: (name) => name === 'workspace-intelligence-benchmark-last-run.json',
+    binding: {
+      kind: 'workspace-intelligence-benchmark',
+      command: 'workspaceGraphBenchmarkSuite',
       cardId: 'workspaceIntelligenceRun',
       scope: 'workspace',
     },

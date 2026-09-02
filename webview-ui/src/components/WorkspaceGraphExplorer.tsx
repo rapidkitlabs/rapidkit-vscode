@@ -40,10 +40,17 @@ import { workspaceGraphProjectScopeIds } from '@/lib/workspaceGraphScope';
 import { WorkspaiEmptyState } from './WorkspaiEmptyState';
 import { WorkspaceGraphCanvas } from './WorkspaceGraphCanvas';
 import { WorkspaceGraphWebgl } from './WorkspaceGraphWebgl';
+import { resolveWorkspaceGraphWordmarkLabel } from '@/lib/workspaceGraphWordmark';
 import { WORKSPACE_GRAPH_GIF_DEFAULTS, WORKSPACE_GRAPH_GIF_PACES } from '@/lib/workspaceGraphGif';
 
 type GraphMode = 'explore' | 'architecture';
 type GraphView = 'map' | '3d' | 'list';
+export type WorkspaceGraphChangeOverlay = {
+  actualIds: string[];
+  predictedIds: string[];
+  surpriseIds: string[];
+  verdict: 'exact' | 'within-expectation' | 'surprising' | 'no-prediction' | null;
+};
 
 const ARCHITECTURE_KINDS = new Set([
   'workspace',
@@ -195,6 +202,7 @@ export function WorkspaceGraphExplorer({
   const [isolatedId, setIsolatedId] = useState<string | null>(null);
   const [view, setView] = useState<GraphView>('3d');
   const [presentation, setPresentation] = useState(false);
+  const [showChangeOverlay, setShowChangeOverlay] = useState(true);
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [recordingLocallyStopping, setRecordingLocallyStopping] = useState(false);
   const [recordingCaptureError, setRecordingCaptureError] = useState<string | null>(null);
@@ -282,6 +290,43 @@ export function WorkspaceGraphExplorer({
         (relation) => visibleIds.has(relation.from) && visibleIds.has(relation.to)
       ),
     [graph, visibleIds]
+  );
+  const changeOverlay = useMemo<WorkspaceGraphChangeOverlay | null>(() => {
+    const change = evidence?.operations?.changes?.selected?.graphChange;
+    if (!change || (!change.prediction && !change.actual && !change.surprise)) {
+      return null;
+    }
+    const relationById = new Map(
+      (graph?.relations ?? []).map((relation) => [relation.id, relation])
+    );
+    const entityIdsForOperations = (
+      operations: Array<{ targetKind: string; targetId: string }>
+    ): string[] => {
+      const ids = new Set<string>();
+      for (const operation of operations) {
+        if (operation.targetKind === 'entity') {
+          ids.add(operation.targetId);
+        } else if (operation.targetKind === 'relation') {
+          const relation = relationById.get(operation.targetId);
+          if (relation) {
+            ids.add(relation.from);
+            ids.add(relation.to);
+          }
+        }
+      }
+      return [...ids];
+    };
+    return {
+      actualIds: change.actual?.impactedEntityIds ?? [],
+      predictedIds: entityIdsForOperations(change.prediction?.operations ?? []),
+      surpriseIds: entityIdsForOperations(change.surprise?.unpredicted ?? []),
+      verdict: change.surprise?.verdict ?? null,
+    };
+  }, [evidence, graph?.relations]);
+  const visibleChangeOverlay = showChangeOverlay ? changeOverlay : null;
+  const wordmarkLabel = useMemo(
+    () => (graph ? resolveWorkspaceGraphWordmarkLabel(graph, project) : 'Workspace'),
+    [graph, project]
   );
   const selected = graph?.entities.find((entity) => entity.id === selectedId) ?? null;
   const selectedRelations = selected
@@ -650,6 +695,17 @@ export function WorkspaceGraphExplorer({
         >
           {presentation ? <Sparkles size={13} /> : <Maximize2 size={13} />} Present
         </button>
+        {changeOverlay ? (
+          <button
+            type="button"
+            className={`ws-btn ${showChangeOverlay ? 'is-active' : ''}`}
+            aria-pressed={showChangeOverlay}
+            onClick={() => setShowChangeOverlay((value) => !value)}
+            title="Overlay predicted, observed, and surprising architecture change without modifying the canonical Graph"
+          >
+            <Network size={13} /> Change overlay
+          </button>
+        ) : null}
         {isRecording ? (
           <button
             type="button"
@@ -773,6 +829,18 @@ export function WorkspaceGraphExplorer({
               ×
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {visibleChangeOverlay ? (
+        <div className="workspace-graph-change-overlay" role="status">
+          <strong>
+            Change assurance · {visibleChangeOverlay.verdict ?? 'awaiting comparison'}
+          </strong>
+          <span className="is-predicted">{visibleChangeOverlay.predictedIds.length} predicted</span>
+          <span className="is-actual">{visibleChangeOverlay.actualIds.length} observed</span>
+          <span className="is-surprise">{visibleChangeOverlay.surpriseIds.length} unpredicted</span>
+          <small>Visual overlay only · canonical Graph data is unchanged</small>
         </div>
       ) : null}
 
@@ -1007,6 +1075,7 @@ export function WorkspaceGraphExplorer({
               selectedId={selectedId}
               onSelect={setSelectedId}
               highlightedIds={graph.highlightedEntityIds ?? []}
+              changeOverlay={visibleChangeOverlay}
               presentation={presentation}
             />
           ) : entities.length && (renderer === 'webgl3d' || renderer === 'canvas3d') ? (
@@ -1025,6 +1094,8 @@ export function WorkspaceGraphExplorer({
               preferenceKey={
                 graph.entities.find((entity) => entity.kind === 'workspace')?.id ?? graph.revision
               }
+              wordmarkLabel={wordmarkLabel}
+              changeOverlay={visibleChangeOverlay}
               gifExportRequest={gifExportRequest}
               videoExportRequest={videoExportRequest}
               onGifExported={(result) => {

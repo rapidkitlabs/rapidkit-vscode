@@ -105,7 +105,7 @@ describe('Assistant intent router', () => {
     ).toBeNull();
   });
 
-  it('routes before Goal planning and removes implicit Agent-to-Goal promotion', () => {
+  it('routes before planning and binds every mutation-capable mode to a governed Goal', () => {
     const provider = fs.readFileSync(
       path.resolve(process.cwd(), 'src/ui/webviews/actionsWebviewProvider.ts'),
       'utf8'
@@ -119,7 +119,11 @@ describe('Assistant intent router', () => {
       unified.indexOf('await prepareGovernedGoalSession')
     );
     expect(unified).not.toContain('inferVerifiedGoalIntent');
-    expect(unified).toContain("input.assistantMode === 'goal' && !governedGoal");
+    expect(unified).toContain(
+      "(input.assistantMode === 'goal' || input.assistantMode === 'agent') && !governedGoal"
+    );
+    expect(unified).toContain('new StudioProofCarryingChangeSession');
+    expect(unified).toContain('proofCarryingChange.verifyIfStarted(true)');
     expect(unified).toContain('resolveAssistantExecutionPolicy');
     expect(unified).toContain("persisted.cardId === 'assistant:agent:question'");
     expect(unified).toContain('executionPolicy.toolMode');

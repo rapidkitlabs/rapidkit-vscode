@@ -97,6 +97,7 @@ export type DashboardEvidenceRefreshContext = {
   cardIds?: DashboardEvidenceCardId[];
   refreshMode?: 'full' | 'patch';
   requestId?: number;
+  includeOperations?: boolean;
 };
 
 type TimerHandle = ReturnType<typeof setTimeout>;

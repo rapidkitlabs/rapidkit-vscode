@@ -99,7 +99,7 @@ describe('Studio session lifecycle', () => {
     ]);
   });
 
-  it('presents a repeated controller-owned producer as a stopped repair, not a decision', () => {
+  it('presents a legacy repeated-producer terminal as generic stopped recovery, not a decision', () => {
     expect(
       describeStudioTerminalFailure({
         error: 'The same forbidden evidence producer was requested again.',
@@ -107,9 +107,9 @@ describe('Studio session lifecycle', () => {
         requiresUserDecision: false,
       })
     ).toMatchObject({
-      title: 'Source repair stopped',
+      title: 'Recovery stopped',
       summary:
-        'Studio blocked a repeated evidence command because no causal source edit was made. The workspace source was left unchanged.',
+        'Studio blocked a repeated evidence command because no materially different causal action followed. Governed workspace state remains available for review.',
       terminalReason: 'source-repair-policy-loop',
       connectionFailure: false,
       technicalDetail: 'The same forbidden evidence producer was requested again.',
@@ -149,14 +149,29 @@ describe('Studio session lifecycle', () => {
   it('presents exhausted autonomous recovery as a resumable pause', () => {
     expect(
       describeStudioTerminalFailure({
-        error: 'No causal source progress was produced.',
-        terminalReason: 'model-source-progress-exhausted',
+        error: 'No causal progress was produced.',
+        terminalReason: 'model-causal-progress-exhausted',
         requiresUserDecision: false,
       })
     ).toMatchObject({
       title: 'Repair paused',
       summary: expect.stringContaining('durable session can resume'),
-      terminalReason: 'model-source-progress-exhausted',
+      terminalReason: 'model-causal-progress-exhausted',
+      connectionFailure: false,
+    });
+  });
+
+  it('presents a typed environment prerequisite as setup work, not a generic pause', () => {
+    expect(
+      describeStudioTerminalFailure({
+        error: 'Required repair executable is unavailable: go (nova-api).',
+        terminalReason: 'environment-prerequisite-required',
+        requiresUserDecision: false,
+      })
+    ).toMatchObject({
+      title: 'Environment setup required',
+      summary: 'Required repair executable is unavailable: go (nova-api).',
+      terminalReason: 'environment-prerequisite-required',
       connectionFailure: false,
     });
   });

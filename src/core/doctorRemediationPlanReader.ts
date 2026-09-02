@@ -45,6 +45,10 @@ export type DoctorRemediationPlanStepView = {
   sourceMutation: 'required' | 'allowed' | 'forbidden';
   risk: 'safe' | 'guarded' | 'invasive';
   executable: boolean;
+  /** True when the CLI has supplied a bounded operation or immutable command. */
+  executionReady?: boolean;
+  /** Distinguishes a CLI-compiled file operation from a CLI-owned command. */
+  executionKind?: 'structured-operation' | 'contract-command' | 'unavailable';
   studioState: 'ready' | 'blocked' | 'review-required' | 'guidance-only';
   studioReason: string;
   primaryAction: string;
@@ -57,6 +61,23 @@ export type DoctorRemediationPlanStepView = {
   verifyCommand?: string;
   refreshCommands: string[];
   blockedReason?: string;
+  invocation?: {
+    cwd: string;
+    executable: string;
+    args: string[];
+  };
+  requirements: Array<{
+    kind: 'executable' | 'action';
+    id: string;
+    status: 'satisfied' | 'missing' | 'pending';
+    executable?: string;
+    actionId?: string;
+    message: string;
+  }>;
+  retryPolicy?: {
+    sameGeneration: 'allowed' | 'forbidden';
+    resumeWhen: 'immediate' | 'dependencies-complete' | 'environment-changed';
+  };
   operation?: DoctorRemediationOperation;
   strategy?: DoctorRemediationStrategyStage[];
   canApply: boolean;
@@ -133,6 +154,11 @@ export type DoctorRemediationPlanView = {
     reason?: string;
     comparedArtifactPath?: string;
   };
+  execution: {
+    nextActionId: string | null;
+    eligibleActionIds: string[];
+    blockedActionIds: string[];
+  };
 };
 
 type DoctorRemediationPlanCacheEntry = {
@@ -162,6 +188,7 @@ type ArtifactRemediationAction = {
   blocker: string;
   summary: string;
   command?: string;
+  invocation?: DoctorRemediationPlanStepView['invocation'];
   verifyCommand: string;
   cwd: 'workspace' | 'project';
   files: string[];
@@ -169,6 +196,8 @@ type ArtifactRemediationAction = {
   strategy: DoctorRemediationStrategyStage[];
   transaction?: DoctorRemediationPlanStepView['transaction'];
   notes: string[];
+  requirements: DoctorRemediationPlanStepView['requirements'];
+  retryPolicy?: DoctorRemediationPlanStepView['retryPolicy'];
 };
 
 const doctorRemediationPlanCache = new Map<string, DoctorRemediationPlanCacheEntry>();
@@ -212,6 +241,70 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === 'string')
     : [];
+}
+
+function normalizeCommandInvocation(value: unknown): DoctorRemediationPlanStepView['invocation'] {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const executable = readString(value.executable).trim();
+  const cwd = readString(value.cwd).trim();
+  const args = readStringArray(value.args);
+  return executable && cwd ? { cwd, executable, args } : undefined;
+}
+
+function normalizeActionRequirements(
+  value: unknown
+): DoctorRemediationPlanStepView['requirements'] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const kind = entry.kind === 'executable' || entry.kind === 'action' ? entry.kind : undefined;
+    const status =
+      entry.status === 'satisfied' || entry.status === 'missing' || entry.status === 'pending'
+        ? entry.status
+        : undefined;
+    const id = readString(entry.id).trim();
+    const message = readString(entry.message).trim();
+    if (!kind || !status || !id || !message) {
+      return [];
+    }
+    return [
+      {
+        kind,
+        id,
+        status,
+        ...(readString(entry.executable).trim()
+          ? { executable: readString(entry.executable).trim() }
+          : {}),
+        ...(readString(entry.actionId).trim()
+          ? { actionId: readString(entry.actionId).trim() }
+          : {}),
+        message,
+      },
+    ];
+  });
+}
+
+function normalizeRetryPolicy(value: unknown): DoctorRemediationPlanStepView['retryPolicy'] {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const sameGeneration =
+    value.sameGeneration === 'allowed' || value.sameGeneration === 'forbidden'
+      ? value.sameGeneration
+      : undefined;
+  const resumeWhen =
+    value.resumeWhen === 'immediate' ||
+    value.resumeWhen === 'dependencies-complete' ||
+    value.resumeWhen === 'environment-changed'
+      ? value.resumeWhen
+      : undefined;
+  return sameGeneration && resumeWhen ? { sameGeneration, resumeWhen } : undefined;
 }
 
 function normalizeRisk(value: unknown): 'safe' | 'guarded' | 'invasive' {
@@ -609,6 +702,12 @@ function mapStep(step: Record<string, unknown>): DoctorRemediationPlanStepView {
     : readBoolean(step.executable)
       ? ('run-command' as const)
       : ('manual-guidance' as const);
+  const executable = readBoolean(step.executable);
+  const executionReady = Boolean(
+    risk !== 'invasive' &&
+    (operation || executable) &&
+    (studioState === 'ready' || studioState === 'review-required')
+  );
   return {
     id: rawId,
     actionId: canonicalId,
@@ -625,7 +724,13 @@ function mapStep(step: Record<string, unknown>): DoctorRemediationPlanStepView {
     repairMode,
     sourceMutation: repairMode === 'edit-file' ? 'required' : transaction ? 'forbidden' : 'allowed',
     risk,
-    executable: readBoolean(step.executable),
+    executable,
+    executionReady,
+    executionKind: operation
+      ? 'structured-operation'
+      : executable
+        ? 'contract-command'
+        : 'unavailable',
     studioState,
     studioReason: readString(studioStatus.reason),
     primaryAction: readString(
@@ -641,6 +746,9 @@ function mapStep(step: Record<string, unknown>): DoctorRemediationPlanStepView {
     verifyCommand: readString(step.verifyCommand) || undefined,
     refreshCommands: readStringArray(step.refreshCommands),
     blockedReason: readString(step.blockedReason) || undefined,
+    invocation: normalizeCommandInvocation(step.invocation),
+    requirements: normalizeActionRequirements(step.requirements),
+    retryPolicy: normalizeRetryPolicy(step.retryPolicy),
     operation,
     strategy: normalizeRepairStrategy(step.strategy),
     transaction,
@@ -738,6 +846,7 @@ function normalizeArtifactAction(value: unknown): ArtifactRemediationAction | nu
     blocker: readString(value.blocker),
     summary: readString(value.summary),
     command: readString(value.command) || undefined,
+    invocation: normalizeCommandInvocation(value.invocation),
     verifyCommand: readString(value.verifyCommand),
     cwd: value.cwd === 'project' ? 'project' : 'workspace',
     files: readStringArray(value.files),
@@ -745,6 +854,8 @@ function normalizeArtifactAction(value: unknown): ArtifactRemediationAction | nu
     strategy: normalizeRepairStrategy(value.strategy),
     transaction,
     notes: readStringArray(value.notes),
+    requirements: normalizeActionRequirements(value.requirements),
+    retryPolicy: normalizeRetryPolicy(value.retryPolicy),
   };
 }
 
@@ -816,6 +927,75 @@ function selectBlockerFocusedActions(
   return matchingActions.filter((action) => selectedIds.has(action.id));
 }
 
+function includeActionDependencies(
+  matchedActions: ArtifactRemediationAction[],
+  allActions: ArtifactRemediationAction[]
+): ArtifactRemediationAction[] {
+  const byId = new Map(allActions.map((action) => [action.id, action]));
+  const selectedIds = new Set(matchedActions.map((action) => action.id));
+  const pending = [...matchedActions];
+  while (pending.length > 0) {
+    const action = pending.pop();
+    for (const dependencyId of action?.dependsOn ?? []) {
+      const dependency = byId.get(dependencyId);
+      if (!dependency || selectedIds.has(dependency.id)) {
+        continue;
+      }
+      selectedIds.add(dependency.id);
+      pending.push(dependency);
+    }
+  }
+  return allActions
+    .filter((action) => selectedIds.has(action.id))
+    .sort((a, b) => a.order - b.order);
+}
+
+function displayInvocation(invocation: DoctorRemediationPlanStepView['invocation']): string {
+  return invocation ? [invocation.executable, ...invocation.args].join(' ') : '';
+}
+
+function scopedArtifactPlanExecution(input: {
+  steps: DoctorRemediationPlanStepView[];
+  rawExecution: Record<string, unknown>;
+}): DoctorRemediationPlanView['execution'] {
+  const stepIds = new Set(input.steps.map((step) => step.id));
+  const eligibleActionIds = readStringArray(input.rawExecution.eligibleActionIds).filter((id) =>
+    stepIds.has(id)
+  );
+  const blockedActionIds = readStringArray(input.rawExecution.blockedActionIds).filter((id) =>
+    stepIds.has(id)
+  );
+  const declaredNextActionId = readString(input.rawExecution.nextActionId).trim();
+  const declaredScopedNextActionId = stepIds.has(declaredNextActionId)
+    ? declaredNextActionId
+    : undefined;
+  const externalPrerequisite = input.steps.find(
+    (step) =>
+      step.retryPolicy?.resumeWhen === 'environment-changed' &&
+      step.requirements.some(
+        (requirement) => requirement.kind === 'executable' && requirement.status === 'missing'
+      )
+  );
+  const guidancePrerequisite = input.steps.find(
+    (step) => step.studioState === 'guidance-only' || step.studioState === 'blocked'
+  );
+
+  return {
+    // The artifact carries a workspace-global nextActionId. Studio consumes a
+    // finding-scoped projection, so an unrelated advisory must never become
+    // the active card's causal action. Preserve CLI ordering only inside the
+    // selected action/dependency closure, then surface its typed prerequisite.
+    nextActionId:
+      declaredScopedNextActionId ??
+      eligibleActionIds[0] ??
+      externalPrerequisite?.id ??
+      guidancePrerequisite?.id ??
+      null,
+    eligibleActionIds,
+    blockedActionIds,
+  };
+}
+
 function mapArtifactActionToStep(input: {
   action: ArtifactRemediationAction;
   workspacePath: string;
@@ -842,6 +1022,12 @@ function mapArtifactActionToStep(input: {
     action.risk !== 'invasive' &&
     (action.status === 'ready' || action.status === 'review-required')
   );
+  const executable = Boolean(action.command || action.invocation);
+  const executionReady = Boolean(
+    action.risk !== 'invasive' &&
+    (action.operation || executable) &&
+    (action.status === 'ready' || action.status === 'review-required')
+  );
   return {
     id: action.id,
     actionId: action.id,
@@ -853,7 +1039,7 @@ function mapArtifactActionToStep(input: {
     issueId: action.findingId,
     causalKey: action.causalKey,
     findingStatus: action.findingStatus,
-    originalCommand: action.command ?? action.verifyCommand,
+    originalCommand: action.command || displayInvocation(action.invocation) || action.verifyCommand,
     kind: action.mode,
     repairMode: action.mode,
     sourceMutation:
@@ -863,7 +1049,13 @@ function mapArtifactActionToStep(input: {
           ? 'forbidden'
           : 'allowed',
     risk: action.risk,
-    executable: Boolean(action.command),
+    executable,
+    executionReady,
+    executionKind: action.operation
+      ? 'structured-operation'
+      : executable
+        ? 'contract-command'
+        : 'unavailable',
     studioState: action.status,
     studioReason:
       action.notes[0] ??
@@ -881,6 +1073,9 @@ function mapArtifactActionToStep(input: {
       'npx workspai workspace remediation-plan --ci --json --write --include-paths',
     ],
     blockedReason: action.status === 'blocked' ? action.summary : undefined,
+    invocation: action.invocation,
+    requirements: action.requirements,
+    retryPolicy: action.retryPolicy,
     operation: action.operation,
     strategy: action.strategy,
     canApply,
@@ -984,11 +1179,13 @@ async function readArtifactRemediationPlanForStudio(input: {
   }
   const generatedAt = readString(payload.generatedAt);
   const rawActions = Array.isArray(payload.actions) ? payload.actions : [];
-  const matchingActions = rawActions
+  const allActions = rawActions
     .map(normalizeArtifactAction)
-    .filter((entry): entry is ArtifactRemediationAction => Boolean(entry))
+    .filter((entry): entry is ArtifactRemediationAction => Boolean(entry));
+  const directlyMatchingActions = allActions
     .filter((action) => artifactActionMatchesHandoff(action, input.handoff))
     .sort((a, b) => a.order - b.order);
+  const matchingActions = includeActionDependencies(directlyMatchingActions, allActions);
   const blockingActions = matchingActions.filter((action) => action.findingStatus === 'blocking');
   const actionableActions =
     blockingActions.length > 0
@@ -1002,6 +1199,8 @@ async function readArtifactRemediationPlanForStudio(input: {
     mapArtifactActionToStep({ action, workspacePath: input.workspacePath, handoff: input.handoff })
   );
   const visibleSteps = steps.slice(0, input.maxSteps);
+  const rawExecution = isRecord(payload.execution) ? payload.execution : {};
+  const execution = scopedArtifactPlanExecution({ steps, rawExecution });
   const risk = steps.reduce(
     (acc, step) => {
       acc[step.risk] += 1;
@@ -1025,6 +1224,7 @@ async function readArtifactRemediationPlanForStudio(input: {
       handoff: input.handoff,
       generatedAt,
     }),
+    execution,
   };
 }
 
@@ -1091,6 +1291,18 @@ export async function readDoctorRemediationPlanForStudio(input: {
         const visibleSteps = scopedSteps.slice(0, maxSteps);
         const risk = isRecord(payload.risk) ? payload.risk : {};
         const generatedAt = readString(payload.generatedAt);
+        const eligibleActionIds = scopedSteps
+          .filter(
+            (step) =>
+              step.risk !== 'invasive' &&
+              (step.studioState === 'ready' || step.studioState === 'review-required') &&
+              (step.executable || step.canApply) &&
+              step.dependsOn.length === 0
+          )
+          .map((step) => step.id);
+        const blockedActionIds = scopedSteps
+          .filter((step) => step.studioState === 'blocked')
+          .map((step) => step.id);
 
         const plan: DoctorRemediationPlanView = {
           schemaVersion: DOCTOR_REMEDIATION_PLAN_SCHEMA_VERSION,
@@ -1108,6 +1320,11 @@ export async function readDoctorRemediationPlanForStudio(input: {
           hiddenStepCount: Math.max(0, scopedSteps.length - visibleSteps.length),
           scope: handoff.scope,
           freshness: await assessPlanFreshness({ workspacePath, handoff, generatedAt }),
+          execution: {
+            nextActionId: eligibleActionIds[0] ?? null,
+            eligibleActionIds,
+            blockedActionIds,
+          },
         };
         doctorRemediationPlanCache.set(cacheKey, {
           expiresAt: Date.now() + DOCTOR_REMEDIATION_PLAN_CACHE_TTL_MS,

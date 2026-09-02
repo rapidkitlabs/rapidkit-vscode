@@ -95,7 +95,34 @@ export function renderNativeStudioAgentEvent(
     stream.progress(`${tool}…`);
     return;
   }
+  if (event.type === 'tool.approval.requested') {
+    const command = typeof data.displayCommand === 'string' ? `: ${data.displayCommand}` : '';
+    stream.progress(`Waiting for exact command approval${command}`);
+    return;
+  }
+  if (event.type === 'tool.approval.approved') {
+    stream.progress(`Exact command approved for ${String(data.execution ?? 'once')} scope`);
+    return;
+  }
+  if (event.type === 'tool.approval.rejected') {
+    stream.progress('Exact command was not approved');
+    return;
+  }
   if (event.type === 'tool.progress') {
+    const process = eventRecord(data.process);
+    if (typeof process.phase === 'string') {
+      const pid = typeof process.processId === 'number' ? `PID ${process.processId}` : 'Process';
+      if (process.phase === 'started') {
+        stream.progress(`${pid} started: ${String(process.displayCommand ?? tool)}`);
+      } else if (process.phase === 'completed') {
+        stream.progress(
+          `${pid} exited ${String(process.exitCode ?? 'without a code')} after ${String(process.durationMs ?? 0)} ms`
+        );
+      } else {
+        stream.progress(`${pid} running · ${String(process.elapsedMs ?? 0)} ms`);
+      }
+      return;
+    }
     const repair = eventRecord(data.repair);
     const phaseTitle = cliRepairProgressTitle(repair);
     if (phaseTitle) {
@@ -120,6 +147,18 @@ export function renderNativeStudioAgentEvent(
     return;
   }
   if (event.type === 'tool.failed') {
+    const output = eventRecord(data.output);
+    const rollback = eventRecord(output.rollback);
+    if (typeof rollback.restoredFingerprint === 'string') {
+      const changedPathCount = Array.isArray(rollback.changedPaths)
+        ? rollback.changedPaths.length
+        : 0;
+      stream.progress(`Restored the pre-command checkpoint (${changedPathCount} source path(s))`);
+      const effects = eventRecord(output.effects);
+      if (effects.repositoryMetadata === true || effects.externalSystem === true) {
+        stream.progress('Non-source effects remain outside rollback and require verification');
+      }
+    }
     const files = fileChangeRecords(data);
     if (files.length > 0) {
       stream.markdown(renderNativeFileChangeMarkdown(files));

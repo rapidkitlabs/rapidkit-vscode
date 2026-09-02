@@ -11,6 +11,7 @@ import { showWelcomeCommand } from './showWelcome';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { SetupPanel } from '../ui/panels/setupExperiencePanel';
 import type { ModuleData } from '../data/modules';
+import { clearStoredStudioToolApprovals } from '../core/studioToolApproval.js';
 
 type WorkspaceLike = { path: string; name?: string };
 type ProjectLike = { path: string; name: string; type: string; workspacePath?: string };
@@ -282,6 +283,13 @@ export function registerCoreCommands(options: {
 
     vscode.commands.registerCommand('workspai.openDocs', async () => {
       await vscode.env.openExternal(vscode.Uri.parse('https://www.workspai.dev/learn'));
+    }),
+
+    vscode.commands.registerCommand('workspai.clearStudioCommandApprovals', async () => {
+      await clearStoredStudioToolApprovals(context.workspaceState);
+      vscode.window.showInformationMessage(
+        'Workspai cleared all saved Studio command approvals for this VS Code workspace.'
+      );
     }),
 
     vscode.commands.registerCommand('workspai.addModule', addModuleCommand),

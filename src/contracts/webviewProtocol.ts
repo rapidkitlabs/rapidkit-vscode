@@ -17,6 +17,7 @@ export type RequestDashboardEvidenceData = {
   reportPath?: string;
   refreshMode?: DashboardEvidenceRefreshMode;
   requestId?: number;
+  includeOperations?: boolean;
 };
 
 export type RefreshDashboardEvidenceCardData = {

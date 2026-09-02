@@ -60,6 +60,31 @@ function commandFailure(result: GoalCommandResult, incompatibleMessage: string):
   return new Error(result.ok ? incompatibleMessage : result.error);
 }
 
+const REFRESHABLE_GOAL_EVIDENCE_FAILURES = [
+  /\blive-input-mismatch\b/i,
+  /canonical model and live graph evidence are required/i,
+  /retry with --refresh/i,
+];
+
+/**
+ * The CLI owns canonical-evidence freshness and explicitly advertises the
+ * recovery contract in its operation error. Studio may follow that contract
+ * once, but must never turn an unrelated Goal failure into an unbounded or
+ * destructive refresh loop.
+ */
+function canRefreshGoalEvidence(
+  result: GoalCommandResult,
+  args: readonly string[]
+): result is Extract<GoalCommandResult, { ok: false }> {
+  if (result.ok || args.includes('--refresh')) {
+    return false;
+  }
+  if (result.operation && result.operation !== 'goal.plan') {
+    return false;
+  }
+  return REFRESHABLE_GOAL_EVIDENCE_FAILURES.some((pattern) => pattern.test(result.error));
+}
+
 /**
  * Establish the immutable CLI lifecycle before a model receives mutation tools.
  * Keeping this orchestration outside the webview host makes the boundary usable
@@ -106,14 +131,33 @@ export async function prepareGovernedGoalSession(input: {
   }
   input.onPhase?.('Defining an evidence-bound CLI-governed Goal...');
   let planned: GoalCommandResult | null = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  let automaticRefreshPending = false;
+  let automaticRefreshUsed = false;
+  // Four attempts cover the complete bounded convergence path: one
+  // CLI-authored evidence refresh, one scope decision, one runtime decision,
+  // and the final immutable plan.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     planned = await run({
       workspacePath: input.workspacePath,
       args: [...args],
       label: 'Define governed Goal',
     });
-    if (!planned.ok || !isGoalPlanResult(planned.value)) {
+    if (!planned.ok) {
+      if (!automaticRefreshUsed && canRefreshGoalEvidence(planned, args)) {
+        args.push('--refresh');
+        automaticRefreshPending = true;
+        automaticRefreshUsed = true;
+        input.onPhase?.('Refreshing canonical Model and Graph evidence...');
+        continue;
+      }
       throw commandFailure(planned, 'Workspai CLI returned an incompatible Goal plan.');
+    }
+    if (!isGoalPlanResult(planned.value)) {
+      throw commandFailure(planned, 'Workspai CLI returned an incompatible Goal plan.');
+    }
+    if (automaticRefreshPending) {
+      args.splice(args.indexOf('--refresh'), 1);
+      automaticRefreshPending = false;
     }
     if (planned.value.result === 'planned') {
       break;

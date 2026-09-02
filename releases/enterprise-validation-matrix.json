@@ -101,6 +101,109 @@
       ]
     },
     {
+      "id": "studio.pcc.deletion_and_resume",
+      "label": "Deleted source and blocked PCC history remain independently verifiable",
+      "category": "studio",
+      "priority": "P0",
+      "evidence": [
+        "src/test/studioProofCarryingChange.test.ts",
+        "src/test/studioToolApproval.test.ts",
+        "src/core/studioProofCarryingChange.ts",
+        "src/core/studioToolApproval.ts"
+      ],
+      "requiredSnippets": [
+        "receipt.deletedArtifacts",
+        "resumes a blocked durable change only after a fresh human decision",
+        "requestVSCodeProofCarryingChangeResume",
+        "vscode:explicit-pcc-resume"
+      ]
+    },
+    {
+      "id": "studio.remediation.exact_continuation",
+      "label": "Fresh CLI remediation becomes one durable approval-bound model action",
+      "category": "studio",
+      "priority": "P0",
+      "evidence": [
+        "src/test/studioAgentSession.test.ts",
+        "src/test/studioCausalRecoveryBriefing.test.ts",
+        "src/core/studioAgentSession.ts",
+        "src/core/studioCausalRecoveryBriefing.ts"
+      ],
+      "requiredSnippets": [
+        "constrains the next model turn to the exact fresh CLI remediation action",
+        "binds required remediation approval to the exact durable action and resumes after rejection",
+        "required-causal-action-ready",
+        "required-remediation-action-failed"
+      ]
+    },
+    {
+      "id": "studio.goal.canonical_freshness_recovery",
+      "label": "Goal preflight follows the CLI-authored canonical evidence recovery exactly once",
+      "category": "studio",
+      "priority": "P0",
+      "evidence": ["src/test/governedGoalSession.test.ts", "src/core/governedGoalSession.ts"],
+      "requiredSnippets": [
+        "follows the CLI-authored freshness recovery once before activating a Goal",
+        "does not disguise unrelated Goal planning failures as freshness recovery",
+        "does not repeat refresh when the refreshed canonical evidence is still rejected",
+        "Refreshing canonical Model and Graph evidence..."
+      ]
+    },
+    {
+      "id": "studio.external_effect.reobserved",
+      "label": "Non-reversible effects require durable post-effect observation",
+      "category": "studio",
+      "priority": "P0",
+      "evidence": [
+        "src/test/studioAgentSession.test.ts",
+        "src/test/studioWorkspaceCommandTransaction.test.ts",
+        "src/core/studioAgentSession.ts",
+        "src/core/studioWorkspaceCommandTransaction.ts"
+      ],
+      "requiredSnippets": [
+        "preserves non-source observation obligations across a durable session resume",
+        "pendingEffectVerificationScopes",
+        "observationScopes: plan.observationScopes",
+        "git-repository"
+      ]
+    },
+    {
+      "id": "studio.command.dynamic_governance",
+      "label": "Repository-specific tools use dynamic no-shell governance instead of product patches",
+      "category": "studio",
+      "priority": "P1",
+      "evidence": [
+        "src/test/studioWorkspaceCommand.test.ts",
+        "src/core/studioWorkspaceCommand.ts",
+        "src/core/studioWorkspaceCommandTransaction.ts"
+      ],
+      "requiredSnippets": [
+        "accepts a repository-specific PATH tool through exact one-run approval and observation",
+        "unclassifiedCommand",
+        "`command:${executableName}`",
+        "shell: false"
+      ]
+    },
+    {
+      "id": "dashboard.pcc.live_graph_projection",
+      "label": "Live and Graph present bounded PCC truth without mutating canonical architecture",
+      "category": "dashboard",
+      "priority": "P1",
+      "evidence": [
+        "src/test/proofCarryingChangeProjection.test.ts",
+        "src/test/workspaceGraphExplorerUx.test.ts",
+        "src/core/proofCarryingChangeProjection.ts",
+        "webview-ui/src/components/WorkspaceLiveOperations.tsx",
+        "webview-ui/src/components/WorkspaceGraphExplorer.tsx"
+      ],
+      "requiredSnippets": [
+        "fails closed for graph artifacts that are not bound to the selected PCC contract",
+        "verified deletion",
+        "Change overlay",
+        "canonical Graph data is unchanged"
+      ]
+    },
+    {
       "id": "studio.audit.visible",
       "label": "Studio audit and feedback failures are visible and retryable",
       "category": "studio",

@@ -65,6 +65,8 @@ export type GoalEntry = {
   verifiedGoalId?: string;
   repairTransactionId?: string;
   repairTransactionIds?: string[];
+  changeTransactionId?: string;
+  changeTransactionIds?: string[];
   verificationReceipt?: {
     verifiedGoalId: string;
     attempt: number;
@@ -307,6 +309,16 @@ export function parseGoalEntry(value: unknown): GoalEntry | null {
         !value.repairTransactionIds.every((entry) => /^[A-Za-z0-9_-]{12,128}$/.test(entry)) ||
         (typeof value.repairTransactionId === 'string' &&
           value.repairTransactionIds.at(-1) !== value.repairTransactionId))) ||
+    (value.changeTransactionId !== undefined &&
+      (typeof value.changeTransactionId !== 'string' ||
+        !/^change-[a-z0-9][a-z0-9-]{7,95}$/.test(value.changeTransactionId))) ||
+    (value.changeTransactionIds !== undefined &&
+      (!isUniqueStringArray(value.changeTransactionIds, { min: 1, max: 25 }) ||
+        !value.changeTransactionIds.every((entry) =>
+          /^change-[a-z0-9][a-z0-9-]{7,95}$/.test(entry)
+        ) ||
+        (typeof value.changeTransactionId === 'string' &&
+          value.changeTransactionIds.at(-1) !== value.changeTransactionId))) ||
     (value.verificationReceipt !== undefined &&
       (!isRecord(value.verificationReceipt) ||
         typeof value.verificationReceipt.verifiedGoalId !== 'string' ||

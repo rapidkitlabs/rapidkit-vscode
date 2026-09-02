@@ -609,9 +609,14 @@ export async function collectSidebarStudioRepairEvidence(input: {
     expectedBaseSha256,
     missingRequired: bundle.missingRequired,
     evidenceFingerprint,
-    authorizedEvidencePaths: bundle.attachments
-      .filter((attachment) => attachment.exists)
-      .map(evidenceAttachmentLocator),
+    authorizedEvidencePaths: [
+      ...new Set([
+        ...bundle.attachments
+          .filter((attachment) => attachment.exists)
+          .map(evidenceAttachmentLocator),
+        ...bundle.missingRequired,
+      ]),
+    ],
   };
 }
 

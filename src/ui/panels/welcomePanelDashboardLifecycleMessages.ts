@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 import {
   getWebviewMessageDataRecord,
+  readBooleanField,
   readDashboardEvidenceCardIds,
   readDashboardEvidenceRefreshMode,
   readNumberField,
@@ -241,6 +242,7 @@ export async function tryDispatchDashboardLifecycleWebviewMessage(
         reportPath: readStringField(payload, 'reportPath'),
         refreshMode: readDashboardEvidenceRefreshMode(payload, 'full'),
         requestId: readNumberField(payload, 'requestId'),
+        includeOperations: readBooleanField(payload, 'includeOperations'),
       });
       break;
     }

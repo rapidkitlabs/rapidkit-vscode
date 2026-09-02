@@ -66,4 +66,11 @@ export class VSCodeStudioAgentSessionStore implements StudioAgentSessionStore {
     const session = readStore(this.context).sessions.find((entry) => entry.id === sessionId);
     return session ? structuredClone(session) : undefined;
   }
+
+  async list(workspacePath?: string): Promise<StudioAgentPersistedSession[]> {
+    const sessions = readStore(this.context).sessions;
+    return sessions
+      .filter((session) => !workspacePath || session.workspacePath === workspacePath)
+      .map((session) => structuredClone(session));
+  }
 }

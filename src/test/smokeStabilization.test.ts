@@ -53,6 +53,7 @@ describe('smoke: dashboard section navigation', () => {
     expect(normalizeDashboardSection('workspaces')).toBe('catalog');
     expect(normalizeDashboardSection('invalid')).toBe('overview');
     expect(normalizeDashboardSection('evidence')).toBe('evidence');
+    expect(normalizeDashboardSection('live')).toBe('live');
     expect(normalizeDashboardSection('repair')).toBe('repair');
     expect(normalizeDashboardSection('operate')).toBe('operate');
     expect(dashboardSectionNeedsCatalog('console')).toBe(true);

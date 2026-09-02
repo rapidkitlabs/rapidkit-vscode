@@ -267,7 +267,7 @@ describe('Studio card repair end-to-end matrix', () => {
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: 'model.checkpoint',
-        data: expect.objectContaining({ recovery: 'producer-to-source-repair' }),
+        data: expect.objectContaining({ recovery: 'producer-to-causal-recovery' }),
       })
     );
   });

@@ -92,6 +92,45 @@ export function resolveWorkspaceModelProjectAbsolutePath(
   return path.resolve(workspacePath, project.path);
 }
 
+function sameCanonicalPath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function pathIsInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+/**
+ * Resolve workspace membership from the canonical Model, not directory
+ * ancestry. Adopted projects are commonly linked outside the managed
+ * workspace root and remain first-class registered projects.
+ */
+export async function isRegisteredWorkspaceProjectPath(
+  workspacePath: string,
+  projectPath?: string
+): Promise<boolean> {
+  if (!projectPath?.trim()) {
+    return false;
+  }
+  if (pathIsInside(workspacePath, projectPath)) {
+    return true;
+  }
+  const model = await readWorkspaceModelReport(workspacePath);
+  return Boolean(
+    model?.projects?.some((project) =>
+      sameCanonicalPath(
+        resolveWorkspaceModelProjectAbsolutePath(workspacePath, project),
+        projectPath
+      )
+    )
+  );
+}
+
 export async function readWorkspaceModelReport(
   workspacePath?: string
 ): Promise<WorkspaceModelReport | null> {

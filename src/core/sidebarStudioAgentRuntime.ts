@@ -285,7 +285,6 @@ export async function inspectStudioAgentFiles(input: {
       realPath = await fs.realpath(lexicalPath);
     } catch (error) {
       if (
-        input.kind === 'source' &&
         error &&
         typeof error === 'object' &&
         'code' in error &&

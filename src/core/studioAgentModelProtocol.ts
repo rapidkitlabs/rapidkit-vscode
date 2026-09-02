@@ -320,6 +320,12 @@ function conciseToolOutput(
         'fallbackCapability',
         'recommendedTools',
         'recommendedActions',
+        'producerRefreshCommandId',
+        'producerRefreshReason',
+        'remediationStep',
+        'requiredAction',
+        'remediationPlanRefreshed',
+        'remediationPlanError',
         'exhaustedTools',
         'observations',
         'evidenceGeneration',
@@ -341,6 +347,11 @@ function conciseToolOutput(
         'displayCommand',
         'mutatesSource',
         'observedSourceChange',
+        'effects',
+        'effectScopes',
+        'observationScopes',
+        'rolledBack',
+        'rollbackReason',
       ]
         .filter((key) => record[key] !== undefined)
         .map((key) => [key, record[key]])
@@ -412,6 +423,85 @@ function conciseCausalEvent(event: StudioAgentModelContext['session']['events'][
     error: typeof data.error === 'string' ? boundedControlText(data.error, 1_200) : undefined,
     summary: typeof data.summary === 'string' ? boundedControlText(data.summary, 600) : undefined,
     output: conciseToolOutput(data.output),
+  };
+}
+
+function isCausalSessionEvent(
+  event: StudioAgentModelContext['session']['events'][number]
+): boolean {
+  return (
+    event.type === 'request.steered' ||
+    event.type === 'model.checkpoint' ||
+    event.type === 'tool.completed' ||
+    event.type === 'tool.failed' ||
+    event.type === 'verify.completed'
+  );
+}
+
+/**
+ * Preserve the causal spine of long-running sessions without replaying source,
+ * command transcripts, or every intermediate observation into the provider.
+ * This summary is derived only from durable events and keeps sequence numbers,
+ * so a newer raw event can safely supersede an older compacted outcome.
+ */
+function conciseEarlierCausalHistory(
+  events: StudioAgentModelContext['session']['events']
+): unknown {
+  if (events.length === 0) {
+    return null;
+  }
+
+  const toolOutcomes = new Map<
+    string,
+    { completed: number; failed: number; lastSequence: number; lastOutcome: string }
+  >();
+  let latestFailure: ReturnType<typeof conciseCausalEvent> | undefined;
+  let latestVerification: ReturnType<typeof conciseCausalEvent> | undefined;
+  let latestCheckpoint: ReturnType<typeof conciseCausalEvent> | undefined;
+  let latestSteering: ReturnType<typeof conciseCausalEvent> | undefined;
+
+  for (const event of events) {
+    const concise = conciseCausalEvent(event);
+    if (event.type === 'tool.completed' || event.type === 'tool.failed') {
+      const toolName = typeof concise.toolName === 'string' ? concise.toolName : 'unknown-tool';
+      const previous = toolOutcomes.get(toolName) ?? {
+        completed: 0,
+        failed: 0,
+        lastSequence: event.sequence,
+        lastOutcome: event.type,
+      };
+      if (event.type === 'tool.completed') {
+        previous.completed += 1;
+      } else {
+        previous.failed += 1;
+        latestFailure = concise;
+      }
+      previous.lastSequence = event.sequence;
+      previous.lastOutcome = event.type;
+      toolOutcomes.set(toolName, previous);
+    } else if (event.type === 'verify.completed') {
+      latestVerification = concise;
+    } else if (event.type === 'model.checkpoint') {
+      latestCheckpoint = concise;
+    } else if (event.type === 'request.steered') {
+      latestSteering = concise;
+    }
+  }
+
+  return {
+    compactedEventCount: events.length,
+    sequenceRange: {
+      first: events[0]?.sequence,
+      last: events.at(-1)?.sequence,
+    },
+    toolOutcomes: [...toolOutcomes.entries()]
+      .map(([toolName, outcome]) => ({ toolName, ...outcome }))
+      .sort((left, right) => right.lastSequence - left.lastSequence)
+      .slice(0, 16),
+    latestEarlierFailure: latestFailure,
+    latestEarlierVerification: latestVerification,
+    latestEarlierCheckpoint: latestCheckpoint,
+    latestEarlierSteering: latestSteering,
   };
 }
 
@@ -489,17 +579,10 @@ function promptForTurn(
   // Re-sending request/status chatter on every turn wastes model context and
   // previously caused long-lived repair sessions to hit the provider token
   // limit before reaching a tool call. Keep only causal tool/checkpoint events.
-  const recentEvents = context.session.events
-    .filter(
-      (event) =>
-        event.type === 'request.steered' ||
-        event.type === 'model.checkpoint' ||
-        event.type === 'tool.completed' ||
-        event.type === 'tool.failed' ||
-        event.type === 'verify.completed'
-    )
-    .slice(budget === 'compact' ? -2 : -8)
-    .map(conciseCausalEvent);
+  const causalEvents = context.session.events.filter(isCausalSessionEvent);
+  const recentEventLimit = budget === 'compact' ? 2 : 8;
+  const earlierEvents = causalEvents.slice(0, Math.max(0, causalEvents.length - recentEventLimit));
+  const recentEvents = causalEvents.slice(-recentEventLimit).map(conciseCausalEvent);
   const selectedMode = context.session.assistantMode;
   const mode = context.session.executionPolicy?.toolMode ?? selectedMode;
   const intelligenceLoop = getWorkspaceIntelligenceCanonicalStages().map(
@@ -512,7 +595,7 @@ function promptForTurn(
   const modeInstructions =
     mode === 'agent' || mode === 'goal'
       ? [
-          'Own the task from evidence inspection through source change and final verification.',
+          'Own the task from evidence inspection through the required causal actions and final verification.',
           ...(mode === 'goal'
             ? goalCompletionMode === 'evidence-review'
               ? [
@@ -527,7 +610,7 @@ function promptForTurn(
           ...(mode === 'agent' && !context.session.goal && !context.session.governedGoal
             ? [
                 'This is a free-form Agent session without a pre-defined blocker or goal. First, use your intelligence to understand what the user actually wants. If the request is vague, off-topic, or non-actionable (e.g. greetings, jokes, unrelated questions), respond with a brief clarifying message instead of running tools — you may send a plain-text message without a tool call in this case.',
-                'When the request is a clear engineering task, interpret it as the objective and resolve it autonomously through the full intelligent loop: discover → inspect → patch → verify → complete.',
+                'When the request is a clear engineering task, interpret it as the objective and resolve it autonomously through the full intelligent loop: discover → inspect → act → verify → complete.',
                 'After every closed CLI repair transaction, run verify-blocker to confirm workspace health, then inspect-workspace-changes to review the final diff. Only complete after both succeed.',
                 'When the request is ambiguous about scope (workspace vs. a specific project), use query-workspace-graph or discover-workspace-files to enumerate available projects first. If multiple projects exist and the target is unclear, ask the user to confirm the intended project before mutating source.',
               ]
@@ -541,28 +624,31 @@ function promptForTurn(
           'Prefer the workspaceIntelligenceChain governed command when the complete evidence chain must be regenerated. It is the contract-owned authority for stage order, dependencies, verdict propagation, and downstream artifacts.',
           'The unified intelligence chain does not replace card-specific producers. When a remediation plan is missing or stale, run workspaceRemediationPlan first; use workspaceIntelligenceChain only after source repair or when the complete canonical evidence chain must be refreshed.',
           'The canonical Workspace Intelligence stages below are immutable. Never reorder, skip, append, or substitute stages. Execution prerequisites are reported separately and never become chain stages. Auxiliary capabilities may repair the source needed to pass a stage, but they never become chain stages.',
-          'Every source mutation is a CLI Repair Engine proposal. The CLI owns checkpointing, runtime-specific reconciliation, audit/test/build validation, the canonical Workspace Intelligence chain, target verification, closure, and rollback. Never start a second closure sequence after a CLI transaction reports closed.',
+          'Use a CLI Repair Engine proposal for semantic source edits whenever the exact file change can be expressed as an inspected patch. The CLI owns checkpointing, runtime-specific reconciliation, audit/test/build validation, the canonical Workspace Intelligence chain, target verification, closure, and rollback. A repository-native mutating command is a separate invasive path: propose it only when the tool itself owns the required transformation; Studio will pause for exact fingerprint-bound user approval and audit the resulting source transaction. Git metadata and external-system operations require one-run approval because the local source checkpoint cannot roll them back; inspect their resulting state with a separate read-only command before making a success claim. Never start a second closure sequence after a CLI transaction reports closed.',
           'Use individual governed producers only for a diagnosed source artifact or a targeted recovery, then run the unified chain before completion.',
-          'Repair source manifests, configuration, or project files when evidence identifies a source defect; use governed commands only to regenerate evidence and verify the result.',
+          'Choose the action class from evidence. Patch inspected files for a source defect, execute an immutable remediation step when its contract matches, use a structured project command for non-source project/runtime state, and use governed commands for Workspai-owned producers and verification.',
           'You have a general workspace capability plane. Discover files, inspect exact source, inspect diagnostics and diffs, run structured no-shell project commands, and create, replace, or delete source through SHA-protected rollback transactions. Use these tools for arbitrary project types instead of waiting for a blocker-specific tool.',
           'A source file becomes patch-authorized after inspect-source returns its sha256. Search results alone are not edit authorization. For a general Agent task or an evidence-reviewed Goal, inspect-workspace-changes after the final closed repair transaction is mandatory before completion.',
           'Use query-workspace-graph first when architecture, ownership, dependencies, APIs, schemas, or cross-language relationships can bound the search. Use literal source search only for exact text and inspect the proof-carrying source before editing.',
+          'Use inspect-code-intelligence after Graph retrieval or exact source inspection when a language provider can resolve definitions, references, implementations, symbols, or hover types more reliably than text search. Treat empty provider results as unavailable language evidence, not proof that the relationship does not exist.',
+          'When two or more read-only inspections are independent, use inspect-workspace-batch so source, Graph, diagnostics, search, and language-provider evidence can be collected concurrently. Never batch a mutation, approval, producer, or verification action.',
           'For a large inspected file, read a bounded line range and prefer apply-workspace-edits with one unique oldText block instead of returning the complete file body.',
-          'Use run-workspace-command only for non-mutating project-native diagnosis, tests, and builds. Every Workspai/wspai command, including commands shown in evidence as npx workspai, must be mapped to run-governed-command; the controller binds its canonical scope and executes the bundled CLI runtime.',
+          'Use run-workspace-command for project-native diagnosis, tests, builds, formatting, dependency reconciliation, and repository-authored transformations. Non-mutating commands run autonomously; commands classified as source-mutating pause for explicit fingerprint-bound approval of the exact executable, argument vector, working directory, purpose, and timeout. Approval scope never weakens the command or workspace boundary. Never disguise a semantic edit as a command merely to bypass the CLI Repair Engine. Every Workspai/wspai command, including commands shown in evidence as npx workspai, must be mapped to run-governed-command; the controller binds its canonical scope and executes the bundled CLI runtime.',
+          'After an approved Git-metadata or external-system operation, Studio records its effect domains and rejects completion until a successful read-only command observes each matching domain. Choose the smallest native observation (for example git status plus git ls-remote, terraform show, kubectl get, helm status, docker inspect, or package-manager view); do not substitute a generic health check.',
           'When a blocker has a CLI-authored remediation plan, inspect the current plan and execute eligible steps by stepId. Never emit an unstructured shell string; use the structured workspace command tool when the plan does not cover the diagnosed source cause.',
           'For a dependency vulnerability blocker, use fresh Doctor evidence to inspect the affected manifests and compatibility constraints. Propose the smallest compatible source change; the CLI adapter owns reconciliation, audit, declared tests/build, and verification for the detected ecosystem.',
-          'When a blocker accelerator returns general-source-repair, no-safe-upgrade, a no-op, or a breaking/downgrade-only candidate, that accelerator is exhausted for the current causal generation. Do not call it again. Move to the general capability plane: inspect exact manifests and compatibility constraints, use structured project-native commands to discover admissible versions or alternatives, apply a SHA-protected source transaction, then build, test, audit, run the unified chain, and verify.',
+          'When a blocker accelerator returns general-source-repair, no-safe-upgrade, a no-op, or a breaking/downgrade-only candidate, that accelerator is exhausted for the current causal generation. Do not call it again. Move to the general capability plane and choose from fresh evidence: inspect source or diagnostics, refresh the owning producer, execute an exact remediation step, run a structured project-native command, or apply a SHA-protected source transaction. Then run the appropriate build/test/audit and canonical verification.',
           'A rejected model proposal is not an operator decision. Read the rejection cause, inspect the exact producer artifact and its normalized finding, map that finding to the source file or missing source artifact that can change the verdict, and submit materially different content. Never rewrite an unchanged file merely because it appeared in an earlier source-candidate list.',
           'For aggregate cards such as Analyze, Readiness, Workspace Verify, and Workspace Intelligence, the aggregate message is not the source target. Trace it to the project-scoped blocking finding first. Repair one causal finding family, refresh its owning producer, then let the controller advance to the next blocker.',
           'Dependency source repair is runtime-native, not npm-specific. Use the Doctor-authored audit invocation and the detected manifest plus lock/baseline for Node, Python, Go, Rust, JVM, PHP, Ruby, .NET, Elixir, Deno, Bun, or native projects. Before requesting a breaking decision, perform one bounded compatibility investigation of the affected package, its owning direct dependency, admissible constraint or override support, and available replacement path.',
-          'Never run Doctor, Readiness, Verify, Workspace Run, remediation-plan, or Workspace Intelligence through run-workspace-command. They are registered Workspai producers and always belong to run-governed-command. During active general-source-repair, their governed producer may remain locked until a real source change advances the causal generation.',
+          'Never run Doctor, Readiness, Verify, Workspace Run, remediation-plan, or Workspace Intelligence through run-workspace-command. They are registered Workspai producers and always belong to run-governed-command. The controller prevents duplicate observations within one causal generation; do not infer that source mutation is required merely because a producer still reports a blocker.',
           'A project-native diagnostic such as npm audit commonly exits non-zero because it found a problem. Treat its stdout/stderr as causal evidence, not as permission to rerun the same command. Inspect the authorized manifest, choose a compatible source-level resolution, and apply one patch transaction.',
           'Never invoke Workspai through npx, npm, pnpm, yarn, bun, workspai, or wspai from the generic command tool. Portable npx strings in evidence are display guidance for humans, not model execution authority.',
           'Never repeat an inspection, audit, remediation, or verify action against the same causal evidence generation. Reuse the prior observation and advance to a different causal action.',
-          'Never retry an exhausted repair accelerator and never hand-edit a package-manager lockfile. Move to inspected source and submit one guarded proposal through the CLI-owned patch transaction.',
+          'Never retry an exhausted repair accelerator and never hand-edit a package-manager lockfile. Move to a materially different causal capability supported by the prior observations.',
           'JSON files (.json) require strictly valid JSON. Never include comments (// or /* */), trailing commas, or non-standard syntax in any .json file content.',
           'Blocker-specific tools are optional accelerators, not capability boundaries. If an accelerator does not cover the diagnosed project or error, continue with discovery, diagnostics, inspected edits, project-native commands, diff review, and governed verification.',
-          'Treat failed target verification as a new observation and repair the causal source defect it reports. Remaining sourceCandidates after a rolled-back CLI transaction are the next causal targets: inspect them before proposing, create any path that inspect-source reports as exists:false, and do not rewrite a restored file whose content already failed verification. A selected repair may close while unrelated workspace findings remain; report those findings as next work instead of reopening or misclassifying the verified target.',
+          'Treat failed target verification as a new observation and diagnose the causal defect it reports without assuming that source must change. Remaining sourceCandidates after a rolled-back CLI transaction are candidate targets: inspect them before proposing, create any path that inspect-source reports as exists:false, and do not rewrite a restored file whose content already failed verification. A selected repair may close while unrelated workspace findings remain; report those findings as next work instead of reopening or misclassifying the verified target.',
           'One repair session owns the selected card and its causal action set. Do not absorb unrelated blocking cards merely because they appear in the same workspace dashboard.',
           'Recent in-memory observations preserve bounded inspected source for the current run. Reuse that content to patch or run the next causal diagnostic; do not re-inspect a file merely because another tool ran afterward.',
         ]
@@ -619,19 +705,31 @@ function promptForTurn(
       context.tools.map(({ name, title, activity, risk }) => ({ name, title, activity, risk })),
       4_000
     )}`,
-    `Source repair phase: ${
+    `Required causal action: ${
+      context.requiredCausalAction
+        ? `ACTIVE. Invoke exactly this native tool and input now. Do not inspect again, complete, substitute another tool, or restate the command. Policy evaluation, user approval, rollback, and verification remain controller-owned. Contract: ${boundedJson(
+            redactControlValue(context.requiredCausalAction),
+            3_000
+          )}`
+        : 'none'
+    }`,
+    `Causal recovery phase: ${
       context.sourceRepairDirective
-        ? `ACTIVE. Evidence refresh, verify, remediation-plan, and exhausted blocker accelerators are intentionally withheld until a real source transaction occurs. Directive: ${boundedJson(
+        ? `ACTIVE. Choose the next materially different capability from evidence; blocker-specific accelerators are optional and duplicate observations remain bounded. Directive: ${boundedJson(
             conciseToolOutput(context.sourceRepairDirective),
             budget === 'compact' ? 3_000 : 8_000
           )}`
         : 'inactive'
     }`,
-    `Source action required: ${
+    `Causal action required: ${
       context.sourceActionRequired
-        ? 'YES. The bounded recovery budget is exhausted. If no exact source target has been inspected, use the available causal inspection tools once; otherwise submit one available governed source mutation. Do not rerun Doctor, Verify, or a prior diagnostic.'
+        ? 'YES. The bounded observation budget is exhausted. Use a materially different evidence-backed capability: an exact producer/remediation action, a structured project command, or a governed source transaction. Do not repeat a prior observation.'
         : 'no'
     }`,
+    `Pending non-source effect verification: ${boundedJson(
+      context.pendingEffectVerificationScopes ?? [],
+      1_000
+    )}`,
     `Steering: ${boundedJson(context.steering.map(redactLocalPathsForConsumer), 2_000)}`,
     `Latest observation: ${boundedJson(
       conciseLatestObservation(context.latestObservation, budget === 'compact'),
@@ -646,6 +744,10 @@ function promptForTurn(
     `Recent causal session events: ${boundedJson(
       recentEvents,
       budget === 'compact' ? 1_500 : 6_000
+    )}`,
+    `Compacted earlier causal history: ${boundedJson(
+      conciseEarlierCausalHistory(earlierEvents),
+      budget === 'compact' ? 2_000 : 4_000
     )}`,
   ].join('\n');
 }

@@ -17,6 +17,7 @@ function host(): ActionsWebviewMessageDispatchHost {
     runSidebarAdvisorAction: vi.fn(async () => undefined),
     runInlineStudioQuery: vi.fn(async () => undefined),
     runSidebarStudioAction: vi.fn(async () => undefined),
+    resolveStudioToolApproval: vi.fn(async () => undefined),
     focusPrimarySidebarView: vi.fn(async () => undefined),
     openDashboardSection: vi.fn(async () => undefined),
     openWorkspaceFile: vi.fn(async () => undefined),
@@ -44,6 +45,26 @@ describe('actions webview message dispatcher', () => {
     expect(target.undoAgentPatch).toHaveBeenCalledWith({ transactionId: 'tool-call-123' });
     expect(target.runSidebarStudioAction).not.toHaveBeenCalled();
     expect(listActionsWebviewMessageCommands()).toContain('sidebarStudioUndoPatch');
+  });
+
+  it('routes an inline Studio approval decision through its dedicated exact-request lane', async () => {
+    const target = host();
+    const decision = {
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      fingerprint: 'a'.repeat(64),
+      approved: true,
+      execution: 'once',
+    };
+
+    await dispatchActionsWebviewMessage(target, {
+      command: 'sidebarStudioToolApprovalDecision',
+      data: decision,
+    });
+
+    expect(target.resolveStudioToolApproval).toHaveBeenCalledWith(decision);
+    expect(target.runSidebarStudioAction).not.toHaveBeenCalled();
+    expect(listActionsWebviewMessageCommands()).toContain('sidebarStudioToolApprovalDecision');
   });
 
   it('routes an exact repair receipt to the native transaction diff lane', async () => {

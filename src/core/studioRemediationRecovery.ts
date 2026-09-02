@@ -26,7 +26,9 @@ export function selectStudioRemediationRecoveryStep(
       (candidate.canApply || candidate.executable)
   );
   if (!handoff) {
-    return candidates[0];
+    return plan?.execution?.nextActionId
+      ? candidates.find((candidate) => candidate.id === plan.execution.nextActionId)
+      : candidates[0];
   }
 
   const selectedActionIds = new Set(handoff.selectedTarget?.actionIds ?? []);
@@ -41,7 +43,10 @@ export function selectStudioRemediationRecoveryStep(
     (finding) => finding.status === 'blocking'
   );
   if (blockingFindings.length === 0) {
-    return candidates[0];
+    return plan?.execution?.nextActionId
+      ? (candidates.find((candidate) => candidate.id === plan.execution.nextActionId) ??
+          candidates[0])
+      : candidates[0];
   }
 
   const findingIds = new Set(blockingFindings.map((finding) => finding.id));
@@ -54,12 +59,32 @@ export function selectStudioRemediationRecoveryStep(
   // multiple projects. Never repair a convenient advisory merely because the
   // active blocker has no executable capability. The exact finding identity is
   // the transaction boundary; no match delegates to governed source diagnosis.
-  return candidates.find(
+  const exactBlockingCandidate = candidates.find(
     (candidate) =>
       candidate.findingStatus === 'blocking' &&
       ((Boolean(candidate.issueId) && findingIds.has(candidate.issueId!)) ||
         (Boolean(candidate.causalKey) && causalKeys.has(candidate.causalKey!)))
   );
+  return exactBlockingCandidate;
+}
+
+export function selectStudioRemediationEnvironmentPrerequisite(
+  plan: DoctorRemediationPlanView | null
+): DoctorRemediationPlanStepView | undefined {
+  const nextActionId = plan?.execution.nextActionId;
+  if (!nextActionId) {
+    return undefined;
+  }
+  const step = plan.visibleSteps.find((candidate) => candidate.id === nextActionId);
+  if (!step) {
+    return undefined;
+  }
+  const missingExecutable = step.requirements.some(
+    (requirement) => requirement.kind === 'executable' && requirement.status === 'missing'
+  );
+  return step.retryPolicy?.resumeWhen === 'environment-changed' || missingExecutable
+    ? step
+    : undefined;
 }
 
 /**

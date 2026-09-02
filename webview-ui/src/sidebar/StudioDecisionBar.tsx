@@ -66,10 +66,18 @@ export function StudioDecisionBar({
   onResume,
   onOpenSetup,
 }: StudioDecisionBarProps) {
-  const toolchainFailure = terminalReason === 'repair-toolchain-unavailable';
+  const toolchainFailure =
+    terminalReason === 'repair-toolchain-unavailable' ||
+    terminalReason === 'environment-prerequisite-required';
   const connectionFailure = terminalReason === 'cli-repair-contract-mismatch';
   const providerFailure = terminalReason === 'ai-provider-unavailable';
-  if (!reviewRequired && !resumable && !connectionFailure && !providerFailure) {
+  if (
+    !reviewRequired &&
+    !resumable &&
+    !toolchainFailure &&
+    !connectionFailure &&
+    !providerFailure
+  ) {
     return null;
   }
 
@@ -128,7 +136,13 @@ export function StudioDecisionBar({
               onClick={onResume}
             >
               <RotateCcw size={12} strokeWidth={1.8} aria-hidden="true" />
-              {connectionFailure ? 'Retry connection' : providerFailure ? 'Retry AI' : 'Resume'}
+              {connectionFailure
+                ? 'Retry connection'
+                : providerFailure
+                  ? 'Retry AI'
+                  : toolchainFailure
+                    ? 'Recheck environment'
+                    : 'Resume'}
             </button>
           ) : null}
         </div>

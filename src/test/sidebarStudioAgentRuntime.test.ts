@@ -279,6 +279,21 @@ describe('sidebar Studio agent runtime contract', () => {
           kind: 'evidence',
         }),
       ]);
+      await expect(
+        inspectStudioAgentFiles({
+          workspacePath: workspace,
+          projectPath: project,
+          paths: ['project:.workspai/reports/missing-project-context.json'],
+          kind: 'evidence',
+          authorizedEvidencePaths: ['project:.workspai/reports/missing-project-context.json'],
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({
+          path: 'project:.workspai/reports/missing-project-context.json',
+          exists: false,
+          kind: 'evidence',
+        }),
+      ]);
     } finally {
       await fs.rm(workspace, { recursive: true, force: true });
       await fs.rm(project, { recursive: true, force: true });

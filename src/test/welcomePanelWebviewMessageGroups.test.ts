@@ -374,6 +374,37 @@ describe('welcomePanelDashboardLifecycleMessages', () => {
     });
   });
 
+  it('preserves the operations projection request for Live and Graph consumers', async () => {
+    const { tryDispatchDashboardLifecycleWebviewMessage } =
+      await import('../ui/panels/welcomePanelDashboardLifecycleMessages');
+    const sendDashboardEvidence = vi.fn().mockResolvedValue(undefined);
+
+    await tryDispatchDashboardLifecycleWebviewMessage(
+      {
+        context: {} as never,
+        sendDashboardEvidence,
+        sendWorkspaceToolStatus: vi.fn(),
+        resolveTelemetryWorkspacePath: () => '/ws',
+      },
+      'requestDashboardEvidence',
+      {
+        workspacePath: '/ws',
+        projectPath: '/ws/catalog-api',
+        includeOperations: true,
+        requestId: 7,
+      }
+    );
+
+    expect(sendDashboardEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspacePath: '/ws',
+        projectPath: '/ws/catalog-api',
+        includeOperations: true,
+        requestId: 7,
+      })
+    );
+  });
+
   it('routes graph stream lifecycle without falling through to command execution', async () => {
     const { tryDispatchDashboardLifecycleWebviewMessage } =
       await import('../ui/panels/welcomePanelDashboardLifecycleMessages');

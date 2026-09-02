@@ -16,12 +16,13 @@ describe('native Chat and Incident Studio orchestration parity', () => {
     expect(nativeAgent).not.toContain('while (');
   });
 
-  it('keeps every native source mutation behind inspection and CLI ownership', () => {
+  it('keeps semantic edits behind CLI ownership and invasive commands behind exact approval', () => {
     const nativeAgent = read('src/core/nativeChatStudioAgent.ts');
     expect(nativeAgent).toContain('authorizeStudioWorkspacePatchTargets({');
     expect(nativeAgent).toContain('executeCliOwnedPatchRepair({');
     expect(nativeAgent).toContain("approvedBy: 'vscode:native-chat-agent'");
-    expect(nativeAgent).toContain('if (plan.mutatesSource)');
+    expect(nativeAgent).toContain('executeStudioWorkspaceCommandTransaction({');
+    expect(nativeAgent).toContain('requestVSCodeStudioToolApproval(request,');
     expect(nativeAgent).not.toContain('workspace.fs.writeFile');
   });
 
@@ -89,6 +90,22 @@ describe('native Chat and Incident Studio orchestration parity', () => {
     expect(nativeAgent).not.toContain('unsupported(');
     expect(nativeAgent).not.toContain('not available in this source-repair phase');
     expect(nativeAgent).not.toContain('runStudioActiveBlockerRecovery');
+  });
+
+  it('shares the durable exact-remediation continuation across native Chat and Sidebar Goal', () => {
+    const nativeAgent = read('src/core/nativeChatStudioAgent.ts');
+    const provider = read('src/ui/webviews/actionsWebviewProvider.ts');
+    const session = read('src/core/studioAgentSession.ts');
+    expect(nativeAgent).toContain('buildStudioCausalRecoveryBriefing({');
+    expect(nativeAgent).toContain('executionReady: step.executionReady');
+    expect(nativeAgent).toContain('approval: request.approval');
+    expect(provider).toContain('const activeRemediationHandoff =');
+    expect(provider).toContain('recoverActiveBlocker: input.handoff');
+    expect(provider).toContain('executionReady: step.executionReady');
+    expect(provider).toContain('request.approval?.approvedBy');
+    expect(session).toContain('pendingRequiredCausalAction');
+    expect(session).toContain('required-causal-action-enforced');
+    expect(session).toContain('required-remediation-action-failed');
   });
 
   it('shares workspace inspection primitives with the webview Studio host', () => {

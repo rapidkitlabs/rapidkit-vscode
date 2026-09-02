@@ -72,6 +72,22 @@ describe('workspace governed Goals', () => {
     expect(
       parseGoalEntry(
         goalEntry({
+          changeTransactionId: 'change-12345678',
+          changeTransactionIds: ['change-12345678'],
+        })
+      )
+    ).not.toBeNull();
+    expect(
+      parseGoalEntry(
+        goalEntry({
+          changeTransactionId: 'change-12345678',
+          changeTransactionIds: ['change-87654321'],
+        })
+      )
+    ).toBeNull();
+    expect(
+      parseGoalEntry(
+        goalEntry({
           scope: {
             kind: 'project-set',
             projects: ['api', 'worker'],

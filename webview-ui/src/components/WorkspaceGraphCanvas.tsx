@@ -13,6 +13,8 @@ import {
   createWorkspaceGraphWorker,
   type WorkspaceGraphWorkerHandle,
 } from '@/lib/workspaceGraphWorker';
+import { workspaceGraphDisplayLabel } from '@/lib/workspaceGraphDisplayLabel';
+import type { WorkspaceGraphChangeOverlay } from './WorkspaceGraphExplorer';
 
 declare global {
   interface Window {
@@ -29,6 +31,7 @@ export function WorkspaceGraphCanvas({
   selectedId,
   onSelect,
   highlightedIds,
+  changeOverlay,
   presentation,
 }: {
   entities: WorkspaceGraphEntityProjection[];
@@ -36,6 +39,7 @@ export function WorkspaceGraphCanvas({
   selectedId: string | null;
   onSelect: (id: string) => void;
   highlightedIds: string[];
+  changeOverlay?: WorkspaceGraphChangeOverlay | null;
   presentation: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -50,6 +54,9 @@ export function WorkspaceGraphCanvas({
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [animationTime, setAnimationTime] = useState(0);
   const highlightedSet = useMemo(() => new Set(highlightedIds), [highlightedIds]);
+  const actualSet = useMemo(() => new Set(changeOverlay?.actualIds ?? []), [changeOverlay]);
+  const predictedSet = useMemo(() => new Set(changeOverlay?.predictedIds ?? []), [changeOverlay]);
+  const surpriseSet = useMemo(() => new Set(changeOverlay?.surpriseIds ?? []), [changeOverlay]);
   const degreeById = useMemo(() => {
     const degrees = new Map<string, number>();
     for (const relation of relations) {
@@ -209,7 +216,19 @@ export function WorkspaceGraphCanvas({
         relation.to === selectedId ||
         highlightedSet.has(relation.from) ||
         highlightedSet.has(relation.to);
-      context.strokeStyle = active ? accent : relationColor(relation.kind, border);
+      const surprising = surpriseSet.has(relation.from) || surpriseSet.has(relation.to);
+      const actual = actualSet.has(relation.from) || actualSet.has(relation.to);
+      const predicted = predictedSet.has(relation.from) || predictedSet.has(relation.to);
+      context.setLineDash(predicted && !actual ? [5 / viewport.scale, 4 / viewport.scale] : []);
+      context.strokeStyle = surprising
+        ? '#fb7185'
+        : actual
+          ? '#22d3ee'
+          : predicted
+            ? '#fbbf24'
+            : active
+              ? accent
+              : relationColor(relation.kind, border);
       context.globalAlpha = active ? 0.82 : 0.3;
       context.lineWidth = (active ? 1.8 : 1) / viewport.scale;
       const curve = ((hashCode(relation.id) % 21) - 10) * 1.8;
@@ -222,6 +241,7 @@ export function WorkspaceGraphCanvas({
       context.moveTo(from.x, from.y);
       context.quadraticCurveTo(controlX, controlY, to.x, to.y);
       context.stroke();
+      context.setLineDash([]);
     }
     context.globalAlpha = 1;
     for (const entity of entities) {
@@ -229,6 +249,9 @@ export function WorkspaceGraphCanvas({
       if (!point) continue;
       const selected = entity.id === selectedId;
       const highlighted = highlightedSet.has(entity.id);
+      const surprising = surpriseSet.has(entity.id);
+      const actual = actualSet.has(entity.id);
+      const predicted = predictedSet.has(entity.id);
       const degree = degreeById.get(entity.id) ?? 0;
       const core = ['workspace', 'project', 'service', 'language', 'runtime-unit'].includes(
         entity.kind
@@ -249,11 +272,26 @@ export function WorkspaceGraphCanvas({
       }
       context.beginPath();
       context.arc(point.x, point.y, selected ? radius + 3 : radius, 0, Math.PI * 2);
-      context.fillStyle = selected ? accent : colorForKind(entity.kind, foreground, accent);
+      context.fillStyle = selected
+        ? accent
+        : surprising
+          ? '#fb7185'
+          : actual
+            ? '#22d3ee'
+            : predicted
+              ? '#fbbf24'
+              : colorForKind(entity.kind, foreground, accent);
       context.shadowColor = selected || highlighted ? accent : 'transparent';
       context.shadowBlur = (selected || highlighted ? 15 : 0) / viewport.scale;
       context.fill();
       context.shadowBlur = 0;
+      if (!selected && (surprising || actual || predicted)) {
+        context.setLineDash(predicted && !actual ? [5 / viewport.scale, 4 / viewport.scale] : []);
+        context.strokeStyle = surprising ? '#fecdd3' : actual ? '#cffafe' : '#fde68a';
+        context.lineWidth = (surprising ? 2.5 : 1.8) / viewport.scale;
+        context.stroke();
+        context.setLineDash([]);
+      }
       if (selected) {
         context.strokeStyle = foreground;
         context.lineWidth = 1.5 / viewport.scale;
@@ -266,20 +304,23 @@ export function WorkspaceGraphCanvas({
         context.font = `${selected ? 600 : 500} ${Math.max(9, 11 / viewport.scale)}px system-ui`;
         context.fillStyle = foreground;
         context.globalAlpha = selected || highlighted ? 1 : 0.72;
-        context.fillText(entity.label.slice(0, 30), point.x + radius + 5, point.y + 4);
+        context.fillText(workspaceGraphDisplayLabel(entity), point.x + radius + 5, point.y + 4);
         context.globalAlpha = 1;
       }
     }
     context.restore();
   }, [
     animationTime,
+    actualSet,
     degreeById,
     entities,
     highlightedSet,
     layoutRevision,
     presentation,
+    predictedSet,
     relations,
     selectedId,
+    surpriseSet,
     size,
     viewport,
   ]);

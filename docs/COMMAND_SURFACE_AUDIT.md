@@ -20,21 +20,22 @@ All secondary-sidebar inbound commands are routed through
 `actionsWebviewMessageDispatcher.ts`. The host must explicitly handle each of
 these messages:
 
-| Command                            | Purpose                                                                     |
-| ---------------------------------- | --------------------------------------------------------------------------- |
-| `sidebarAiCreatePlan`              | Plan workspace/project creation from Create chat                            |
-| `sidebarAiCreateConfirm`           | Execute an approved Create plan                                             |
-| `sidebarManualCreate`              | Execute manual workspace/project creation                                   |
-| `sidebarCreatedWorkspaceBootstrap` | Bootstrap the workspace just created, not the previously selected workspace |
-| `sidebarImpactQuery`               | Advisor impact/explain question                                             |
-| `sidebarAdvisorAction`             | Advisor action such as handoff to Studio                                    |
-| `sidebarStudioQuery`               | Studio chat question                                                        |
-| `sidebarStudioAction`              | Studio repair, verify, copy, audit, and ship-loop actions                   |
-| `sidebarFocusView`                 | Focus the primary workspace/project tree                                    |
-| `sidebarOpenDashboard`             | Open the Dashboard to a specific section after Studio closure               |
-| `sidebarRefreshScope`              | Refresh active workspace/project scope in the sidebar                       |
-| `sidebarRefreshModels`             | Refresh available AI models                                                 |
-| `setPreferredModel`                | Persist selected model                                                      |
+| Command                             | Purpose                                                                     |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| `sidebarAiCreatePlan`               | Plan workspace/project creation from Create chat                            |
+| `sidebarAiCreateConfirm`            | Execute an approved Create plan                                             |
+| `sidebarManualCreate`               | Execute manual workspace/project creation                                   |
+| `sidebarCreatedWorkspaceBootstrap`  | Bootstrap the workspace just created, not the previously selected workspace |
+| `sidebarImpactQuery`                | Advisor impact/explain question                                             |
+| `sidebarAdvisorAction`              | Advisor action such as handoff to Studio                                    |
+| `sidebarStudioQuery`                | Studio chat question                                                        |
+| `sidebarStudioAction`               | Studio repair, verify, copy, audit, and ship-loop actions                   |
+| `sidebarStudioToolApprovalDecision` | Exact fingerprint-bound Agent approval from the inline Studio conversation  |
+| `sidebarFocusView`                  | Focus the primary workspace/project tree                                    |
+| `sidebarOpenDashboard`              | Open the Dashboard to a specific section after Studio closure               |
+| `sidebarRefreshScope`               | Refresh active workspace/project scope in the sidebar                       |
+| `sidebarRefreshModels`              | Refresh available AI models                                                 |
+| `setPreferredModel`                 | Persist selected model                                                      |
 
 ## Safety Rules
 

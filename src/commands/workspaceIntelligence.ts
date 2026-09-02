@@ -362,6 +362,40 @@ export function registerWorkspaceIntelligenceCommands(options: {
       logger.info(`Workspace graph search dispatched for ${target.workspacePath}`);
     }),
 
+    vscode.commands.registerCommand(
+      'workspai.workspaceGraphBenchmarkSuite',
+      async (item?: unknown) => {
+        const target = requireWorkspaceTarget(item, getWorkspaceExplorer());
+        if (!target) {
+          return;
+        }
+        if (
+          !(await requireWorkspaceIntelligenceCli(
+            'Agent Retrieval Benchmark',
+            target.workspacePath
+          ))
+        ) {
+          return;
+        }
+        await runWorkspaceIntelligenceCommandWithProgress({
+          command: [
+            'workspace',
+            'graph',
+            'benchmark-suite',
+            'agent-core.v1',
+            '--limit',
+            '20',
+            '--write',
+            '--json',
+          ],
+          cwd: target.workspacePath,
+          title: `Agent Retrieval Benchmark — ${target.workspaceName}`,
+          featureLabel: 'Agent Retrieval Benchmark',
+        });
+        logger.info(`Workspace graph benchmark dispatched for ${target.workspacePath}`);
+      }
+    ),
+
     vscode.commands.registerCommand('workspai.workspaceGraphExport.jsonld', (item?: unknown) =>
       exportWorkspaceGraph('jsonld', item)
     ),

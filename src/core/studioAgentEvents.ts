@@ -21,6 +21,9 @@ export type StudioAgentEventType =
   | 'model.checkpoint'
   | 'tool.requested'
   | 'tool.permission'
+  | 'tool.approval.requested'
+  | 'tool.approval.approved'
+  | 'tool.approval.rejected'
   | 'tool.started'
   | 'tool.progress'
   | 'tool.completed'
@@ -40,6 +43,19 @@ export type StudioAgentEvent<T = Record<string, unknown>> = {
   requestId?: string;
   toolCallId?: string;
   data: T;
+};
+
+export type StudioAgentRequiredCausalAction = {
+  schemaVersion: 'workspai.studio-required-causal-action.v1';
+  authority: 'workspai-cli-remediation-plan';
+  toolName: 'execute-remediation-step';
+  input: { stepId: string };
+  stepId: string;
+  executionKind: 'structured-operation' | 'contract-command';
+  requiresApproval: boolean;
+  reason: string;
+  evidenceGeneration?: string;
+  blockerSignature?: string;
 };
 
 export type StudioAgentPersistedSession = {
@@ -136,6 +152,17 @@ export type StudioAgentPersistedSession = {
     };
   };
   status: StudioAgentSessionStatus;
+  /**
+   * Durable post-effect observation obligations. This remains explicit even
+   * when older tool events fall out of the bounded session history.
+   */
+  pendingEffectVerificationScopes?: string[];
+  /**
+   * Durable exact-action continuation. While present, the next provider turn
+   * receives only this native tool and exact input contract. Approval and
+   * execution remain owned by the controller and CLI Repair Engine.
+   */
+  pendingRequiredCausalAction?: StudioAgentRequiredCausalAction;
   createdAt: string;
   updatedAt: string;
   sequence: number;

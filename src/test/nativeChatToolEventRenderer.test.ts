@@ -63,6 +63,35 @@ describe('nativeChatToolEventRenderer', () => {
     expect(stream.progress).not.toHaveBeenCalled();
   });
 
+  it('renders governed process lifecycle and automatic rollback receipts', () => {
+    const stream = { markdown: vi.fn(), progress: vi.fn() };
+    renderNativeStudioAgentEvent(
+      stream as any,
+      event('tool.progress', {
+        toolName: 'run-workspace-command',
+        process: { phase: 'running', processId: 42, elapsedMs: 1250 },
+      })
+    );
+    renderNativeStudioAgentEvent(
+      stream as any,
+      event('tool.failed', {
+        toolName: 'run-workspace-command',
+        error: 'Mutation was rolled back.',
+        output: {
+          rollback: {
+            restoredFingerprint: 'a'.repeat(64),
+            changedPaths: ['src/index.ts'],
+          },
+        },
+      })
+    );
+    expect(stream.progress).toHaveBeenCalledWith('PID 42 running · 1250 ms');
+    expect(stream.progress).toHaveBeenCalledWith(
+      'Restored the pre-command checkpoint (1 source path(s))'
+    );
+    expect(stream.progress).toHaveBeenCalledWith('Mutation was rolled back.');
+  });
+
   it('streams model narration without exposing internal event envelopes', () => {
     const stream = { markdown: vi.fn(), progress: vi.fn() };
     renderNativeStudioAgentEvent(

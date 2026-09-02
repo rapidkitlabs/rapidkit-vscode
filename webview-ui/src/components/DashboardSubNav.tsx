@@ -1,6 +1,7 @@
 import { useRef, type KeyboardEvent } from 'react';
 import {
   ClipboardCheck,
+  Activity,
   FolderKanban,
   LayoutGrid,
   Network,
@@ -16,6 +17,7 @@ const SECTION_ICONS: Record<DashboardSection, typeof LayoutGrid> = {
   repair: Wrench,
   evidence: ClipboardCheck,
   graph: Network,
+  live: Activity,
   operate: Play,
   console: TerminalSquare,
   catalog: Package,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   WorkspaceGraphEntityProjection,
   WorkspaceGraphRelationProjection,
@@ -47,6 +47,12 @@ import {
   WorkspaceGraphMp4Recorder,
 } from '@/lib/workspaceGraphRecording';
 import { vscode } from '@/vscode';
+import {
+  createWorkspaceGraphWordmarkSamples,
+  WORKSPACE_GRAPH_WORDMARK_FONT_FAMILY,
+} from '@/lib/workspaceGraphWordmark';
+import { workspaceGraphDisplayLabel } from '@/lib/workspaceGraphDisplayLabel';
+import type { WorkspaceGraphChangeOverlay } from './WorkspaceGraphExplorer';
 
 type Camera = WorkspaceGraphCameraPreference;
 type WebglRenderResources = {
@@ -70,7 +76,9 @@ type ProjectedPoint = { id: string; x: number; y: number; depth: number };
 
 function defaultCameraForShape(shape: WorkspaceGraph3dShape): Camera {
   if (shape === 'brain') return { yaw: -0.18, pitch: -0.12, roll: 0, zoom: 0.58 };
-  if (shape === 'workspai') return { yaw: 0, pitch: -0.06, roll: 0, zoom: 0.68 };
+  if (shape === 'workspai' || shape === 'project-name') {
+    return { yaw: 0, pitch: -0.06, roll: 0, zoom: 0.68 };
+  }
   return DEFAULT_WORKSPACE_GRAPH_CAMERA;
 }
 
@@ -110,6 +118,8 @@ export function WorkspaceGraphWebgl({
   presentation,
   onFallback,
   preferenceKey,
+  wordmarkLabel,
+  changeOverlay,
   gifExportRequest,
   videoExportRequest,
   onGifExported,
@@ -127,6 +137,8 @@ export function WorkspaceGraphWebgl({
   presentation: boolean;
   onFallback: () => void;
   preferenceKey: string;
+  wordmarkLabel: string;
+  changeOverlay?: WorkspaceGraphChangeOverlay | null;
   gifExportRequest?: { id: number; revision: string; delayCentiseconds: number } | null;
   videoExportRequest?: { id: number; revision: string; delayCentiseconds: number } | null;
   onGifExported?: (result: {
@@ -165,6 +177,7 @@ export function WorkspaceGraphWebgl({
   const [size, setSize] = useState({ width: 800, height: 520 });
   const [layoutSize, setLayoutSize] = useState({ width: 1200, height: 800 });
   const [layoutRevision, setLayoutRevision] = useState(0);
+  const [wordmarkFontRevision, setWordmarkFontRevision] = useState(0);
   const [autoOrbit, setAutoOrbit] = useState(autoOrbitDefault);
   const [softwareFallback, setSoftwareFallback] = useState(!preferWebgl);
   const [camera, setCamera] = useState<Camera>(() =>
@@ -179,6 +192,31 @@ export function WorkspaceGraphWebgl({
       preferenceKey
     )
   );
+  const wordmarkSamples = useMemo(
+    () =>
+      shape === 'project-name'
+        ? createWorkspaceGraphWordmarkSamples(wordmarkLabel, entities.length)
+        : [],
+    [entities.length, shape, wordmarkFontRevision, wordmarkLabel]
+  );
+
+  useEffect(() => {
+    if (shape !== 'project-name' || !document.fonts) {
+      return;
+    }
+    let disposed = false;
+    void document.fonts
+      .load(`700 120px ${WORKSPACE_GRAPH_WORDMARK_FONT_FAMILY}`, wordmarkLabel)
+      .then(() => {
+        if (!disposed) {
+          setWordmarkFontRevision((revision) => revision + 1);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [shape, wordmarkLabel]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -296,6 +334,8 @@ export function WorkspaceGraphWebgl({
       height: 800,
       mode: 'radial-3d',
       shape,
+      shapeLabel: wordmarkLabel,
+      shapeSamples: wordmarkSamples,
     };
     const accept = (result: GraphLayoutResult) => {
       if (disposed || result.requestId !== requestRef.current) {
@@ -326,7 +366,7 @@ export function WorkspaceGraphWebgl({
       disposed = true;
       workerHandle?.dispose();
     };
-  }, [entities, relations, shape]);
+  }, [entities, relations, shape, wordmarkLabel, wordmarkSamples]);
 
   useEffect(() => {
     const resources = resourcesRef.current;
@@ -356,6 +396,7 @@ export function WorkspaceGraphWebgl({
         },
         projected: projectedRef.current,
         shape,
+        changeOverlay,
       });
       if (presentation || autoOrbit) {
         animationFrame = requestAnimationFrame(draw);
@@ -366,6 +407,7 @@ export function WorkspaceGraphWebgl({
   }, [
     autoOrbit,
     camera,
+    changeOverlay,
     entities,
     layoutRevision,
     layoutSize,
@@ -526,7 +568,7 @@ export function WorkspaceGraphWebgl({
             }}
             disabled={Boolean(gifExportRequest || videoExportRequest)}
             aria-label="3D graph shape"
-            title="Choose a semantic 3D projection; GIF and MP4 exports use this selection"
+            title="Choose a 3D projection; GIF and MP4 exports use this selection"
           >
             {WORKSPACE_GRAPH_3D_SHAPES.map((value) => (
               <option key={value} value={value}>
@@ -538,12 +580,21 @@ export function WorkspaceGraphWebgl({
                       ? 'Brain'
                       : value === 'constellation'
                         ? 'Constellation'
-                        : 'Workspai'}
+                        : value === 'workspai'
+                          ? 'Workspai'
+                          : `Project · ${wordmarkLabel}`}
               </option>
             ))}
           </select>
         </label>
-        <span>3-axis semantic projection</span>
+        {shape === 'project-name' ? (
+          <span title="Only the positions change; every visible node and relationship comes from the verified Graph projection">
+            real graph · visual layout
+          </span>
+        ) : null}
+        <span>
+          {shape === 'project-name' ? 'evidence-preserving wordmark' : '3-axis semantic projection'}
+        </span>
         <button
           type="button"
           aria-pressed={autoOrbit}
@@ -752,7 +803,18 @@ type GraphSceneRenderInput = {
   camera: Camera;
   projected: ProjectedPoint[];
   shape: WorkspaceGraph3dShape;
+  changeOverlay?: WorkspaceGraphChangeOverlay | null;
 };
+
+function overlayEntityColor(
+  entityId: string,
+  overlay: WorkspaceGraphChangeOverlay | null | undefined
+): [number, number, number, number] | null {
+  if (overlay?.surpriseIds.includes(entityId)) return [0.98, 0.44, 0.52, 1];
+  if (overlay?.actualIds.includes(entityId)) return [0.13, 0.83, 0.93, 1];
+  if (overlay?.predictedIds.includes(entityId)) return [0.98, 0.75, 0.14, 1];
+  return null;
+}
 
 function renderWorkspaceGraph3d(resources: RenderResources, input: GraphSceneRenderInput): void {
   if (resources.kind === 'canvas2d') {
@@ -806,7 +868,10 @@ function renderWorkspaceGraphWebgl3d(
     if (!from || !to) {
       continue;
     }
-    const color = relationColor3d(relation.kind);
+    const color =
+      overlayEntityColor(relation.from, input.changeOverlay) ??
+      overlayEntityColor(relation.to, input.changeOverlay) ??
+      relationColor3d(relation.kind);
     linePositions.push(...from.clip, ...to.clip);
     lineColors.push(...depthColor(color, from.scale), ...depthColor(color, to.scale));
   }
@@ -825,13 +890,15 @@ function renderWorkspaceGraphWebgl3d(
       continue;
     }
     const layoutPoint = input.points.get(entity.id);
-    const color = entityColorForShape(
-      entity.kind,
-      input.shape,
-      layoutPoint?.x ?? input.layoutSize.width / 2,
-      input.layoutSize.width,
-      input.layoutSize.height
-    );
+    const color =
+      overlayEntityColor(entity.id, input.changeOverlay) ??
+      entityColorForShape(
+        entity.kind,
+        input.shape,
+        layoutPoint?.x ?? input.layoutSize.width / 2,
+        input.layoutSize.width,
+        input.layoutSize.height
+      );
     if (entity.id === input.selectedId) {
       selectedPositions.push(...point.clip);
       selectedColors.push(1, 1, 1, 1);
@@ -922,7 +989,12 @@ function renderWorkspaceGraphSoftware3d(
     .sort((left, right) => right.from.depth + right.to.depth - left.from.depth - left.to.depth);
   context.lineWidth = 0.75;
   for (const { relation, from, to } of relations) {
-    const color = depthColor(relationColor3d(relation.kind), (from.scale + to.scale) / 2);
+    const color = depthColor(
+      overlayEntityColor(relation.from, input.changeOverlay) ??
+        overlayEntityColor(relation.to, input.changeOverlay) ??
+        relationColor3d(relation.kind),
+      (from.scale + to.scale) / 2
+    );
     context.beginPath();
     context.moveTo(from.screen[0], from.screen[1]);
     context.lineTo(to.screen[0], to.screen[1]);
@@ -943,13 +1015,14 @@ function renderWorkspaceGraphSoftware3d(
     const color = selected
       ? ([0.93, 0.99, 1, 1] as [number, number, number, number])
       : depthColor(
-          entityColorForShape(
-            entity.kind,
-            input.shape,
-            input.points.get(entity.id)?.x ?? input.layoutSize.width / 2,
-            input.layoutSize.width,
-            input.layoutSize.height
-          ),
+          overlayEntityColor(entity.id, input.changeOverlay) ??
+            entityColorForShape(
+              entity.kind,
+              input.shape,
+              input.points.get(entity.id)?.x ?? input.layoutSize.width / 2,
+              input.layoutSize.width,
+              input.layoutSize.height
+            ),
           point.scale
         );
     context.save();
@@ -1106,6 +1179,9 @@ function renderWorkspaceGraphLabels(
   const occupied: Array<{ x: number; y: number; width: number; height: number }> = [];
   const labelCandidates = entities
     .filter((entity) => {
+      if (shape === 'project-name') {
+        return entity.id === selectedId;
+      }
       const important = ['workspace', 'project', 'service', 'language', 'runtime-unit'].includes(
         entity.kind
       );
@@ -1130,7 +1206,7 @@ function renderWorkspaceGraphLabels(
     if (entity.id !== selectedId && point.scale < 0.62) {
       continue;
     }
-    const label = entity.label.length > 30 ? `${entity.label.slice(0, 29)}…` : entity.label;
+    const label = workspaceGraphDisplayLabel(entity);
     const width = context.measureText(label).width + 12;
     const x = Math.max(4, Math.min(size.width - width - 4, point.screen[0] + 9));
     const y = Math.max(15, Math.min(size.height - 8, point.screen[1] - 9));

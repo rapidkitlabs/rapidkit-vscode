@@ -49,6 +49,19 @@ export function describeStudioTerminalFailure(input: {
       connectionFailure: false,
     };
   }
+  if (
+    terminalReason === 'environment-prerequisite-required' ||
+    terminalReason === 'repair-toolchain-unavailable'
+  ) {
+    return {
+      title: 'Environment setup required',
+      summary:
+        error ||
+        'A required runtime or executable is unavailable. Configure it, then recheck the environment to produce a fresh repair plan.',
+      terminalReason,
+      connectionFailure: false,
+    };
+  }
   if (input.requiresUserDecision) {
     return {
       title: 'Decision required',
@@ -77,9 +90,9 @@ export function describeStudioTerminalFailure(input: {
   }
   if (terminalReason === 'source-repair-policy-loop') {
     return {
-      title: 'Source repair stopped',
+      title: 'Recovery stopped',
       summary:
-        'Studio blocked a repeated evidence command because no causal source edit was made. The workspace source was left unchanged.',
+        'Studio blocked a repeated evidence command because no materially different causal action followed. Governed workspace state remains available for review.',
       ...(error ? { technicalDetail: error } : {}),
       terminalReason,
       connectionFailure: false,
@@ -87,12 +100,14 @@ export function describeStudioTerminalFailure(input: {
   }
   if (
     terminalReason === 'model-source-progress-exhausted' ||
-    terminalReason === 'causal-source-progress-exhausted'
+    terminalReason === 'causal-source-progress-exhausted' ||
+    terminalReason === 'model-causal-progress-exhausted' ||
+    terminalReason === 'causal-progress-exhausted'
   ) {
     return {
       title: 'Repair paused',
       summary:
-        'Studio exhausted its bounded autonomous recovery path without a verified source change. The durable session can resume with added context or a fresh model turn.',
+        'Studio exhausted its bounded autonomous recovery path without verified causal closure. The durable session can resume with added context or a fresh model turn.',
       ...(error ? { technicalDetail: error } : {}),
       terminalReason,
       connectionFailure: false,

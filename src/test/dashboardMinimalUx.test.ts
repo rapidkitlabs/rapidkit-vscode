@@ -168,7 +168,8 @@ describe('dashboard minimal UX guard', () => {
     expect(read('webview-ui/src/components/WorkspaceOverview.tsx')).not.toContain(
       "label: 'Library'"
     );
-    expect(prefsBridge).toContain("'overview' | 'repair' | 'evidence'");
+    expect(prefsBridge).toContain("| 'graph'");
+    expect(prefsBridge).toContain("| 'live'");
     expect(prefsBridge).toContain("prefs?.dashboardSection === 'repair'");
   });
 

@@ -302,12 +302,17 @@ export async function runStudioActiveBlockerRecovery(input: {
   }
 
   const steps = recordArray(outputRecord(plan)?.steps);
+  const planExecution = valueRecord(outputRecord(plan)?.execution);
+  const nextActionId =
+    typeof planExecution?.nextActionId === 'string' && planExecution.nextActionId.length > 0
+      ? planExecution.nextActionId
+      : undefined;
   const currentStepIds = new Set(
     steps
       .map((step) => step.id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0)
   );
-  const executableStep = steps
+  const executableCandidates = steps
     .filter(
       (step) =>
         step.risk !== 'invasive' &&
@@ -319,7 +324,10 @@ export async function runStudioActiveBlockerRecovery(input: {
       (left, right) =>
         Number(left.order ?? Number.MAX_SAFE_INTEGER) -
         Number(right.order ?? Number.MAX_SAFE_INTEGER)
-    )[0];
+    );
+  const executableStep = nextActionId
+    ? executableCandidates.find((step) => step.id === nextActionId)
+    : executableCandidates[0];
   if (plan.ok && executableStep && typeof executableStep.id === 'string') {
     const execution = await input.host.executeRemediationStep({
       stepId: executableStep.id,
@@ -354,6 +362,51 @@ export async function runStudioActiveBlockerRecovery(input: {
               : 'general-source-repair',
       },
     };
+  }
+
+  if (plan.ok && nextActionId) {
+    const requiredStep = steps.find((step) => step.id === nextActionId);
+    const retryPolicy = valueRecord(requiredStep?.retryPolicy);
+    const requirements = recordArray(requiredStep?.requirements);
+    const missingExecutable = requirements.find(
+      (requirement) =>
+        requirement.kind === 'executable' &&
+        requirement.status === 'missing' &&
+        typeof requirement.executable === 'string'
+    );
+    const environmentPrerequisite =
+      retryPolicy?.resumeWhen === 'environment-changed' || Boolean(missingExecutable);
+    if (requiredStep && environmentPrerequisite) {
+      return {
+        ok: false,
+        changed: false,
+        evidenceGeneration: input.evidenceGeneration,
+        blockerSignature: input.blockerSignature,
+        requiresUserDecision: false,
+        terminalReason: 'environment-prerequisite-required',
+        output: {
+          recoveryPath: 'contract-prerequisite',
+          observations,
+          nextAction: 'environment-change-and-fresh-plan',
+          requiredActionId: nextActionId,
+          requirements,
+          retryPolicy,
+          ...(typeof missingExecutable?.executable === 'string'
+            ? { missingExecutable: missingExecutable.executable }
+            : {}),
+        },
+        error:
+          typeof requiredStep.blockedReason === 'string'
+            ? requiredStep.blockedReason
+            : typeof requiredStep.summary === 'string'
+              ? requiredStep.summary
+              : 'The CLI remediation contract requires an external prerequisite. Change the environment, then generate a fresh plan.',
+      };
+    }
+    // The CLI is the preferred map, not the model's only navigation plane.
+    // An out-of-scope/global action or an incomplete plan delegates to the
+    // general governed tools below. Only a typed external prerequisite may
+    // terminate autonomous recovery without source exploration.
   }
 
   return {

@@ -1,12 +1,14 @@
 export type GraphLayoutNode = { id: string; kind: string; projectId?: string };
 export type GraphLayoutEdge = { from: string; to: string };
 export type GraphLayoutPoint = { id: string; x: number; y: number; z: number };
+export type GraphLayoutSample = { x: number; y: number };
 export const WORKSPACE_GRAPH_3D_SHAPES = [
   'architecture',
   'globe',
   'brain',
   'constellation',
   'workspai',
+  'project-name',
 ] as const;
 export type WorkspaceGraph3dShape = (typeof WORKSPACE_GRAPH_3D_SHAPES)[number];
 export type GraphLayoutRequest = {
@@ -17,6 +19,9 @@ export type GraphLayoutRequest = {
   height?: number;
   mode?: 'force' | 'radial-3d';
   shape?: WorkspaceGraph3dShape;
+  /** Presentation-only glyph samples. Never interpreted as graph entities. */
+  shapeSamples?: GraphLayoutSample[];
+  shapeLabel?: string;
 };
 export type GraphLayoutResult = {
   requestId: number;
@@ -44,7 +49,9 @@ export function layoutWorkspaceGraph(request: GraphLayoutRequest): GraphLayoutRe
       nodes,
       width,
       height,
-      request.shape ?? 'architecture'
+      request.shape ?? 'architecture',
+      request.shapeSamples,
+      request.shapeLabel
     );
   }
   const indexById = new Map(nodes.map((node, index) => [node.id, index]));
@@ -163,7 +170,9 @@ function layoutWorkspaceGraphRadial3d(
   nodes: GraphLayoutNode[],
   width: number,
   height: number,
-  shape: WorkspaceGraph3dShape
+  shape: WorkspaceGraph3dShape,
+  shapeSamples?: GraphLayoutSample[],
+  shapeLabel?: string
 ): GraphLayoutResult {
   if (shape === 'globe') {
     return layoutWorkspaceGraphGlobe(requestId, nodes, width, height);
@@ -176,6 +185,16 @@ function layoutWorkspaceGraphRadial3d(
   }
   if (shape === 'workspai') {
     return layoutWorkspaceGraphWorkspai(requestId, nodes, width, height);
+  }
+  if (shape === 'project-name') {
+    return layoutWorkspaceGraphProjectName(
+      requestId,
+      nodes,
+      width,
+      height,
+      shapeSamples,
+      shapeLabel
+    );
   }
   const levels = new Map<number, GraphLayoutNode[]>();
   for (const node of nodes) {
@@ -206,6 +225,58 @@ function layoutWorkspaceGraphRadial3d(
     });
   });
   return { requestId, width, height, points };
+}
+
+function layoutWorkspaceGraphProjectName(
+  requestId: number,
+  nodes: GraphLayoutNode[],
+  width: number,
+  height: number,
+  samples: GraphLayoutSample[] | undefined,
+  label = 'project'
+): GraphLayoutResult {
+  const ordered = stableNodes(nodes);
+  const validSamples = (samples ?? []).filter(
+    (sample) =>
+      Number.isFinite(sample.x) &&
+      Number.isFinite(sample.y) &&
+      sample.x >= 0 &&
+      sample.x <= 1 &&
+      sample.y >= 0 &&
+      sample.y <= 1
+  );
+  if (validSamples.length < ordered.length) {
+    // The UI normally supplies one text-mask sample per real entity. Keep a
+    // deterministic, honest fallback for non-DOM consumers and old hosts.
+    return {
+      requestId,
+      width,
+      height,
+      points: ordered.map((node, index) => ({
+        id: node.id,
+        x: width * (0.12 + (index + 0.5) * (0.76 / Math.max(1, ordered.length))),
+        y: height / 2,
+        z:
+          ((hash(`${label}:${node.id}:project-name-depth`) % 101) - 50) *
+          Math.min(width, height) *
+          0.001,
+      })),
+    };
+  }
+  return {
+    requestId,
+    width,
+    height,
+    points: ordered.map((node, index) => ({
+      id: node.id,
+      x: validSamples[index].x * width,
+      y: validSamples[index].y * height,
+      z:
+        ((hash(`${label}:${node.id}:project-name-depth`) % 101) - 50) *
+        Math.min(width, height) *
+        0.001,
+    })),
+  };
 }
 
 function stableNodes(nodes: GraphLayoutNode[]): GraphLayoutNode[] {

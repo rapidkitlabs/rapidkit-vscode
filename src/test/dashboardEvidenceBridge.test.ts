@@ -1573,8 +1573,53 @@ describe('dashboardEvidenceBridge', () => {
         summary: {
           modelCalls: 4,
           toolCalls: 9,
-          tokens: { observedTotal: 1280 },
+          tokenSources: {
+            providerReported: 4,
+            tokenizerCounted: 0,
+            estimated: 0,
+            unavailable: 0,
+          },
+          tokens: {
+            input: 900,
+            output: 300,
+            cachedInput: 80,
+            reasoning: 0,
+            observedTotal: 1280,
+          },
+          latencyMs: 38000,
+          costs: [
+            {
+              currency: 'USD',
+              amount: 0.012,
+              providerReported: 0.012,
+              estimated: 0,
+            },
+          ],
           outcome: { status: 'unknown', verified: false, blockersResolved: 1 },
+          efficiency: {
+            tokensPerVerifiedOutcome: null,
+            noProgressDecisions: 2,
+            repeatedArtifactReads: 3,
+          },
+        },
+      },
+      'workspace-intelligence-benchmark-last-run.json': {
+        schemaVersion: 'workspace-intelligence-benchmark.v1',
+        generatedAt: '2026-07-22T10:02:00.000Z',
+        graph: {
+          sourceHash: 'a'.repeat(64),
+          entityCount: 42,
+          relationCount: 61,
+          proofCount: 73,
+        },
+        retrievalSummary: {
+          provenance: 'estimated',
+          scenarioCount: 5,
+          matchedScenarioCount: 5,
+          medianRetrievalEstimatedTokens: 720,
+          p95RetrievalEstimatedTokens: 840,
+          medianEstimatedReductionPercent: 92.4,
+          status: 'passed',
         },
       },
     });
@@ -1601,13 +1646,30 @@ describe('dashboardEvidenceBridge', () => {
     expect(evaluation).toMatchObject({
       metrics: {
         observedTokens: 1280,
+        inputTokens: 900,
+        outputTokens: 300,
+        cachedInputTokens: 80,
+        tokenProvenance: 'provider-reported',
         modelCalls: 4,
         toolCalls: 9,
+        latencyMs: 38000,
+        noProgressDecisions: 2,
+        repeatedArtifactReads: 3,
         blockersResolved: 1,
         evaluationOutcome: 'unknown',
+        evaluationVerified: 'unverified',
       },
     });
     expect(evaluation?.summary).toContain('eval live · 1280 tokens');
+    const evaluationDetail = evaluation?.detailSections?.find(
+      (section) => section.id === 'agent-evaluation'
+    );
+    expect(evaluationDetail?.body).toContain('1280 observed tokens (provider-reported)');
+    expect(evaluationDetail?.body).toContain('cost USD 0.0120');
+    expect(evaluation?.metrics?.benchmarkEstimatedReductionPercent).toBe(92.4);
+    expect(evaluation?.relatedArtifacts).toContainEqual(
+      expect.objectContaining({ id: 'workspace-intelligence-benchmark', status: 'pass' })
+    );
   });
 
   it('maps every multi-artifact producer back to its canonical dashboard card', async () => {

@@ -39,6 +39,7 @@ describe('Workspace Graph dashboard UX', () => {
     expect(source).toContain("onExport('jsonld')");
     expect(source).toContain('WorkspaceGraphCanvas');
     expect(source).toContain('WorkspaceGraphWebgl');
+    expect(source).toContain('wordmarkLabel={wordmarkLabel}');
     expect(source).toContain('resolveWorkspaceGraphRenderer');
     expect(source).toContain('data-renderer={renderer}');
     expect(source).toContain('burst updates merged');
@@ -54,10 +55,23 @@ describe('Workspace Graph dashboard UX', () => {
     expect(source).toContain('describeWorkspaceGraphRecordingChange');
     expect(source).toContain('WorkspaceGraphMp4Recorder');
     expect(source).toContain('HQ 360° MP4');
+    expect(source).toContain('Change assurance');
+    expect(source).toContain('canonical Graph data is unchanged');
+    expect(source).toContain('change.surprise?.unpredicted');
     expect(source).toContain('onExportVideo');
     expect(source).toContain('stableFrameDelayMs');
     expect(source).not.toContain('readFile');
     expect(source).not.toContain('child_process');
+
+    const webgl = fs.readFileSync(
+      path.join(root, 'webview-ui/src/components/WorkspaceGraphWebgl.tsx'),
+      'utf8'
+    );
+    expect(webgl).toContain("shape === 'project-name'");
+    expect(webgl).toContain('return entity.id === selectedId');
+    expect(webgl).toContain('workspaceGraphDisplayLabel(entity)');
+    expect(webgl).toContain('overlayEntityColor');
+    expect(webgl).toContain('changeOverlay');
   });
 
   it('keeps recording artifacts host-owned and bounded by a public contract', () => {

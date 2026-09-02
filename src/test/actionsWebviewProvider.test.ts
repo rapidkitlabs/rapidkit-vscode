@@ -75,6 +75,7 @@ describe('actionsWebviewProvider — sidebar protocol handlers', () => {
       'sidebarAdvisorAction',
       'sidebarStudioQuery',
       'sidebarStudioAction',
+      'sidebarStudioToolApprovalDecision',
       'sidebarFocusView',
       'sidebarOpenDashboard',
       'sidebarRefreshScope',

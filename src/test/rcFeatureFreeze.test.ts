@@ -56,6 +56,7 @@ describe('RC feature freeze', () => {
       ['repair', 'Repair'],
       ['evidence', 'Artifacts'],
       ['graph', 'Graph'],
+      ['live', 'Live'],
       ['console', 'Project'],
       ['catalog', 'Library'],
     ]);

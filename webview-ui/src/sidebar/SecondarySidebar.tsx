@@ -67,7 +67,9 @@ import {
   enrichSidebarStudioActionProgressWithHandoff,
   isCanonicalStudioRepairDecision,
   parseSidebarStudioActionProgress,
+  studioApprovalCommandLabel,
   studioAgentToolProgressCopy,
+  type SidebarStudioApprovalRequestView,
   type SidebarStudioActionProgressView,
 } from '@/lib/sidebarStudioActionProgress';
 import { appendStudioRepairTimelineEntry } from '@/lib/studioRepairTimeline';
@@ -901,6 +903,85 @@ export function SecondarySidebar() {
             requiresApproval: eventData.requiresUserConfirmation === true,
             ...eventMeta,
           });
+        } else if (eventType === 'tool.approval.requested') {
+          const exactApprovalCommand =
+            typeof eventData.displayCommand === 'string' && eventData.displayCommand.trim()
+              ? eventData.displayCommand.trim()
+              : String(eventData.toolName ?? 'Governed workspace action');
+          const allowedExecutions = (
+            Array.isArray(eventData.allowedExecutions)
+              ? eventData.allowedExecutions
+              : [eventData.execution]
+          ).filter(
+            (entry): entry is 'once' | 'session' | 'project' =>
+              entry === 'once' || entry === 'session' || entry === 'project'
+          );
+          const approvalRequest: SidebarStudioApprovalRequestView | undefined =
+            eventSessionId &&
+            invocationId &&
+            typeof eventData.fingerprint === 'string' &&
+            eventData.fingerprint.trim()
+              ? {
+                  sessionId: eventSessionId,
+                  fingerprint: eventData.fingerprint.trim(),
+                  toolCallId: invocationId,
+                  scope: eventData.scope === 'project' ? 'project' : 'workspace',
+                  command: exactApprovalCommand,
+                  commandLabel: studioApprovalCommandLabel(exactApprovalCommand),
+                  summary:
+                    typeof eventData.summary === 'string' && eventData.summary.trim()
+                      ? eventData.summary.trim()
+                      : 'The model selected an exact governed action that needs your approval.',
+                  ...(typeof eventData.modelReason === 'string' && eventData.modelReason.trim()
+                    ? { modelReason: eventData.modelReason.trim() }
+                    : {}),
+                  ...(typeof eventData.cwd === 'string' && eventData.cwd.trim()
+                    ? { cwd: eventData.cwd.trim() }
+                    : {}),
+                  reasons: Array.isArray(eventData.reasons)
+                    ? eventData.reasons.filter(
+                        (reason): reason is string =>
+                          typeof reason === 'string' && reason.trim().length > 0
+                      )
+                    : [],
+                  allowedExecutions: allowedExecutions.length ? allowedExecutions : ['once'],
+                }
+              : undefined;
+          startStudioActionProgress({
+            action: String(eventData.toolName ?? 'studio-agent'),
+            status: 'review',
+            phase: 'command-approval',
+            title: 'Approval required',
+            summary:
+              approvalRequest?.summary ??
+              'Studio is waiting for exact scoped approval of the governed action.',
+            ...(approvalRequest?.command ? { commandText: approvalRequest.command } : {}),
+            ...(approvalRequest ? { approvalRequest } : {}),
+            requiresApproval: true,
+            ...eventMeta,
+          });
+        } else if (eventType === 'tool.approval.approved') {
+          startStudioActionProgress({
+            action: String(eventData.toolName ?? 'studio-agent'),
+            status: 'running',
+            phase: 'command-approved',
+            title: `Approved for ${String(eventData.execution ?? 'once')}`,
+            summary:
+              'The exact command fingerprint was approved without weakening the command or workspace boundary.',
+            ...eventMeta,
+          });
+        } else if (eventType === 'tool.approval.rejected') {
+          startStudioActionProgress({
+            action: String(eventData.toolName ?? 'studio-agent'),
+            status: 'failed',
+            phase: 'command-rejected',
+            title: 'Command not approved',
+            summary:
+              typeof eventData.error === 'string'
+                ? eventData.error
+                : 'The exact invasive command was declined.',
+            ...eventMeta,
+          });
         } else if (eventType === 'tool.started') {
           const toolName = String(eventData.toolName ?? 'studio-agent');
           const copy = studioAgentToolProgressCopy(toolName, 'running');
@@ -919,6 +1000,30 @@ export function SecondarySidebar() {
                 ? eventData.reason
                 : 'Continuing the evidence-backed repair.',
             intelligencePhase,
+            ...eventMeta,
+          });
+        } else if (
+          eventType === 'tool.progress' &&
+          eventData.process &&
+          typeof eventData.process === 'object' &&
+          !Array.isArray(eventData.process)
+        ) {
+          const process = eventData.process as Record<string, unknown>;
+          const processPhase = String(process.phase ?? 'running');
+          const processId =
+            typeof process.processId === 'number' ? `PID ${process.processId}` : 'Process';
+          const summary =
+            processPhase === 'started'
+              ? `${processId} started in ${String(process.cwd ?? 'the selected project')}.`
+              : processPhase === 'completed'
+                ? `${processId} exited ${String(process.exitCode ?? 'without a code')} after ${String(process.durationMs ?? 0)} ms.`
+                : `${processId} · ${String(process.elapsedMs ?? 0)} ms · ${String(process.stdoutBytes ?? 0)}B stdout · ${String(process.stderrBytes ?? 0)}B stderr`;
+          startStudioActionProgress({
+            action: String(eventData.toolName ?? 'run-workspace-command'),
+            status: processPhase === 'completed' ? 'done' : 'running',
+            phase: `process-${processPhase}`,
+            title: processPhase === 'completed' ? 'Process completed' : 'Process running',
+            summary,
             ...eventMeta,
           });
         } else if (
@@ -1363,6 +1468,21 @@ export function SecondarySidebar() {
             }
           }
         }
+        break;
+      }
+      case 'sidebarStudioToolApprovalUnavailable': {
+        startStudioActionProgress({
+          sessionId: typeof data.sessionId === 'string' ? data.sessionId : undefined,
+          action: 'studio-agent',
+          status: 'review',
+          phase: 'command-approval-expired',
+          title: 'Fresh approval required',
+          summary:
+            typeof data.summary === 'string'
+              ? data.summary
+              : 'Resume the session to obtain a fresh exact approval request.',
+          requiresApproval: true,
+        });
         break;
       }
       case 'sidebarStudioSessionState': {
@@ -2976,7 +3096,10 @@ export function SecondarySidebar() {
   const activeStudioTerminalReason =
     activeStudioActionProgress?.terminalReason ?? activeStudio?.incident?.terminalReason;
   const activeStudioReviewMessage =
-    activeStudioReviewRequired && activeStudioActionProgress?.status === 'review'
+    activeStudioActionProgress &&
+    ((activeStudioReviewRequired && activeStudioActionProgress.status === 'review') ||
+      activeStudioTerminalReason === 'environment-prerequisite-required' ||
+      activeStudioTerminalReason === 'repair-toolchain-unavailable')
       ? activeStudioActionProgress.summary
       : undefined;
   const activeStudioRepairRunning = isStudioRepairActivelyOwned({
@@ -3291,6 +3414,22 @@ export function SecondarySidebar() {
         action: 'agent-cancel',
         sessionId: studio.activeId,
         ...(activeBlockerHandoff ? { blockerHandoff: activeBlockerHandoff } : {}),
+      },
+      META
+    );
+  };
+  const decideStudioToolApproval = (
+    request: SidebarStudioApprovalRequestView,
+    execution: 'once' | 'session' | 'project' | undefined
+  ) => {
+    vscode.postMessage(
+      'sidebarStudioToolApprovalDecision',
+      {
+        sessionId: request.sessionId,
+        toolCallId: request.toolCallId,
+        fingerprint: request.fingerprint,
+        approved: Boolean(execution),
+        ...(execution ? { execution } : {}),
       },
       META
     );
@@ -3619,6 +3758,7 @@ export function SecondarySidebar() {
                 progress={activeStudioRepairTimeline[activeStudioRepairTimeline.length - 1]}
                 repairBubble={true}
                 historical={false}
+                onApprovalDecision={decideStudioToolApproval}
               />
             </div>
           ) : null
@@ -3849,6 +3989,7 @@ export function SecondarySidebar() {
                     progress={activeStudioRepairTimeline[activeStudioRepairTimeline.length - 1]}
                     repairBubble={true}
                     historical={false}
+                    onApprovalDecision={decideStudioToolApproval}
                     onNextAction={handleStudioProgressNextAction}
                     onOpenFile={openStudioChangedFile}
                     onOpenDiff={openStudioChangedFileDiff}
@@ -3914,6 +4055,7 @@ export function SecondarySidebar() {
                 progress={activeStudioRepairTimeline[activeStudioRepairTimeline.length - 1]}
                 repairBubble={true}
                 historical={false}
+                onApprovalDecision={decideStudioToolApproval}
                 onOpenFile={openStudioChangedFile}
                 onOpenDiff={openStudioChangedFileDiff}
                 onUndo={
