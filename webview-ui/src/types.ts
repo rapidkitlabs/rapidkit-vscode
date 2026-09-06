@@ -252,8 +252,10 @@ export type FrontendScaffoldFramework =
 
 export type DesktopScaffoldFramework = 'tauri' | 'electron';
 export type ExtensionScaffoldFramework = 'vscode-extension';
+export type AgentScaffoldFramework = 'microsoft-agent-framework';
 export type ScaffoldFramework =
   | BackendScaffoldFramework
   | FrontendScaffoldFramework
   | DesktopScaffoldFramework
-  | ExtensionScaffoldFramework;
+  | ExtensionScaffoldFramework
+  | AgentScaffoldFramework;

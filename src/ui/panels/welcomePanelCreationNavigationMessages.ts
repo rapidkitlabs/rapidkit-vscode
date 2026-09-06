@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import type { ScaffoldFramework } from '../../core/scaffoldKits';
+import { isScaffoldFramework, scaffoldKitsForFramework } from '../../core/scaffoldKits';
 import { recordRetentionMilestone } from '../../core/retentionMilestones';
 import { asRecord } from './welcomePanel.shared.js';
 
@@ -105,9 +105,19 @@ export async function tryDispatchCreationNavigationWebviewMessage(
         console.log('[WelcomePanel] Creating project with kit:', payload);
         host.postWebviewMessage('closeProjectModal');
         const workspacePath = host.getSelectedWorkspacePath();
-        const framework = payload.framework as ScaffoldFramework;
+        const framework = payload.framework;
         const projectName = payload.name as string;
         const kitName = payload.kit as string;
+        if (
+          !isScaffoldFramework(framework) ||
+          !scaffoldKitsForFramework(framework).includes(kitName)
+        ) {
+          host.postWebviewMessage('projectCreationError', {
+            error:
+              'The selected framework and kit are not an executable pair in the current Workspai CLI contract.',
+          });
+          break;
+        }
         void (async () => {
           const { createProjectCommand } = await import('../../commands/createProject.js');
           await createProjectCommand(workspacePath, framework, projectName, kitName);

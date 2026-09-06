@@ -1,10 +1,14 @@
 import {
   defaultScaffoldKitForFramework,
+  defaultWorkspaceProfileForKit,
   defaultWorkspaceProfileForFramework,
+  isAgentScaffoldFramework,
+  isBackendScaffoldFramework,
   isScaffoldFramework,
   isDesktopScaffoldFramework,
   isExtensionScaffoldFramework,
   isFrontendScaffoldFramework,
+  scaffoldRuntimeCandidatesForKit,
   scaffoldRuntimeForFramework,
   type ScaffoldFramework,
 } from './scaffoldKits';
@@ -19,9 +23,22 @@ export type AICreateProfile =
   | 'polyglot'
   | 'enterprise';
 
-export type CreationStackIntent = 'balanced' | 'frontend' | 'backend' | 'polyglot' | 'enterprise';
+export type CreationStackIntent =
+  | 'balanced'
+  | 'frontend'
+  | 'backend'
+  | 'agent'
+  | 'polyglot'
+  | 'enterprise';
 
 const FRAMEWORK_KEYWORDS: Record<ScaffoldFramework, string[]> = {
+  'microsoft-agent-framework': [
+    'microsoft agent framework',
+    'ai agent',
+    'agent workflow',
+    'agent automation',
+    'agent runtime',
+  ],
   nestjs: ['nestjs', 'nest.js', 'nest js', 'typeorm', 'node api', 'node service', 'typescript api'],
   fastapi: ['fastapi', 'python', 'uvicorn', 'pydantic', 'django', 'flask'],
   go: [' golang', ' go ', 'gin ', 'fiber ', 'go.mod', 'go service', 'go api', 'golang'],
@@ -89,6 +106,16 @@ const GENERIC_BACKEND_SIGNALS = [
   'server side',
 ];
 
+const GENERIC_AGENT_SIGNALS = [
+  'ai agent',
+  'agent workflow',
+  'agent runtime',
+  'agent automation',
+  'multi-agent',
+  'multi agent',
+  'microsoft agent framework',
+];
+
 const POLYGLOT_SIGNALS = [
   'full-stack',
   'full stack',
@@ -126,6 +153,11 @@ export function defaultProfileForFramework(framework: ScaffoldFramework): AICrea
 }
 
 export function defaultKitForFramework(framework: ScaffoldFramework, promptLower: string): string {
+  if (framework === 'microsoft-agent-framework') {
+    return ['.net', 'dotnet', 'csharp', 'c#'].some((signal) => promptLower.includes(signal))
+      ? 'agent.microsoft.dotnet'
+      : 'agent.microsoft.python';
+  }
   if (framework === 'go') {
     return promptLower.includes('gin') ? 'gogin.standard' : 'gofiber.standard';
   }
@@ -147,11 +179,10 @@ function countFrameworkSignals(promptLower: string, kind: 'frontend' | 'backend'
   for (const [framework, keywords] of Object.entries(FRAMEWORK_KEYWORDS) as Array<
     [ScaffoldFramework, string[]]
   >) {
-    const isFrontend = isFrontendScaffoldFramework(framework);
-    if (kind === 'frontend' && !isFrontend) {
+    if (kind === 'frontend' && !isFrontendScaffoldFramework(framework)) {
       continue;
     }
-    if (kind === 'backend' && isFrontend) {
+    if (kind === 'backend' && !isBackendScaffoldFramework(framework)) {
       continue;
     }
     count += keywords.reduce((acc, keyword) => acc + (promptLower.includes(keyword) ? 1 : 0), 0);
@@ -168,6 +199,7 @@ export function inferStackIntentFromPrompt(
   }
 
   const enterpriseScore = countSignals(promptLower, ENTERPRISE_SIGNALS);
+  const agentScore = countSignals(promptLower, GENERIC_AGENT_SIGNALS);
   const polyglotScore = countSignals(promptLower, POLYGLOT_SIGNALS);
   const frontendScore =
     countSignals(promptLower, GENERIC_FRONTEND_SIGNALS) +
@@ -176,6 +208,10 @@ export function inferStackIntentFromPrompt(
     countSignals(promptLower, GENERIC_BACKEND_SIGNALS) +
     countFrameworkSignals(promptLower, 'backend');
 
+  // An explicit agent request is its own runtime category, not a backend synonym.
+  if (agentScore > 0) {
+    return 'agent';
+  }
   // Full-stack signals win over governance-only enterprise cues (e.g. governance portal + Next + Nest).
   if (polyglotScore > 0 || (frontendScore > 0 && backendScore > 0)) {
     return 'polyglot';
@@ -226,6 +262,9 @@ export function inferFrameworkFromCreationPrompt(
   }
 
   const resolvedIntent = inferStackIntentFromPrompt(promptLower, stackIntent);
+  if (resolvedIntent === 'agent') {
+    return 'microsoft-agent-framework';
+  }
   if (resolvedIntent === 'frontend') {
     if (promptLower.includes('vue')) {
       return 'vite-vue';
@@ -286,20 +325,30 @@ export function inferWorkspaceProfileFromCreationPrompt(
   framework: ScaffoldFramework,
   promptLower: string,
   stackIntent?: CreationStackIntent,
-  companionFramework?: ScaffoldFramework
+  companionFramework?: ScaffoldFramework,
+  primaryKit?: string,
+  companionKit?: string
 ): AICreateProfile {
   const resolvedIntent = inferStackIntentFromPrompt(promptLower, stackIntent);
   if (resolvedIntent === 'enterprise') {
     return 'enterprise';
   }
+  const primaryRuntime =
+    (primaryKit && scaffoldRuntimeCandidatesForKit(primaryKit)[0]) ??
+    scaffoldRuntimeForFramework(framework);
+  const companionRuntime = companionFramework
+    ? ((companionKit && scaffoldRuntimeCandidatesForKit(companionKit)[0]) ??
+      scaffoldRuntimeForFramework(companionFramework))
+    : undefined;
   if (
-    (companionFramework &&
-      scaffoldRuntimeForFramework(companionFramework) !== scaffoldRuntimeForFramework(framework)) ||
+    (companionRuntime && companionRuntime !== primaryRuntime) ||
     countSignals(promptLower, EXPLICIT_MULTI_RUNTIME_SIGNALS) > 0
   ) {
     return 'polyglot';
   }
-  return defaultProfileForFramework(framework);
+  return primaryKit
+    ? defaultWorkspaceProfileForKit(primaryKit, framework)
+    : defaultProfileForFramework(framework);
 }
 
 export function projectNameSuffixForFramework(
@@ -308,7 +357,8 @@ export function projectNameSuffixForFramework(
   if (
     isFrontendScaffoldFramework(framework) ||
     isDesktopScaffoldFramework(framework) ||
-    isExtensionScaffoldFramework(framework)
+    isExtensionScaffoldFramework(framework) ||
+    isAgentScaffoldFramework(framework)
   ) {
     return 'app';
   }
@@ -419,7 +469,8 @@ function bestBackendFrameworkInPrompt(promptLower: string): ScaffoldFramework | 
     if (
       isFrontendScaffoldFramework(framework) ||
       isDesktopScaffoldFramework(framework) ||
-      isExtensionScaffoldFramework(framework)
+      isExtensionScaffoldFramework(framework) ||
+      isAgentScaffoldFramework(framework)
     ) {
       continue;
     }
@@ -468,7 +519,8 @@ export function inferPolyglotCompanionProject(
   const primaryIsFrontend = isFrontendScaffoldFramework(primaryFramework);
   if (
     isDesktopScaffoldFramework(primaryFramework) ||
-    isExtensionScaffoldFramework(primaryFramework)
+    isExtensionScaffoldFramework(primaryFramework) ||
+    isAgentScaffoldFramework(primaryFramework)
   ) {
     return undefined;
   }

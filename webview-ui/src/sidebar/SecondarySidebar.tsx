@@ -19,6 +19,7 @@ import type { CreateTarget } from './composer/CreateTargetSelector';
 import type { ManualWorkspaceInput } from './drawers/ManualWorkspaceDrawer';
 import {
   FRAMEWORK_OPTIONS,
+  type ManualProjectInput,
   type CreateMessage,
   type CreationPlan,
   type CreatedProject,
@@ -2595,6 +2596,11 @@ export function SecondarySidebar() {
   });
 
   useEffect(() => {
+    // Host messages sent while the webview HTML is mounting are not replayed.
+    // Pull both dynamic inputs once the React receiver is live so Create never
+    // starts from an empty scope while Workspace Explorer already has a
+    // canonical selection.
+    vscode.postMessage('sidebarRefreshScope', {}, META);
     vscode.postMessage('sidebarRefreshModels', {}, META);
   }, []);
 
@@ -2716,11 +2722,9 @@ export function SecondarySidebar() {
     vscode.postMessage('sidebarCancelCreatePlanning', { sessionId }, META);
   };
 
-  const handleManualCreate = (
-    input: ManualWorkspaceInput | { mode: 'project'; name: string; framework: string }
-  ) => {
+  const handleManualCreate = (input: ManualWorkspaceInput | ManualProjectInput) => {
     if ('mode' in input) {
-      const request = `Create project "${input.name}" with ${frameworkLabel(input.framework)}`;
+      const request = `Create project "${input.name}" with ${frameworkLabel(input.kit)}`;
       const sessionId = create.startSession({
         target: 'project',
         method: 'manual',
@@ -2740,6 +2744,7 @@ export function SecondarySidebar() {
           mode: 'project',
           name: input.name,
           framework: input.framework,
+          kit: input.kit,
           sessionId,
           scope: scope.workspacePath
             ? {

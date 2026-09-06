@@ -1,4 +1,8 @@
-import type { BackendScaffoldFramework, FrontendScaffoldFramework, ScaffoldFramework } from '@/types';
+import type {
+  BackendScaffoldFramework,
+  FrontendScaffoldFramework,
+  ScaffoldFramework,
+} from '@/types';
 
 export type FrameworkKind = ScaffoldFramework;
 
@@ -13,6 +17,7 @@ const FRAMEWORK_MONOGRAM: Record<string, string> = {
   tauri: 'Ta',
   electron: 'El',
   'vscode-extension': 'VS',
+  'microsoft-agent-framework': 'AI',
   nextjs: 'Nx',
   remix: 'Rx',
   'vite-react': 'VR',
@@ -56,9 +61,7 @@ function readFrameworkIconUri(framework: BackendScaffoldFramework): string | und
 }
 
 function isBackendFramework(framework: ScaffoldFramework): framework is BackendScaffoldFramework {
-  return ['fastapi', 'nestjs', 'go', 'springboot', 'dotnet', 'rust', 'laravel'].includes(
-    framework
-  );
+  return ['fastapi', 'nestjs', 'go', 'springboot', 'dotnet', 'rust', 'laravel'].includes(framework);
 }
 
 interface FrameworkIconProps {

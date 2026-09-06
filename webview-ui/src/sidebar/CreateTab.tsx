@@ -15,6 +15,7 @@ import type {
   CreateMessage,
   CreationPlan,
   CreateSession,
+  ManualProjectInput,
 } from './createTypes';
 import type { ChatSession } from './sidebarSessions';
 import {
@@ -44,9 +45,7 @@ interface CreateTabProps {
   onSubmitPrompt: (prompt: string, stackFocus: string, target: CreateTarget) => void;
   onApprovePlan: (plan: CreationPlan, sessionId: string) => void;
   onRevisePlan: () => void;
-  onManualCreate: (
-    input: ManualWorkspaceInput | { mode: 'project'; name: string; framework: string }
-  ) => void;
+  onManualCreate: (input: ManualWorkspaceInput | ManualProjectInput) => void;
   onAdoptProject: () => void;
   onImportProject: () => void;
   onImportWorkspace: () => void;
@@ -142,7 +141,7 @@ export function CreateTab(props: CreateTabProps) {
     closeDrawer();
   };
 
-  const handleProjectCreate = (input: { name: string; framework: string }) => {
+  const handleProjectCreate = (input: Omit<ManualProjectInput, 'mode'>) => {
     props.onManualCreate({ mode: 'project', ...input });
     closeDrawer();
   };
@@ -313,7 +312,7 @@ export function CreateTab(props: CreateTabProps) {
                 New project
               </button>
               <button type="button" className="ws-sidebar__inline" onClick={() => setDrawer('add')}>
-                More options
+                Manual setup
               </button>
             </div>
           </div>

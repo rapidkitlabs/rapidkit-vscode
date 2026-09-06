@@ -143,7 +143,8 @@ export async function handleAiCreationConfirmMessage(
       const { resolveCreationProfile } = await import('../../core/aiService.js');
       const profile = resolveCreationProfile(
         plan.profile as string | undefined,
-        plan.framework as string | undefined
+        plan.framework as string | undefined,
+        plan.kit as string | undefined
       );
       const wsConfig = {
         name: plan.workspaceName,

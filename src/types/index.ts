@@ -28,6 +28,7 @@ export type WorkspaiProjectType =
   | 'tauri'
   | 'electron'
   | 'vscode-extension'
+  | 'agent'
   | 'nextjs'
   | 'react'
   | 'vite'

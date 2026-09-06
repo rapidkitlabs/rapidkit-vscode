@@ -158,8 +158,36 @@ export async function buildProjectExecutionBlock(
     }
   }
 
+  const isAgentFramework = framework === 'agent' || framework === 'microsoft-agent-framework';
+  if (isAgentFramework) {
+    const agentRoot = path.join(projectPath, 'agents', 'primary');
+    const hasPythonManifest = await fs.pathExists(path.join(agentRoot, 'pyproject.toml'));
+    const hasDotnetManifest = (await fs.pathExists(agentRoot))
+      ? (await fs.readdir(agentRoot)).some((entry) => entry.endsWith('.csproj'))
+      : false;
+    const hasManagedAdapterState = await fs.pathExists(
+      path.join(projectPath, '.workspai', 'agent-frameworks')
+    );
+    const hasAgentContext = await fs.pathExists(
+      path.join(projectPath, '.workspai', 'reports', 'project-context-agent.md')
+    );
+    lines.push(
+      `- Governed agent runtime: ${hasPythonManifest ? 'python' : hasDotnetManifest ? 'dotnet' : 'unknown'}`,
+      `- Managed adapter state: ${hasManagedAdapterState ? 'present' : 'missing'}`,
+      `- Bounded agent context: ${hasAgentContext ? 'present' : 'missing'}`,
+      '- Required flow: sync Workspace Intelligence -> run the generated offline verification -> review the Change -> grant provider network access explicitly.'
+    );
+    if (!hasManagedAdapterState || !hasAgentContext) {
+      lines.push(
+        '- Agent readiness blocker: managed adapter state or bounded context is missing. Refresh Workspace Intelligence before running the agent.'
+      );
+    }
+  }
+
   lines.push(
-    '- Optimize for the path to a running service: install deps -> init -> dev -> verify.'
+    isAgentFramework
+      ? '- Optimize for a verified agent handoff, not merely a successful provider response.'
+      : '- Optimize for the path to a running service: install deps -> init -> dev -> verify.'
   );
   lines.push('- `Verify command` must be an actual shell command or file check, never prose.');
 

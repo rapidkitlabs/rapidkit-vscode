@@ -2,7 +2,13 @@ import type { ScaffoldFramework } from '@/types';
 import { isFrontendScaffoldFramework } from '@/lib/scaffoldFrameworks';
 import createContract from '@workspai-contracts/create-planner-capabilities.v1.json';
 
-export type CreationStackLane = 'balanced' | 'frontend' | 'backend' | 'polyglot' | 'enterprise';
+export type CreationStackLane =
+  | 'balanced'
+  | 'frontend'
+  | 'backend'
+  | 'agent'
+  | 'polyglot'
+  | 'enterprise';
 
 export type PresetOption = {
   id: string;
@@ -35,6 +41,12 @@ export const STACK_LANES: Array<{
     detail: 'FastAPI, NestJS, Go, Java, .NET',
     frameworkHint: 'nestjs',
   },
+  {
+    id: 'agent',
+    label: 'AI Agent',
+    detail: 'Governed Python or .NET agent runtime',
+    frameworkHint: 'microsoft-agent-framework',
+  },
   { id: 'polyglot', label: 'Full-stack', detail: 'Frontend + API in one workspace' },
   { id: 'enterprise', label: 'Enterprise', detail: 'Governance and release gates' },
 ];
@@ -59,6 +71,8 @@ export function defaultProfileForStackLane(lane: CreationStackLane): WorkspaceBo
       return 'node-only';
     case 'backend':
       return 'node-only';
+    case 'agent':
+      return 'python-only';
     case 'polyglot':
       return 'polyglot';
     case 'enterprise':
@@ -76,6 +90,8 @@ export function recommendedProfilesForStackLane(
       return ['node-only'];
     case 'backend':
       return ['python-only', 'node-only', 'go-only', 'java-only', 'dotnet-only'];
+    case 'agent':
+      return ['python-only', 'dotnet-only'];
     case 'polyglot':
       return ['polyglot'];
     case 'enterprise':
@@ -91,6 +107,8 @@ export function stackLaneGuidance(lane: CreationStackLane): string {
       return 'Node.js profile bootstraps artifacts for Next.js, Vite, Nuxt, Astro, and other frontend generators.';
     case 'backend':
       return 'Pick the runtime profile that matches your first API service. You can add other runtimes later with polyglot.';
+    case 'agent':
+      return 'Choose Python or .NET for a governed Microsoft Agent Framework project with Workspai context and verification.';
     case 'polyglot':
       return 'Polyglot profile keeps frontend and backend projects under one governed workspace boundary.';
     case 'enterprise':
@@ -126,7 +144,7 @@ export function resolveDefaultWorkspaceName(
 ): string {
   switch (profile) {
     case 'python-only':
-      return 'python-api-wsp';
+      return lane === 'agent' ? 'python-agent-wsp' : 'python-api-wsp';
     case 'node-only':
       return lane === 'frontend' ? 'web-platform-wsp' : 'node-api-wsp';
     case 'go-only':
@@ -134,7 +152,7 @@ export function resolveDefaultWorkspaceName(
     case 'java-only':
       return 'java-service-wsp';
     case 'dotnet-only':
-      return 'dotnet-api-wsp';
+      return lane === 'agent' ? 'dotnet-agent-wsp' : 'dotnet-api-wsp';
     case 'polyglot':
       return 'saas-platform-wsp';
     case 'enterprise':
@@ -146,6 +164,8 @@ export function resolveDefaultWorkspaceName(
           return 'web-platform-wsp';
         case 'backend':
           return 'api-platform-wsp';
+        case 'agent':
+          return 'agent-workspace-wsp';
         case 'polyglot':
           return 'saas-platform-wsp';
         case 'enterprise':
@@ -258,6 +278,22 @@ export const WORKSPACE_PRESET_CATEGORIES: PresetCategory[] = [
     ],
   },
   {
+    id: 'agent-workflows',
+    label: 'AI agents',
+    options: [
+      {
+        id: 'agent-microsoft-python',
+        text: 'Python AI agent with Microsoft Agent Framework and Workspai verification',
+        tags: ['agent', 'ai', 'python', 'microsoft-agent-framework', 'verification'],
+      },
+      {
+        id: 'agent-microsoft-dotnet',
+        text: '.NET AI agent with Microsoft Agent Framework and Workspai verification',
+        tags: ['agent', 'ai', 'dotnet', 'microsoft-agent-framework', 'verification'],
+      },
+    ],
+  },
+  {
     id: 'enterprise-governance',
     label: 'Enterprise governance',
     options: [
@@ -276,6 +312,8 @@ export function resolveWorkspacePlaceholder(lane: CreationStackLane): string {
       return 'e.g. "Next.js admin dashboard with role-aware navigation and API hooks"';
     case 'backend':
       return 'e.g. "NestJS REST API with JWT auth, PostgreSQL, and audit-ready modules"';
+    case 'agent':
+      return 'e.g. "Python agent workspace for evidence-backed repository maintenance"';
     case 'polyglot':
       return 'e.g. "Polyglot SaaS: Next.js web app + FastAPI services with shared governance"';
     case 'enterprise':
@@ -313,6 +351,8 @@ export function resolveCreatePlaceholder(
       return `Describe a frontend project to add${scope} — Next.js, React, Vue, Astro…`;
     case 'backend':
       return `Describe an API or backend service to add${scope} — Node, Python, Go, Java, .NET…`;
+    case 'agent':
+      return `Describe an AI agent to add${scope} — choose Python or .NET and its responsibility…`;
     case 'polyglot':
       return `Describe one full-stack or cross-runtime project to add${scope}…`;
     case 'enterprise':
@@ -332,6 +372,8 @@ export function quickStartsForStackLane(lane: CreationStackLane): string[] {
       return pick('frontend-products');
     case 'backend':
       return [...pick('backend-services'), ...pick('systems-runtimes')].slice(0, 5);
+    case 'agent':
+      return pick('agent-workflows');
     case 'polyglot':
       return pick('full-stack');
     case 'enterprise':
@@ -372,6 +414,8 @@ export function quickStartsForCreateTarget(
       return pick('frontend-products');
     case 'backend':
       return [...pick('backend-services'), ...pick('systems-runtimes')].slice(0, 5);
+    case 'agent':
+      return pick('agent-workflows');
     case 'polyglot':
       return [
         'Next.js full-stack application with authenticated routes and server-side API handlers',

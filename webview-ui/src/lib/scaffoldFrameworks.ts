@@ -1,4 +1,5 @@
 import type {
+  AgentScaffoldFramework,
   BackendScaffoldFramework,
   DesktopScaffoldFramework,
   ExtensionScaffoldFramework,
@@ -6,6 +7,21 @@ import type {
   ScaffoldFramework,
 } from '@/types';
 import createContract from '@workspai-contracts/create-planner-capabilities.v1.json';
+
+type ExecutableCreateEntry = {
+  id: string;
+  category: string;
+  plannerFramework: string;
+  runtime: string;
+  canExecuteCreate?: boolean;
+};
+
+const EXECUTABLE_CREATE_ENTRIES: ExecutableCreateEntry[] = [
+  ...(createContract.nativeCreate as ExecutableCreateEntry[]),
+  ...(createContract.officialCreate as ExecutableCreateEntry[]).filter(
+    (entry) => entry.canExecuteCreate
+  ),
+];
 
 export const BACKEND_STARTERS: Array<{
   framework: BackendScaffoldFramework;
@@ -38,6 +54,20 @@ export const EXTENSION_STARTERS: Array<{
   { framework: 'vscode-extension', title: 'VS Code Extension', detail: 'TypeScript extension' },
 ];
 
+export const AGENT_STARTERS: Array<{
+  framework: AgentScaffoldFramework;
+  title: string;
+  detail: string;
+}> = EXECUTABLE_CREATE_ENTRIES.some((entry) => entry.category === 'agent')
+  ? [
+      {
+        framework: 'microsoft-agent-framework',
+        title: 'Microsoft Agent Framework',
+        detail: 'Governed Python or .NET agent',
+      },
+    ]
+  : [];
+
 export const FRONTEND_STARTERS: Array<{
   framework: FrontendScaffoldFramework;
   title: string;
@@ -60,8 +90,31 @@ export const SCAFFOLD_STARTERS = [
   ...BACKEND_STARTERS,
   ...FRONTEND_STARTERS,
   ...DESKTOP_STARTERS,
+  ...AGENT_STARTERS,
   ...EXTENSION_STARTERS,
 ] as Array<{ framework: ScaffoldFramework; title: string; detail: string }>;
+
+export type ScaffoldCategory = 'backend' | 'frontend' | 'desktop' | 'agent' | 'extension';
+
+export const SCAFFOLD_CATEGORY_LABELS: ReadonlyArray<{
+  id: ScaffoldCategory;
+  label: string;
+}> = [
+  { id: 'backend', label: 'Backend' },
+  { id: 'frontend', label: 'Frontend' },
+  { id: 'desktop', label: 'Desktop' },
+  { id: 'agent', label: 'AI Agent' },
+  { id: 'extension', label: 'Extension' },
+];
+
+export function scaffoldCategoryForFramework(framework: ScaffoldFramework): ScaffoldCategory {
+  const category = EXECUTABLE_CREATE_ENTRIES.find(
+    (entry) => entry.plannerFramework === framework
+  )?.category;
+  return SCAFFOLD_CATEGORY_LABELS.some((candidate) => candidate.id === category)
+    ? (category as ScaffoldCategory)
+    : 'backend';
+}
 
 export function isBackendScaffoldFramework(
   framework: ScaffoldFramework
@@ -103,5 +156,23 @@ export function defaultBootstrapProfileForFramework(
         dotnet: 'dotnet-only',
       } as Partial<Record<string, WorkspaceBootstrapProfile>>
     )[runtime ?? ''] ?? 'minimal'
+  );
+}
+
+export function defaultBootstrapProfileForKit(
+  kit: string,
+  fallbackFramework: ScaffoldFramework
+): WorkspaceBootstrapProfile {
+  const runtime = EXECUTABLE_CREATE_ENTRIES.find((entry) => entry.id === kit)?.runtime;
+  return (
+    (
+      {
+        python: 'python-only',
+        node: 'node-only',
+        go: 'go-only',
+        java: 'java-only',
+        dotnet: 'dotnet-only',
+      } as Partial<Record<string, WorkspaceBootstrapProfile>>
+    )[runtime ?? ''] ?? defaultBootstrapProfileForFramework(fallbackFramework)
   );
 }

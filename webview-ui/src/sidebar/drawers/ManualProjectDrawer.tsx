@@ -1,53 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, MapPin, Package } from 'lucide-react';
 import { Drawer } from '../drawer/Drawer';
-import { FRAMEWORK_OPTIONS } from '../createTypes';
+import {
+  CREATE_KIT_OPTIONS,
+  type CreateKitCategory,
+  type ManualProjectInput,
+} from '../createTypes';
 import type { SidebarScope } from '../sidebarTypes';
 
-const BACKEND_KEYS = [
-  'fastapi-standard',
-  'fastapi-ddd',
-  'nestjs-standard',
-  'springboot-standard',
-  'gofiber-standard',
-  'gogin-standard',
-  'dotnet-webapi-clean',
-  'rust-axum',
-  'php-laravel',
+const CATEGORY_ROWS: Array<{ id: CreateKitCategory; label: string }> = [
+  { id: 'backend', label: 'Backend' },
+  { id: 'frontend', label: 'Frontend' },
+  { id: 'desktop', label: 'Desktop' },
+  { id: 'agent', label: 'AI Agent' },
+  { id: 'extension', label: 'Extension' },
 ];
-
-const DESKTOP_KEYS = ['desktop-tauri', 'desktop-electron'];
-
-const EXTENSION_KEYS = ['vscode-extension'];
-
-const FRONTEND_KEYS = [
-  'nextjs',
-  'react-router',
-  'vite-react',
-  'vite-vue',
-  'vite-svelte',
-  'vite-solid',
-  'vite-vanilla',
-  'nuxt',
-  'angular',
-  'astro',
-  'sveltekit',
-];
-
-function shortLabel(key: string): string {
-  return (
-    FRAMEWORK_OPTIONS.find((o) => o.value === key)
-      ?.label.replace(/ Kit$/, '')
-      .replace(/ Standard/, '') ?? key
-  );
-}
 
 interface ManualProjectDrawerProps {
   open: boolean;
   busy: boolean;
   scope: SidebarScope;
   onClose: () => void;
-  onCreate: (input: { name: string; framework: string }) => void;
+  onCreate: (input: Omit<ManualProjectInput, 'mode'>) => void;
 }
 
 export function ManualProjectDrawer({
@@ -57,22 +31,26 @@ export function ManualProjectDrawer({
   onClose,
   onCreate,
 }: ManualProjectDrawerProps) {
-  const [framework, setFramework] = useState('fastapi-standard');
+  const [kit, setKit] = useState('fastapi.standard');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
 
   const placeholder = useMemo(() => {
-    if (framework.includes('next') || framework.includes('vite') || framework.includes('react')) {
+    const selected = CREATE_KIT_OPTIONS.find((option) => option.value === kit);
+    if (selected?.category === 'frontend') {
       return 'my-web-app';
     }
-    return 'my-api-service';
-  }, [framework]);
+    if (selected?.category === 'agent') {
+      return 'my-agent';
+    }
+    return selected?.category === 'desktop' ? 'my-desktop-app' : 'my-api-service';
+  }, [kit]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    setFramework('fastapi-standard');
+    setKit('fastapi.standard');
     setName('');
     setError('');
   }, [open]);
@@ -91,9 +69,20 @@ export function ManualProjectDrawer({
       return false;
     }
     if (
-      ['test', 'tests', 'src', 'dist', 'build', 'lib', 'python', 'pip', 'poetry', 'node', 'npm', 'rapidkit'].includes(
-        value
-      )
+      [
+        'test',
+        'tests',
+        'src',
+        'dist',
+        'build',
+        'lib',
+        'python',
+        'pip',
+        'poetry',
+        'node',
+        'npm',
+        'rapidkit',
+      ].includes(value)
     ) {
       setError('This name is reserved; choose a different project name');
       return false;
@@ -106,21 +95,27 @@ export function ManualProjectDrawer({
     if (!validate(name) || busy) {
       return;
     }
-    onCreate({ name: name.trim(), framework });
+    const selected = CREATE_KIT_OPTIONS.find((option) => option.value === kit);
+    if (!selected) {
+      setError('Select a supported project kit');
+      return;
+    }
+    onCreate({ name: name.trim(), framework: selected.framework, kit: selected.value });
   };
 
-  const renderFrameworkRow = (title: string, keys: string[]) => (
+  const renderFrameworkRow = (category: CreateKitCategory, title: string) => (
     <section key={title} className="ws-drawer-section ws-drawer-section--flush">
       <span className="ws-drawer-section__label">{title}</span>
       <div className="ws-drawer-chip-grid ws-drawer-chip-grid--framework">
-        {keys.map((key) => (
+        {CREATE_KIT_OPTIONS.filter((option) => option.category === category).map((option) => (
           <button
-            key={key}
+            key={option.value}
             type="button"
-            className={`ws-drawer-chip${framework === key ? ' is-selected' : ''}`}
-            onClick={() => setFramework(key)}
+            className={`ws-drawer-chip${kit === option.value ? ' is-selected' : ''}`}
+            onClick={() => setKit(option.value)}
+            title={`${option.label} · ${option.runtime}`}
           >
-            {shortLabel(key)}
+            {option.label}
           </button>
         ))}
       </div>
@@ -165,10 +160,7 @@ export function ManualProjectDrawer({
         </div>
       </section>
 
-      {renderFrameworkRow('Backend', BACKEND_KEYS)}
-      {renderFrameworkRow('Frontend', FRONTEND_KEYS)}
-      {renderFrameworkRow('Desktop', DESKTOP_KEYS)}
-      {renderFrameworkRow('Extension', EXTENSION_KEYS)}
+      {CATEGORY_ROWS.map((category) => renderFrameworkRow(category.id, category.label))}
 
       <section className="ws-drawer-section">
         <label className="ws-drawer-field">

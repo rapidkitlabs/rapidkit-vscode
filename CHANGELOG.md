@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-09-06
+
+### Added
+
+- Added a local-first **Analyze Repo** surface for public GitHub, GitLab, and
+  Bitbucket repositories. It creates a shallow isolated copy, builds canonical
+  Workspai Model and Graph evidence, runs the governed intelligence chain, and
+  presents repository identity, graph scale, readiness, connected architecture
+  surfaces, and measured bounded-retrieval efficiency.
+- Added explicit analysis provenance and safety disclosure. Quick Analysis does
+  not install project dependencies or execute repository source, and its local
+  copy and evidence can be opened or deleted by the operator.
+- Reused the production 3D Workspace Graph renderer and canonical Doctor
+  projection inside Analyze Repo, with local Analysis Story and 360° Graph GIF
+  exports for evidence-backed product communication.
+- Promoted the repository Graph to a full-width, architecture-first explorer
+  with project, kind, text, and neighborhood filters. Added evidence-derived
+  Web Agent fit, security-signal, delivery-control, and change-surface
+  decisions with explicit claim boundaries. The Story GIF now tours the real
+  rendered Graph, Doctor findings, and decision panels with focused zooms.
+- Analyze Repo now connects questions and Doctor findings to bounded search of
+  the full captured CLI Graph, related surfaces, proof inspection, and guarded
+  source navigation. Unknown evidence and stale artifacts remain explicit.
+- Added **Review Changes**, a local working-tree comparison with CLI-authored
+  project impact, unexecuted verification recommendations, content freshness
+  checks, and a copyable agent handoff. It does not run project scripts
+  automatically or infer readiness from unavailable evidence.
+
+### Changed
+
+- Fixed shared 3D Graph context recreation and transparent-edge depth occlusion
+  during orbit. Orbit exports now render offscreen without resizing the live view.
+- Added actual analysis-panel recording with sampled stages, results, and section
+  close-ups. Kept the illustrated summary export separate from recorded screen frames.
+- Removed unsupported clean-security and remote-agent-ready inferences; preserved
+  blocked intelligence gates and exposed Doctor verification steps in the report.
+
+- Synchronized the bundled runtime, complete published contract mirror, command
+  inventory, and consumer compatibility policy with Workspai CLI 0.75.0.
+- Added a category-first Create flow and governed Microsoft Agent Framework
+  Python/.NET kits with kit-specific runtime profiles and verification boundaries.
+- Repository analysis isolates Workspai registry/configuration state inside
+  extension storage and reuses evidence only for the same normalized repository
+  URL and verified CLI version.
+- Unified primary-sidebar, Dashboard, secondary Create, AI Create, and Studio
+  kit awareness on the CLI 0.75.0 executable-create contract. Governed agent
+  projects retain their runtime identity, bounded-context prerequisites, and
+  offline verification boundary across UI and model-facing surfaces.
+- Made Dashboard the first primary tab and clarified the hierarchy between
+  primary actions, evidence inspection, and exports in Analyze Repo and Review
+  Changes.
+- Updated transitive `fast-uri` and `qs` resolutions to patched releases so the
+  extension dependency graph passes the high-severity npm audit gate.
+
+### Fixed
+
+- Refined Review Changes with a compact scope form, first-use guidance,
+  readable Git statuses, searchable paths, themed evidence panels, and a clear
+  handoff action. Technical scope details remain expandable.
+- Review Changes now invalidates moved comparison refs, binds refresh to the
+  active review, and checks embedded impact/diff consistency. Handoffs retain
+  impact reasons, scope, and explicit evidence counts.
+- Analyze Repo, Dashboard Graph, and Graph GIF now use the same software 3D
+  rendering path by default, preserving node colors and preventing the live
+  Graph from diverging from its export.
+- Canvas capability probes now use separate canvases for 2D and WebGL; the
+  software render loop no longer reallocates its backing surface every frame.
+
 ## [0.45.0] - 2026-08-28
 
 ### Added

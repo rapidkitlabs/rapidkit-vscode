@@ -17,7 +17,12 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import type { DashboardEvidenceCardId } from '@/lib/dashboardCommandRegistry';
-import { SCAFFOLD_STARTERS } from '@/lib/scaffoldFrameworks';
+import {
+  SCAFFOLD_CATEGORY_LABELS,
+  SCAFFOLD_STARTERS,
+  scaffoldCategoryForFramework,
+  type ScaffoldCategory,
+} from '@/lib/scaffoldFrameworks';
 import type { DashboardEvidencePayload } from '@/lib/dashboardEvidence';
 import { findEvidenceCard } from '@/lib/dashboardEvidence';
 import { buildDashboardCommandActionContract } from '@/lib/dashboardCommandActionContract';
@@ -100,6 +105,12 @@ export function EnterpriseDashboardFlow({
   const commandContract = (command: DashboardCommand, disabledReason?: string) =>
     buildDashboardCommandActionContract(command, { evidence, disabledReason });
   const [onboardingModal, setOnboardingModal] = useState<ProjectOnboardingMode | null>(null);
+  const [starterCategory, setStarterCategory] = useState<ScaffoldCategory>(() =>
+    scaffoldCategoryForFramework(selectedFramework)
+  );
+  const visibleFrameworks = frameworks.filter(
+    (item) => scaffoldCategoryForFramework(item.framework) === starterCategory
+  );
   const modalWorkspaceName =
     workspaceStatus.workspaceName?.trim() || workspaceStatus.workspacePath || 'Workspace';
   const activeHeader =
@@ -385,8 +396,30 @@ export function EnterpriseDashboardFlow({
                 title={hasWorkspace ? 'Open AI Project Builder' : 'Select a workspace first'}
               />
 
+              <nav className="enterprise-framework-categories" aria-label="Project category">
+                {SCAFFOLD_CATEGORY_LABELS.map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    className={starterCategory === category.id ? 'is-active' : ''}
+                    aria-pressed={starterCategory === category.id}
+                    onClick={() => {
+                      setStarterCategory(category.id);
+                      const first = frameworks.find(
+                        (item) => scaffoldCategoryForFramework(item.framework) === category.id
+                      );
+                      if (first) {
+                        onSelectFramework(first.framework);
+                      }
+                    }}
+                  >
+                    {category.label}
+                  </button>
+                ))}
+              </nav>
+
               <div className="enterprise-framework-grid" aria-label="Project starters">
-                {frameworks.map((item) => (
+                {visibleFrameworks.map((item) => (
                   <button
                     key={item.framework}
                     type="button"

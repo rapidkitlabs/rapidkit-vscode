@@ -5,6 +5,8 @@
  * that the raw-HTML sidebar exposed, so the React port is protocol-faithful.
  */
 
+import createContract from '@workspai-contracts/create-planner-capabilities.v1.json';
+
 export interface CreationPlanSecondaryProject {
   framework: string;
   kit: string;
@@ -118,6 +120,7 @@ export const STACK_FOCUS_OPTIONS = [
   'Frontend',
   'Backend API',
   'Full-stack',
+  'AI Agent',
   'Enterprise',
 ];
 
@@ -132,28 +135,69 @@ export const PROFILE_OPTIONS: { value: string; label: string }[] = [
   { value: 'enterprise', label: 'Enterprise' },
 ];
 
-export const FRAMEWORK_OPTIONS: { value: string; label: string }[] = [
-  { value: 'fastapi-standard', label: 'FastAPI Standard Kit' },
-  { value: 'fastapi-ddd', label: 'FastAPI DDD Kit' },
-  { value: 'nestjs-standard', label: 'NestJS Standard Kit' },
-  { value: 'springboot-standard', label: 'Spring Boot Standard Kit' },
-  { value: 'gofiber-standard', label: 'Go Fiber Standard Kit' },
-  { value: 'gogin-standard', label: 'Go Gin Standard Kit' },
-  { value: 'dotnet-webapi-clean', label: 'ASP.NET Core Clean Web API' },
-  { value: 'rust-axum', label: 'Rust Axum' },
-  { value: 'php-laravel', label: 'Laravel' },
-  { value: 'nextjs', label: 'Next.js' },
-  { value: 'react-router', label: 'React Router' },
-  { value: 'vite-react', label: 'React + Vite' },
-  { value: 'vite-vue', label: 'Vue + Vite' },
-  { value: 'vite-svelte', label: 'Svelte + Vite' },
-  { value: 'vite-solid', label: 'Solid + Vite' },
-  { value: 'vite-vanilla', label: 'Vite' },
-  { value: 'nuxt', label: 'Nuxt' },
-  { value: 'angular', label: 'Angular' },
-  { value: 'astro', label: 'Astro' },
-  { value: 'sveltekit', label: 'SvelteKit' },
-  { value: 'desktop-tauri', label: 'Tauri Desktop' },
-  { value: 'desktop-electron', label: 'Electron Forge' },
-  { value: 'vscode-extension', label: 'VS Code Extension' },
+export type CreateKitCategory = 'backend' | 'frontend' | 'desktop' | 'agent' | 'extension';
+
+type ContractCreateEntry = {
+  id: string;
+  plannerFramework: string;
+  runtime: string;
+  category: string;
+  canExecuteCreate?: boolean;
+};
+
+const KIT_LABELS: Record<string, string> = {
+  'fastapi.standard': 'FastAPI Standard',
+  'fastapi.ddd': 'FastAPI DDD',
+  'nestjs.standard': 'NestJS Standard',
+  'springboot.standard': 'Spring Boot Standard',
+  'gofiber.standard': 'Go Fiber Standard',
+  'gogin.standard': 'Go Gin Standard',
+  'dotnet.webapi.clean': 'ASP.NET Core Clean Web API',
+  'rust.axum': 'Rust Axum',
+  'php.laravel': 'Laravel',
+  'agent.microsoft.python': 'Microsoft Agent Framework · Python',
+  'agent.microsoft.dotnet': 'Microsoft Agent Framework · .NET',
+  'frontend.nextjs': 'Next.js',
+  'frontend.remix': 'React Router',
+  'frontend.vite-react': 'React + Vite',
+  'frontend.vite-vue': 'Vue + Vite',
+  'frontend.vite-svelte': 'Svelte + Vite',
+  'frontend.vite-solid': 'Solid + Vite',
+  'frontend.vite-vanilla': 'Vite',
+  'frontend.nuxt': 'Nuxt',
+  'frontend.angular': 'Angular',
+  'frontend.astro': 'Astro',
+  'frontend.sveltekit': 'SvelteKit',
+  'desktop.tauri': 'Tauri Desktop',
+  'desktop.electron': 'Electron Forge',
+  'extension.vscode': 'VS Code Extension',
+};
+
+const EXECUTABLE_CREATE_ENTRIES = [
+  ...(createContract.nativeCreate as ContractCreateEntry[]),
+  ...(createContract.officialCreate as ContractCreateEntry[]).filter(
+    (entry) => entry.canExecuteCreate
+  ),
 ];
+
+export const CREATE_KIT_OPTIONS = EXECUTABLE_CREATE_ENTRIES.filter((entry) =>
+  ['backend', 'frontend', 'desktop', 'agent', 'extension'].includes(entry.category)
+).map((entry) => ({
+  value: entry.id,
+  label: KIT_LABELS[entry.id] ?? entry.id,
+  framework: entry.plannerFramework,
+  runtime: entry.runtime,
+  category: entry.category as CreateKitCategory,
+}));
+
+/** @deprecated Use CREATE_KIT_OPTIONS; retained for label lookup compatibility. */
+export const FRAMEWORK_OPTIONS: { value: string; label: string }[] = CREATE_KIT_OPTIONS.map(
+  ({ value, label }) => ({ value, label })
+);
+
+export type ManualProjectInput = {
+  mode: 'project';
+  name: string;
+  framework: string;
+  kit: string;
+};

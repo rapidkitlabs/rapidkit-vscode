@@ -83,6 +83,7 @@ import type { DashboardLifecycleMessageHost } from './welcomePanelDashboardLifec
 import { refreshModulesCatalog, type ModulesCatalogHost } from './welcomePanelModulesCatalog';
 import type { DashboardShortcutMessageHost } from './welcomePanelDashboardShortcutMessages';
 import type { AnalyzeReportMessageHost } from './welcomePanelAnalyzeReportMessages';
+import type { RepositoryAnalysisMessageHost } from './welcomePanelRepositoryAnalysisMessages';
 import type { WorkspaiSettingsMessageHost } from './welcomePanelWorkspaiSettingsMessages';
 import type { AiCreationDispatchHost } from './welcomePanelAiCreationMessages';
 import {
@@ -1302,6 +1303,14 @@ export class WelcomePanel {
     return buildWelcomePanelAnalyzeReportMessageHost(this._dashboardHostBindings());
   }
 
+  private _repositoryAnalysisMessageHost(): RepositoryAnalysisMessageHost {
+    return {
+      context: this._context,
+      postWebviewMessage: (command, data, options) =>
+        this._postWebviewMessage(command, data, options),
+    };
+  }
+
   private _dashboardShortcutMessageHost(): DashboardShortcutMessageHost {
     return buildWelcomePanelDashboardShortcutMessageHost(this._dashboardHostBindings());
   }
@@ -1559,6 +1568,7 @@ export class WelcomePanel {
       getReadyMessageHost: () => this._readyMessageHost(),
       getCreationNavigationMessageHost: () => this._creationNavigationMessageHost(),
       getAiCreationDispatchHost: () => this._aiCreationDispatchHost(),
+      getRepositoryAnalysisMessageHost: () => this._repositoryAnalysisMessageHost(),
     };
   }
 

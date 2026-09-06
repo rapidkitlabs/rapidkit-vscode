@@ -120,6 +120,7 @@ describe('VSIX packaging exclusions', () => {
       'extension/contracts/runtime-command-surface.v1.json',
       'extension/contracts/extension-cli-compatibility.v1.json',
       'extension/contracts/extension-cli-release-policy.v1.json',
+      'extension/contracts/repository-analysis.v1.json',
       'extension/contracts/workspace-intelligence/workspace-graph-recording.v1.json',
       'extension/contracts/workspace-intelligence/workspace-verify.v1.json',
       'extension/media/icons/icon.png',

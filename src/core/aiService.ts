@@ -33,12 +33,15 @@ import {
 } from './aiModelSelection';
 import {
   defaultScaffoldKitForFramework,
+  defaultWorkspaceProfileForKit,
   defaultWorkspaceProfileForFramework,
+  isAgentScaffoldFramework,
   isScaffoldFramework,
   isBackendScaffoldFramework,
   isDesktopScaffoldFramework,
   isExtensionScaffoldFramework,
   isFrontendScaffoldFramework,
+  listExecutableScaffoldKitCapabilities,
   scaffoldKitsForFramework,
   scaffoldRuntimeForFramework,
   type ScaffoldKitId,
@@ -1593,8 +1596,8 @@ function extractJSON(text: string): string {
 /**
  * Map a framework string to the default profile.
  */
-function defaultProfile(fw: ScaffoldFramework): AICreateProfile {
-  return defaultWorkspaceProfileForFramework(fw);
+function defaultProfile(fw: ScaffoldFramework, kit?: string): AICreateProfile {
+  return kit ? defaultWorkspaceProfileForKit(kit, fw) : defaultWorkspaceProfileForFramework(fw);
 }
 
 function isCreateFramework(value: unknown): value is ScaffoldFramework {
@@ -1647,22 +1650,37 @@ function detectUnsupportedCreationStack(
   return null;
 }
 
-function normalizeCreationKit(kit: unknown, framework: ScaffoldFramework): string {
+function normalizeCreationKit(
+  kit: unknown,
+  framework: ScaffoldFramework,
+  inferredKit?: string
+): string {
   if (typeof kit === 'string' && scaffoldKitsForFramework(framework).includes(kit)) {
     return kit;
+  }
+  if (inferredKit && scaffoldKitsForFramework(framework).includes(inferredKit)) {
+    return inferredKit;
   }
   return defaultKitForFramework(framework);
 }
 
-function normalizeCreationProfile(profile: unknown, framework: ScaffoldFramework): AICreateProfile {
+function normalizeCreationProfile(
+  profile: unknown,
+  framework: ScaffoldFramework,
+  kit?: string
+): AICreateProfile {
   if (typeof profile === 'string' && VALID_PROFILES.has(profile as AICreateProfile)) {
     return profile as AICreateProfile;
   }
-  return defaultProfile(framework);
+  return defaultProfile(framework, kit);
 }
 
-export function resolveCreationProfile(profile: unknown, framework: unknown): AICreateProfile {
-  return normalizeCreationProfile(profile, normalizeCreationFramework(framework));
+export function resolveCreationProfile(
+  profile: unknown,
+  framework: unknown,
+  kit?: string
+): AICreateProfile {
+  return normalizeCreationProfile(profile, normalizeCreationFramework(framework), kit);
 }
 
 function normalizeInstallMethod(): AICreationPlan['installMethod'] {
@@ -1809,6 +1827,7 @@ function normalizeSuggestedModules(
     framework === 'laravel' ||
     isDesktopScaffoldFramework(framework) ||
     isExtensionScaffoldFramework(framework) ||
+    isAgentScaffoldFramework(framework) ||
     (framework && isFrontendScaffoldFramework(framework))
   ) {
     return [];
@@ -1920,43 +1939,32 @@ export async function parseCreationIntent(
   const modulesSection = buildModuleListForPrompt(liveModules);
   const installedElsewhere = await collectWorkspaceInstalledModules(workspacePath);
   const installedElsewhereSection = buildWorkspaceInstalledModulesSection(installedElsewhere);
+  const createInventorySection = listExecutableScaffoldKitCapabilities()
+    .map(
+      (entry) =>
+        `  "${entry.id}" — ${entry.category}; framework=${entry.framework}; runtime=${entry.runtimeCandidates.join('+')}`
+    )
+    .join('\n');
 
   const SYSTEM = `You are a Workspai project scaffolding assistant. Parse the user description and respond with ONLY a valid JSON object — no markdown, no explanation.
 
 Available workspace profiles:
   "minimal"      — files only, no runtime
-  "python-only"  — Python backend (FastAPI)
-  "node-only"    — Node.js backend or frontend apps
+  "python-only"  — Python backend or Python agent runtime
+  "node-only"    — Node.js backend, frontend, desktop, or extension apps
   "go-only"      — Go backend
   "java-only"    — Java backend (Spring Boot)
-  "dotnet-only"  — .NET backend
+  "dotnet-only"  — .NET backend or .NET agent runtime
   "polyglot"     — projects from two or more runtime families
   "enterprise"   — multi-team governance
-
-Available frameworks:
-  Backend: "fastapi" | "nestjs" | "go" | "springboot" | "dotnet" | "rust" | "laravel"
-  Frontend: "nextjs" | "remix" | "vite-react" | "vite-vue" | "vite-svelte" | "vite-solid" | "vite-vanilla" | "nuxt" | "angular" | "astro" | "sveltekit"
-  Desktop: "tauri" | "electron"
-  Extension: "vscode-extension"
 
 Unsupported create targets:
   WordPress, Symfony, Ruby / Rails, and unlisted ecosystems are not executable create targets.
   Never translate these requests into an unrelated available kit.
   If the user explicitly asks for an unsupported stack, the host will stop the create flow and guide them to create/adopt/import instead.
 
-Available kits (use EXACT names):
-  "fastapi.standard"  — FastAPI flat structure (default for Python)
-  "fastapi.ddd"       — FastAPI clean-architecture DDD (use for complex/layered/domain-driven)
-  "nestjs.standard"   — NestJS feature module (default for Node backend)
-  "gofiber.standard"  — Go + Fiber v2 HTTP (fast, minimal)
-  "gogin.standard"    — Go + Gin HTTP (classic REST)
-  "springboot.standard" — Spring Boot service (default for Java)
-  "dotnet.webapi.clean" — .NET Web API clean architecture service (default for C#)
-  "rust.axum" — Rust Axum backend
-  "php.laravel" — Laravel via the official Composer generator
-  "desktop.tauri" | "desktop.electron"
-  "extension.vscode"
-  "frontend.nextjs" | "frontend.remix" | "frontend.vite-react" | "frontend.vite-vue" | "frontend.vite-svelte" | "frontend.vite-solid" | "frontend.vite-vanilla" | "frontend.nuxt" | "frontend.angular" | "frontend.astro" | "frontend.sveltekit"
+Executable create inventory from the current CLI contract (use EXACT framework and kit ids):
+${createInventorySection}
 
 ${modulesSection}
 
@@ -1984,7 +1992,9 @@ Required JSON schema (return EXACTLY this):
 
 Rules:
 - For fastapi/nestjs, ALWAYS include "free/essentials/settings" in suggestedModules
-- For go/springboot/dotnet/rust/laravel/frontend/desktop/extension frameworks, set suggestedModules to []
+- For go/springboot/dotnet/rust/laravel/frontend/desktop/agent/extension frameworks, set suggestedModules to []
+- AI agent requests use framework "microsoft-agent-framework" and an admitted "agent.microsoft.python" or "agent.microsoft.dotnet" kit
+- Agent dependency versions are governed by Workspai release admission; never invent or upgrade them in the creation plan
 - Use fastapi.ddd kit when: DDD / clean-arch / domain / layered / complex mentioned
 - Full-stack topology does not automatically mean polyglot; Next.js + NestJS uses node-only
 - Use polyglot profile only when selected projects use different runtime families or the user explicitly requests multiple runtimes
@@ -2092,6 +2102,11 @@ Rules:
   });
   const fw = reconciled.primary;
   const secondaryProject = reconciled.secondary;
+  const kit = normalizeCreationKit(
+    parsed.kit,
+    fw,
+    heuristicDraft.framework === fw ? heuristicDraft.kit : undefined
+  );
   const plan: AICreationPlan = {
     type: mode,
     workspaceName: uniqueName,
@@ -2101,12 +2116,14 @@ Rules:
             fw,
             prompt.toLowerCase(),
             inferredStackIntent,
-            secondaryProject?.framework
+            secondaryProject?.framework,
+            kit,
+            secondaryProject?.kit
           )
-        : normalizeCreationProfile(parsed.profile, fw),
+        : normalizeCreationProfile(parsed.profile, fw, kit),
     installMethod: normalizeInstallMethod(),
     framework: fw,
-    kit: normalizeCreationKit(parsed.kit, fw),
+    kit,
     projectName: sanitizeKebab(parsed.projectName ?? 'api'),
     suggestedModules: normalizeSuggestedModules(parsed.suggestedModules, liveModules, fw),
     description:

@@ -998,6 +998,33 @@
     gap: 6px;
   }
 
+  .enterprise-framework-categories {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 1px 0;
+  }
+
+  .enterprise-framework-categories button {
+    flex: 0 0 auto;
+    min-height: 28px;
+    padding: 4px 9px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .enterprise-framework-categories button:hover,
+  .enterprise-framework-categories button.is-active {
+    border-color: color-mix(in srgb, var(--vscode-focusBorder) 76%, transparent);
+    background: color-mix(in srgb, var(--vscode-focusBorder) 11%, transparent);
+    color: var(--vscode-foreground);
+  }
+
   .enterprise-framework-grid button {
     min-height: 36px;
     padding: 6px 8px;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutDashboard, Wrench, Settings2 } from 'lucide-react';
+import { LayoutDashboard, ScanSearch, GitCompareArrows, Wrench, Settings2 } from 'lucide-react';
 import { vscode } from '@/vscode';
 import { normalizeExtensionWebviewMessage } from '@workspai-contracts/webviewProtocol';
 import type {
@@ -59,6 +59,8 @@ import {
   type WorkspaiAIProviderDefinition,
 } from '@/components/WorkspaiSettingsPanel';
 import { WorkspaiThemeProvider } from '@/components/WorkspaiThemeProvider';
+import { RepositoryAnalysisPanel } from '@/components/RepositoryAnalysisPanel';
+import { ChangeReviewPanel } from '@/components/ChangeReviewPanel';
 import { normalizeThemeMode, type ThemeMode } from '@/components/StudioRedesign/styles/themeSystem';
 import { WorkspaiBanner } from '@/components/WorkspaiBanner';
 import { resolveSidebarProjectSelection } from '@/lib/incidentStudioAnalysisScope';
@@ -168,7 +170,12 @@ declare global {
   }
 }
 
-type WorkspaiActiveView = 'dashboard' | 'settings' | 'setup';
+type WorkspaiActiveView =
+  | 'dashboard'
+  | 'analyze-repository'
+  | 'review-changes'
+  | 'settings'
+  | 'setup';
 
 function resolveInitialActiveView(): WorkspaiActiveView {
   if (typeof window !== 'undefined' && window.WORKSPAI_VIEW === 'setup') {
@@ -1583,7 +1590,7 @@ export function App() {
     prompt: string,
     mode: 'workspace' | 'project',
     framework?: string,
-    stackIntent?: 'balanced' | 'frontend' | 'backend' | 'polyglot' | 'enterprise'
+    stackIntent?: 'balanced' | 'frontend' | 'backend' | 'agent' | 'polyglot' | 'enterprise'
   ) => {
     vscode.postMessage('aiParseCreation', { prompt, mode, framework, stackIntent });
   };
@@ -1774,13 +1781,39 @@ export function App() {
           aria-selected={activeView === 'dashboard'}
           className={`workspai-view-tab ${activeView === 'dashboard' ? 'is-active' : ''}`}
           title="Workspai — Home, Run, Repair, Artifacts, Graph, Live, Project, Library"
-          onClick={() => {
-            setActiveView('dashboard');
-          }}
+          onClick={() => setActiveView('dashboard')}
         >
           <span className="workspai-view-tab-content">
             <LayoutDashboard size={13} aria-hidden="true" />
             <span className="workspai-view-tab-label">Dashboard</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'analyze-repository'}
+          className={`workspai-view-tab ${activeView === 'analyze-repository' ? 'is-active' : ''}`}
+          title="Analyze a public repository locally"
+          onClick={() => {
+            setActiveView('analyze-repository');
+          }}
+        >
+          <span className="workspai-view-tab-content">
+            <ScanSearch size={13} aria-hidden="true" />
+            <span className="workspai-view-tab-label">Analyze Repo</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === 'review-changes'}
+          title="Review local changes, impact evidence and suggested checks"
+          className={`workspai-view-tab ${activeView === 'review-changes' ? 'is-active' : ''}`}
+          onClick={() => setActiveView('review-changes')}
+        >
+          <span className="workspai-view-tab-content">
+            <GitCompareArrows size={13} aria-hidden="true" />
+            <span className="workspai-view-tab-label">Review Changes</span>
           </span>
         </button>
         <button
@@ -1821,7 +1854,10 @@ export function App() {
           'container',
           activeView === 'dashboard'
             ? 'container--dashboard'
-            : activeView === 'settings' || activeView === 'setup'
+            : activeView === 'analyze-repository' ||
+                activeView === 'review-changes' ||
+                activeView === 'settings' ||
+                activeView === 'setup'
               ? 'container--embedded-scroll'
               : '',
         ]
@@ -2404,6 +2440,16 @@ export function App() {
                 </div>
               ) : null}
             </div>
+          </div>
+        ) : activeView === 'analyze-repository' ? (
+          <div className="ws-embedded-host ws-embedded-host--full">
+            <div className="workspai-view-tabs-sticky">{workspaiViewTabs}</div>
+            <RepositoryAnalysisPanel />
+          </div>
+        ) : activeView === 'review-changes' ? (
+          <div className="ws-embedded-host ws-embedded-host--full">
+            <div className="workspai-view-tabs-sticky">{workspaiViewTabs}</div>
+            <ChangeReviewPanel />
           </div>
         ) : activeView === 'settings' ? (
           <div className="ws-embedded-host ws-embedded-host--full">

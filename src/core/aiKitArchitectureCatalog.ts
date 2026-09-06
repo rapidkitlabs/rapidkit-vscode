@@ -236,6 +236,62 @@ const KIT_BLUEPRINTS: Record<string, KitBlueprint> = {
   • No RapidKit module marketplace (module_support=false)`,
     injectionPoints: [],
   },
+  'agent.microsoft.python': {
+    id: 'agent.microsoft.python',
+    owner: 'npm',
+    runtime: 'python',
+    framework: 'microsoft-agent-framework',
+    moduleSupport: false,
+    stability: 'stable',
+    createCommand:
+      'npx workspai create project agent.microsoft.python <name> [--output <dir>] [--yes]',
+    layout: `  agents/primary/
+    main.py                 ← Microsoft Agent Framework entrypoint
+    pyproject.toml          ← isolated, admitted dependency baseline
+    tests/test_context.py   ← offline bounded-context verification
+    .env.example            ← variable names only; no credentials
+    README.md               ← exact install, verify, and run commands
+  .workspai/
+    agent-frameworks/       ← managed adapter state and ownership evidence
+    context/                ← bounded Workspai context consumed by the agent
+    project.json            ← canonical agent kit identity`,
+    patterns: `  • Workspai owns repository context, authorization, impact, and verification
+  • Microsoft Agent Framework owns model conversation and runtime state
+  • The entrypoint reads the bounded Project Agent Context; it must not crawl the repository as a substitute
+  • Dependencies stay isolated under agents/primary and use an admitted pinned baseline
+  • Provider access requires FOUNDRY_PROJECT_ENDPOINT and an explicit network grant
+  • Verify offline before any provider call; never store credentials in generated files`,
+    injectionPoints: [],
+  },
+  'agent.microsoft.dotnet': {
+    id: 'agent.microsoft.dotnet',
+    owner: 'npm',
+    runtime: 'dotnet',
+    framework: 'microsoft-agent-framework',
+    moduleSupport: false,
+    stability: 'stable',
+    createCommand:
+      'npx workspai create project agent.microsoft.dotnet <name> [--output <dir>] [--yes]',
+    layout: `  agents/primary/
+    Program.cs                    ← Microsoft Agent Framework entrypoint
+    WorkspaiContext.cs            ← bounded context loader
+    Primary.csproj                ← isolated, admitted dependency baseline
+    tests/Primary.Tests.csproj    ← offline Microsoft Testing Platform project
+    tests/WorkspaiContextTests.cs ← context-boundary verification
+    .env.example                  ← variable names only; no credentials
+    README.md                     ← exact install, verify, and run commands
+  .workspai/
+    agent-frameworks/             ← managed adapter state and ownership evidence
+    context/                      ← bounded Workspai context consumed by the agent
+    project.json                  ← canonical agent kit identity`,
+    patterns: `  • Workspai owns repository context, authorization, impact, and verification
+  • Microsoft Agent Framework owns model conversation and runtime state
+  • Program.cs consumes WorkspaiContext instead of independently rediscovering the repository
+  • The agent project and its test project stay isolated from repository-level solution policy
+  • Provider access requires FOUNDRY_PROJECT_ENDPOINT and an explicit network grant
+  • Verify offline before any provider call; never store credentials in generated files`,
+    injectionPoints: [],
+  },
 };
 
 const KIT_ALIASES: Record<string, string> = {
@@ -255,6 +311,11 @@ const KIT_ALIASES: Record<string, string> = {
   'dotnet.webapi': 'dotnet.webapi.clean',
   aspnet: 'dotnet.webapi.clean',
   csharp: 'dotnet.webapi.clean',
+  'microsoft-agent-framework': 'agent.microsoft.python',
+  'microsoft-agent-python': 'agent.microsoft.python',
+  'agent-framework-python': 'agent.microsoft.python',
+  'microsoft-agent-dotnet': 'agent.microsoft.dotnet',
+  'agent-framework-dotnet': 'agent.microsoft.dotnet',
   'go.fiber': 'gofiber.standard',
   'go.gin': 'gogin.standard',
   nextjs: 'frontend.nextjs',
@@ -318,6 +379,12 @@ export function resolveKitId(value?: string | null): string | null {
   }
   if (normalized.startsWith('dotnet')) {
     return 'dotnet.webapi.clean';
+  }
+  if (normalized.startsWith('agent.microsoft.python')) {
+    return 'agent.microsoft.python';
+  }
+  if (normalized.startsWith('agent.microsoft.dotnet')) {
+    return 'agent.microsoft.dotnet';
   }
   return null;
 }

@@ -41,7 +41,8 @@ export function buildWorkspaiPlatformContract(): string {
     '- Kit create + catalog module install/uninstall run through rapidkit-core when Python is available',
     '  (workspace .venv via pip/poetry, or pipx — location varies per machine; never cite a fixed engine path).',
     '- Module-capable kits ONLY: fastapi.standard, fastapi.ddd, nestjs.standard.',
-    '- Go / Spring Boot / .NET kits: native deps only — no catalog module marketplace.',
+    '- Go / Spring Boot / .NET / frontend / desktop / extension / agent kits: native or adapter-owned deps only — no catalog module marketplace.',
+    '- Agent kits use release-admitted dependency baselines and bounded Workspai context; never substitute an unverified latest framework version.',
     '- Teach from canonical project evidence (.workspai/project.json, .workspai/registry.json, scanned src/) before generic templates.',
   ].join('\n');
 }

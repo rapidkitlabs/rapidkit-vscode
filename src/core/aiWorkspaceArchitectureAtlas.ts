@@ -77,6 +77,8 @@ function detectEntryPoints(projectPath: string, kit: string): string[] {
     { rel: 'pom.xml', kits: ['springboot'] },
     { rel: 'build.gradle', kits: ['springboot'] },
     { rel: 'build.gradle.kts', kits: ['springboot'] },
+    { rel: 'agents/primary/main.py', kits: ['agent-python'] },
+    { rel: 'agents/primary/Program.cs', kits: ['agent-dotnet'] },
   ];
 
   const family = kit.startsWith('nestjs')
@@ -89,7 +91,11 @@ function detectEntryPoints(projectPath: string, kit: string): string[] {
           ? 'springboot'
           : kit.startsWith('dotnet')
             ? 'dotnet'
-            : 'unknown';
+            : kit === 'agent.microsoft.python'
+              ? 'agent-python'
+              : kit === 'agent.microsoft.dotnet'
+                ? 'agent-dotnet'
+                : 'unknown';
 
   const found: string[] = [];
   for (const candidate of candidates) {
@@ -160,6 +166,12 @@ function deriveRuntimeFromKit(kit: string): { runtime: string; framework: string
   }
   if (resolved === 'dotnet.webapi.clean') {
     return { runtime: 'dotnet', framework: 'dotnet' };
+  }
+  if (resolved === 'agent.microsoft.python') {
+    return { runtime: 'python', framework: 'microsoft-agent-framework' };
+  }
+  if (resolved === 'agent.microsoft.dotnet') {
+    return { runtime: 'dotnet', framework: 'microsoft-agent-framework' };
   }
   if (resolved === 'frontend.nextjs') {
     return { runtime: 'node', framework: 'nextjs' };
@@ -246,7 +258,8 @@ export function scanProjectArchitectureFingerprint(
     analyzeSlice?.hasTests ??
     (pathExists(path.join(resolvedPath, 'test')) ||
       pathExists(path.join(resolvedPath, 'tests')) ||
-      pathExists(path.join(resolvedPath, 'src', 'test')));
+      pathExists(path.join(resolvedPath, 'src', 'test')) ||
+      pathExists(path.join(resolvedPath, 'agents', 'primary', 'tests')));
 
   const moduleSupport =
     typeof projectJson?.module_support === 'boolean'
@@ -498,7 +511,7 @@ export function buildWorkspaceArchitectureAtlasBlock(
 
   if (atlas.isPolyglot) {
     lines.push(
-      '- POLYGLOT GUARD: When answering workspace questions, name which project each command targets. Do not apply NestJS patterns to Go/Spring/.NET projects.'
+      '- POLYGLOT GUARD: When answering workspace questions, name which project each command targets. Do not apply web-service patterns to Go/Spring/.NET or governed agent projects.'
     );
   }
 

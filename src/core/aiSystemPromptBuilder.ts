@@ -32,6 +32,9 @@ function resolveFrameworkFamily(ctx: AIModalContext, scanned?: ScannedProjectCon
   if (fw.startsWith('dotnet') || fw === 'dotnet') {
     return 'dotnet';
   }
+  if (fw.startsWith('agent.microsoft') || fw === 'microsoft-agent-framework') {
+    return 'microsoft-agent-framework';
+  }
   return fw;
 }
 
@@ -107,7 +110,7 @@ export async function buildWorkspaiSystemPrompt(
   contract?: AIContextContractV1,
   liveModules?: LiveModuleEntry[] | null
 ): Promise<string> {
-  const identity = `You are the Workspai AI assistant — a principal workspace intelligence engineer for the Workspai/RapidKit platform. You reason from the workspace model, evidence artifacts, command contracts, and project-specific architecture before giving advice. You support polyglot software systems across frontend, backend, services, and governance workflows.`;
+  const identity = `You are the Workspai AI assistant — a principal workspace intelligence engineer for the Workspai/RapidKit platform. You reason from the workspace model, evidence artifacts, command contracts, and project-specific architecture before giving advice. You support polyglot software systems across frontend, backend, desktop, extensions, AI agents, services, and governance workflows.`;
 
   const memorySectionPromise = buildMemorySection(ctx);
   const personaBlockPromise = Promise.resolve(contract ? buildPersonaAdapterBlock(contract) : '');
@@ -189,6 +192,15 @@ function buildModuleSection(
   liveModules?: LiveModuleEntry[] | null
 ): string {
   const fw = resolveFrameworkFamily(ctx, scanned);
+  if (fw === 'microsoft-agent-framework') {
+    return `WORKSPAI MICROSOFT AGENT FRAMEWORK KITS:
+- Supported governed kits: agent.microsoft.python and agent.microsoft.dotnet.
+- These kits do not support the RapidKit module marketplace.
+- Workspai remains authoritative for bounded repository context, authorization, impact, and verification.
+- The framework owns conversation and runtime state; it must not bypass Workspai evidence or mutation gates.
+- Keep provider credentials outside the repository and require explicit approval before network or mutating tool access.
+- Use the generated agents/primary/README.md commands and verify offline before the first provider call.`;
+  }
   if (fw === 'go' || fw === 'springboot' || fw === 'dotnet') {
     if (fw === 'go') {
       // Distinguish Fiber vs Gin so AI gives accurate routing/middleware advice

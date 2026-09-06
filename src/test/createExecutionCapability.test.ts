@@ -157,12 +157,33 @@ describe('approved Create execution capability', () => {
     expect(
       resolveCreatePlanWorkspaceProfile({
         ...basePlan,
-        profile: 'minimal',
+        profile: 'node-only',
         framework: 'laravel',
         kit: 'php.laravel',
         secondaryProject: undefined,
       })
     ).toBe('polyglot');
+  });
+
+  it('derives the exact workspace runtime from each governed agent kit', () => {
+    expect(
+      resolveCreatePlanWorkspaceProfile({
+        ...basePlan,
+        profile: 'node-only',
+        framework: 'microsoft-agent-framework',
+        kit: 'agent.microsoft.python',
+        secondaryProject: undefined,
+      })
+    ).toBe('python-only');
+    expect(
+      resolveCreatePlanWorkspaceProfile({
+        ...basePlan,
+        profile: 'node-only',
+        framework: 'microsoft-agent-framework',
+        kit: 'agent.microsoft.dotnet',
+        secondaryProject: undefined,
+      })
+    ).toBe('dotnet-only');
   });
 
   it('creates a project in the selected workspace without creating another workspace', async () => {

@@ -106,7 +106,7 @@ export const CREATE_CAPABILITY_TOOLS: readonly CreateCapabilityToolDefinition[] 
       properties: {
         category: {
           type: 'string',
-          enum: ['all', 'backend', 'frontend', 'desktop', 'extension'],
+          enum: ['all', 'backend', 'frontend', 'desktop', 'agent', 'extension', 'gaming'],
         },
       },
     },
@@ -123,7 +123,15 @@ export const CREATE_CAPABILITY_TOOLS: readonly CreateCapabilityToolDefinition[] 
         outcome: { type: 'string', minLength: 1, maxLength: 2_000 },
         shape: {
           type: 'string',
-          enum: ['unspecified', 'frontend', 'backend', 'full-stack', 'desktop', 'extension'],
+          enum: [
+            'unspecified',
+            'frontend',
+            'backend',
+            'full-stack',
+            'desktop',
+            'agent',
+            'extension',
+          ],
         },
       },
     },
@@ -171,6 +179,7 @@ function architectureGuidance(input: Record<string, unknown>): Record<string, un
       'Full-stack topology does not imply polyglot runtime. Prefer Next.js plus NestJS and the node-only profile when technical choices are delegated.',
       'Use the polyglot profile only when the selected projects use different runtime families or the user explicitly requests multiple runtimes.',
       'Use conservative starter features for unspecified choices and expose every assumption in the reviewable plan description.',
+      'Agent projects must use a release-admitted framework kit and runtime; never guess an unverified latest dependency.',
       'Never translate an unsupported ecosystem into an unrelated executable kit.',
     ],
   };

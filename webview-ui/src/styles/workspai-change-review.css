@@ -1,0 +1,340 @@
+.change-review {
+  max-width: 1200px;
+  margin: 24px auto;
+  padding: 0 24px 48px;
+  color: var(--vscode-foreground);
+}
+.change-review header {
+  padding: 24px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+  border-radius: 8px;
+}
+.change-review h1 {
+  font-size: clamp(23px, 3vw, 30px);
+  margin: 6px 0 0;
+  letter-spacing: -0.025em;
+}
+.change-review h2 {
+  font-size: 17px;
+  margin: 0 0 12px;
+}
+.change-review h3 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+.change-review p,
+.change-review li {
+  line-height: 1.65;
+}
+.change-review small {
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.6;
+}
+.change-review__eyebrow {
+  color: var(--vscode-textLink-foreground);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+.change-review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 20px 0;
+}
+.change-review label {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+.change-review input {
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  padding: 9px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.change-review__summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 0 8px;
+}
+.change-review__warning {
+  color: var(--vscode-editorWarning-foreground, #d9ac51);
+}
+.change-review__next-action {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin: -8px 0 20px;
+}
+.change-review__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.change-review__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-panel-border);
+  margin-top: 20px;
+}
+.change-review__metrics > div {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  background: var(--vscode-editor-background);
+}
+.change-review__metrics strong {
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-textLink-foreground);
+}
+.change-review__metrics span {
+  font-size: 13px;
+}
+.change-review__filter {
+  margin-bottom: 10px;
+}
+.change-review__files {
+  max-height: 420px;
+  overflow: auto;
+  margin-top: 12px !important;
+}
+.change-review__files li {
+  padding: 6px 0;
+}
+.change-review__grid > section {
+  min-width: 0;
+}
+.change-review :is(button, input, summary):focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 3px;
+}
+.change-review section {
+  padding: 22px 0;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+.change-review ul {
+  margin: 0;
+  padding-left: 20px;
+}
+.change-review code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+.change-review__status {
+  display: inline-block;
+  min-width: 76px;
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+}
+.change-review__heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.change-review__mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  color: var(--vscode-textLink-foreground, #39bfb1);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, #39bfb1) 10%, transparent);
+  border-radius: 8px;
+}
+.change-review__hero > p {
+  color: var(--vscode-descriptionForeground);
+  margin: 14px 0 0;
+}
+.change-review__scope label {
+  width: 230px;
+  max-width: 100%;
+}
+.change-review__scope > small {
+  font-size: 11px;
+}
+.change-review__trust,
+.change-review__notice,
+.change-review button,
+.change-review__summary h2,
+.change-review__metrics span,
+.change-review__filter span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.change-review button {
+  justify-content: center;
+  min-height: 34px;
+}
+.change-review__trust {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.change-review svg {
+  flex-shrink: 0;
+}
+.change-review__requirements {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.change-review summary {
+  cursor: pointer;
+  line-height: 1.7;
+}
+.change-review__requirements p {
+  max-width: 85ch;
+}
+.change-review__notice {
+  padding: 12px 14px;
+  border-left: 2px solid var(--vscode-textLink-foreground);
+  background: var(--vscode-editor-background);
+  font-size: 12px;
+}
+.change-review__empty {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+  padding: 36px 4px;
+}
+.change-review__empty > div {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+.change-review__empty svg {
+  color: var(--vscode-textLink-foreground, #39bfb1);
+}
+.change-review__empty span {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--vscode-descriptionForeground);
+}
+.change-review__empty h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.change-review__empty p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  max-width: 36ch;
+}
+.change-review__path {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.change-review__badge {
+  align-self: flex-start;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: var(--vscode-editorWarning-foreground, #d9ac51);
+  border: 1px solid var(--vscode-panel-border);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #d9ac51) 7%, transparent);
+}
+.change-review__grid {
+  gap: 16px;
+}
+.change-review__grid > section {
+  padding: 20px;
+  border: 1px solid var(--vscode-panel-border);
+}
+.change-review__grid p {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+.change-review__files {
+  list-style: none;
+  padding: 0 !important;
+}
+.change-review__files li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  padding: 10px 0;
+}
+.change-review__status[data-status='D'] {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #e98c8c);
+}
+.change-review__status[data-status='A'],
+.change-review__status[data-status='?'] {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #80bd9a);
+}
+.change-review__limits {
+  margin-top: 20px;
+  padding: 16px 0;
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+.change-review__limits ul {
+  margin-top: 12px;
+}
+.change-review__checks article > code {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border);
+}
+.change-review__spinner {
+  animation: review-spin 1s linear infinite;
+}
+@keyframes review-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .change-review__spinner {
+    animation: none;
+  }
+}
+.change-review article {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.change-review__checks article {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.change-review__checks h3 small {
+  margin-left: 8px;
+}
+.change-review button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (max-width: 760px) {
+  .change-review__grid {
+    grid-template-columns: 1fr;
+  }
+  .change-review__metrics {
+    grid-template-columns: 1fr;
+  }
+  .change-review__empty {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .change-review {
+    padding: 0 14px 32px;
+  }
+  .change-review header {
+    padding: 18px;
+  }
+}

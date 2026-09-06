@@ -17,6 +17,7 @@ describe('aiKitArchitectureCatalog', () => {
     expect(resolveKitId('nestjs')).toBe('nestjs.standard');
     expect(resolveKitId('fastapi.ddd')).toBe('fastapi.ddd');
     expect(resolveKitId('gin')).toBe('gogin.standard');
+    expect(resolveKitId('microsoft-agent-python')).toBe('agent.microsoft.python');
   });
 
   it('builds blueprint section for nestjs.standard without engine repo paths', () => {
@@ -97,6 +98,33 @@ describe('aiWorkspaceArchitectureAtlas', () => {
     expect(fingerprint?.runtime).toBe('node');
     expect(fingerprint?.framework).toBe('nextjs');
     expect(fingerprint?.hasRapidKitMarker).toBe(true);
+  });
+
+  it('scans governed Microsoft Agent Framework projects and nested verification', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-agent-'));
+    tempDirs.push(project);
+    fs.mkdirSync(path.join(project, '.workspai'), { recursive: true });
+    fs.mkdirSync(path.join(project, 'agents', 'primary', 'tests'), { recursive: true });
+    fs.writeFileSync(
+      path.join(project, '.workspai', 'project.json'),
+      JSON.stringify({
+        kit: 'agent.microsoft.python',
+        runtime: 'python',
+        framework: 'microsoft-agent-framework',
+        module_support: false,
+      })
+    );
+    fs.writeFileSync(path.join(project, 'agents', 'primary', 'main.py'), 'def main(): pass');
+
+    const fingerprint = scanProjectArchitectureFingerprint(project);
+    expect(fingerprint).toMatchObject({
+      kit: 'agent.microsoft.python',
+      runtime: 'python',
+      framework: 'microsoft-agent-framework',
+      moduleSupport: false,
+      hasTests: true,
+    });
+    expect(fingerprint?.entryPoints).toContain('agents/primary/main.py');
   });
 
   it('prefers canonical project metadata and module registry over legacy copies', () => {

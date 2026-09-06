@@ -3,11 +3,13 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_SCAFFOLD_KITS,
   FRONTEND_SCAFFOLD_KITS,
   isBackendScaffoldFramework,
   isFrontendScaffoldKit,
   resolveFrontendKitDefinition,
   scaffoldRuntimeForFramework,
+  scaffoldRuntimeCandidatesForKit,
   SCAFFOLD_KIT_IDS,
   workspacePythonEngineForKit,
 } from '../core/scaffoldKits';
@@ -19,7 +21,16 @@ describe('scaffold kits', () => {
       expect.arrayContaining(FRONTEND_SCAFFOLD_KITS.map((kit) => kit.kitId))
     );
     expect(FRONTEND_SCAFFOLD_KITS).toHaveLength(11);
-    expect(SCAFFOLD_KIT_IDS).toHaveLength(23);
+    expect(SCAFFOLD_KIT_IDS).toHaveLength(25);
+  });
+
+  it('keeps governed agent kits runtime-specific despite sharing one framework', () => {
+    expect(AGENT_SCAFFOLD_KITS.map((kit) => kit.kitId)).toEqual([
+      'agent.microsoft.python',
+      'agent.microsoft.dotnet',
+    ]);
+    expect(scaffoldRuntimeCandidatesForKit('agent.microsoft.python')).toEqual(['python']);
+    expect(scaffoldRuntimeCandidatesForKit('agent.microsoft.dotnet')).toEqual(['dotnet']);
   });
 
   it('resolves frontend kits by kit id and framework alias', () => {

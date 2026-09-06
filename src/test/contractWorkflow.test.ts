@@ -175,6 +175,7 @@ describe('shared contracts workflow (Wave A + B)', () => {
 
     expect(extensionOwned).toEqual([
       'extension-cli-release-policy.v1.json',
+      'repository-analysis.v1.json',
       'workspace-intelligence/workspace-graph-recording.v1.json',
       'workspai-ai-narrative.v1.json',
     ]);
@@ -183,6 +184,9 @@ describe('shared contracts workflow (Wave A + B)', () => {
     );
     expect(read('src/core/workspaceGraphRecordingManager.ts')).toContain(
       'WORKSPACE_GRAPH_RECORDING_SCHEMA_VERSION'
+    );
+    expect(read('src/core/repositoryAnalysis.ts')).toContain(
+      'workspai-vscode-repository-analysis.v1'
     );
     expect(read('src/core/workspaiAiNarrative.ts')).toContain(
       '../../contracts/workspai-ai-narrative.v1.json'

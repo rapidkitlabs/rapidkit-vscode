@@ -39,6 +39,20 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     }
   });
 
+  it('hydrates Create scope after mount and rechecks canonical selection before blocking', () => {
+    expect(secondary).toMatch(
+      /useEffect\(\(\) => \{[\s\S]{0,500}sidebarRefreshScope[\s\S]{0,200}sidebarRefreshModels/
+    );
+    expect(provider).toContain(
+      "let workspacePath = createTarget === 'project' ? scope.workspacePath : undefined"
+    );
+    expect(provider).toContain("executeCommand('workspai.getSelectedWorkspace')");
+    expect(provider).toContain('const selectedWorkspacePath = selectedWorkspace?.path?.trim()');
+    expect(provider.indexOf('await this._readSelectedWorkspaceScope()')).toBeLessThan(
+      provider.indexOf("failureCode: 'workspace-selection-required'")
+    );
+  });
+
   it('handles every create-related inbound command the host emits', () => {
     const inbound = [
       'sidebarActivateTab',
@@ -76,8 +90,9 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     expect(createTab).toContain('Choose project folder');
   });
 
-  it('keeps the manual-create profile + framework option tables aligned with the host', () => {
+  it('projects manual-create kits from the CLI contract and carries canonical kit identity', () => {
     const createTypes = read('webview-ui/src/sidebar/createTypes.ts');
+    const projectDrawer = read('webview-ui/src/sidebar/drawers/ManualProjectDrawer.tsx');
     // Profiles accepted by _runSidebarManualCreate.
     for (const profile of [
       'minimal',
@@ -91,34 +106,16 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     ]) {
       expect(createTypes, `profile option "${profile}"`).toContain(`'${profile}'`);
     }
-    // Framework keys mapped by _runSidebarManualCreate.frameworkMap.
-    for (const framework of [
-      'fastapi-standard',
-      'fastapi-ddd',
-      'nestjs-standard',
-      'springboot-standard',
-      'gofiber-standard',
-      'gogin-standard',
-      'dotnet-webapi-clean',
-      'rust-axum',
-      'php-laravel',
-      'nextjs',
-      'react-router',
-      'vite-react',
-      'vite-vue',
-      'vite-svelte',
-      'vite-solid',
-      'vite-vanilla',
-      'nuxt',
-      'angular',
-      'astro',
-      'sveltekit',
-      'desktop-tauri',
-      'desktop-electron',
-      'vscode-extension',
-    ]) {
-      expect(createTypes, `framework option "${framework}"`).toContain(`'${framework}'`);
-    }
+    expect(createTypes).toContain('createContract.nativeCreate');
+    expect(createTypes).toContain('createContract.officialCreate');
+    expect(createTypes).toContain('CREATE_KIT_OPTIONS');
+    expect(createTypes).toContain("'agent.microsoft.python'");
+    expect(createTypes).toContain("'agent.microsoft.dotnet'");
+    expect(projectDrawer).toContain('CREATE_KIT_OPTIONS.filter');
+    expect(projectDrawer).toContain("id: 'agent'");
+    expect(secondary).toContain('kit: input.kit');
+    expect(provider).toContain('listExecutableScaffoldKits()');
+    expect(provider).toContain('defaultScaffoldKitForFramework(framework)');
   });
 
   it('exposes every existing-software onboarding path through the contract surface', () => {
@@ -207,6 +204,8 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     expect(createTab).toContain('onTargetChange={selectCreateTarget}');
     expect(createTab).toContain("selectCreateTarget('workspace')");
     expect(createTab).toContain("selectCreateTarget('project')");
+    expect(createTab).toContain('Manual setup');
+    expect(createTab).not.toContain('More options');
     expect(createTab).toContain('resolveCreatePlaceholder(');
     expect(createTab).toContain('setCreateTarget(contextualTarget)');
     expect(createTab).toContain('resolveCreateTargetAfterScopeChange({');
@@ -222,7 +221,8 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
   it('streams manual create progress steps before the final result', () => {
     expect(provider).toContain('_postCreateTimelineStep');
     expect(provider).toContain("label: 'Preparing project scaffold…'");
-    expect(provider).toContain("'Running RapidKit scaffold'");
+    expect(provider).toContain("'Running Workspai scaffold'");
+    expect(provider).toContain("'Creating governed agent'");
     expect(provider).toContain('ensureManagedDefaultWorkspace');
     expect(provider).toContain('workspacePath');
     expect(provider).toContain('projectPath');

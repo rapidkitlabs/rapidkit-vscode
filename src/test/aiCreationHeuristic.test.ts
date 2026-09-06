@@ -79,4 +79,27 @@ describe('buildHeuristicCreationDraft', () => {
     expect(draft.profile).toBe('node-only');
     expect(draft.projectName.endsWith('-app')).toBe(true);
   });
+
+  it('creates a governed Python agent plan without backend modules', () => {
+    const draft = buildHeuristicCreationDraft(
+      'Create an AI agent in Python with Microsoft Agent Framework',
+      'workspace'
+    );
+
+    expect(draft.framework).toBe('microsoft-agent-framework');
+    expect(draft.kit).toBe('agent.microsoft.python');
+    expect(draft.profile).toBe('python-only');
+    expect(draft.suggestedModules).toEqual([]);
+  });
+
+  it('creates a governed .NET agent plan from explicit C# intent', () => {
+    const draft = buildHeuristicCreationDraft(
+      'Create an AI agent with Microsoft Agent Framework and C#',
+      'workspace'
+    );
+
+    expect(draft.framework).toBe('microsoft-agent-framework');
+    expect(draft.kit).toBe('agent.microsoft.dotnet');
+    expect(draft.profile).toBe('dotnet-only');
+  });
 });

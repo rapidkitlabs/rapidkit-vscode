@@ -89,7 +89,15 @@ import { buildAssistantEditorFocus } from '../../core/assistantEditorFocus.js';
 import { buildCoreRapidkitShellCommand, runCommandsInTerminal } from '../../utils/terminalExecutor';
 import { buildRapidkitCommand } from '../../utils/platformCapabilities';
 import { Logger } from '../../utils/logger';
-import type { ScaffoldFramework } from '../../core/scaffoldKits';
+import {
+  defaultScaffoldKitForFramework,
+  isAgentScaffoldKit,
+  isScaffoldFramework,
+  listExecutableScaffoldFrameworks,
+  listExecutableScaffoldKits,
+  scaffoldKitsForFramework,
+  type ScaffoldFramework,
+} from '../../core/scaffoldKits';
 import {
   isStudioBlockerHandoff,
   type StudioCausalRepairTarget,
@@ -1591,13 +1599,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         return null;
       }
     };
-    const workspace = await readCommand<{
-      name?: string;
-      path?: string;
-      profile?: string;
-      workspace_profile?: string;
-      mode?: string;
-    }>('workspai.getSelectedWorkspace');
+    const workspace = await this._readSelectedWorkspaceScope();
     const project = await readCommand<{ name?: string; path?: string; type?: string }>(
       'workspai.getSelectedProject'
     );
@@ -1621,6 +1623,31 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
           }
         : null,
     });
+  }
+
+  private async _readSelectedWorkspaceScope(): Promise<{
+    name?: string;
+    path?: string;
+    profile?: string;
+    workspace_profile?: string;
+    mode?: string;
+  } | null> {
+    try {
+      return (
+        ((await vscode.commands.executeCommand('workspai.getSelectedWorkspace')) as
+          | {
+              name?: string;
+              path?: string;
+              profile?: string;
+              workspace_profile?: string;
+              mode?: string;
+            }
+          | null
+          | undefined) ?? null
+      );
+    } catch {
+      return null;
+    }
   }
 
   private async _auditSidebarStudioFix(input: {
@@ -1829,8 +1856,23 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     });
     try {
       const scope = resolveExplicitWorkspaceScope(payloadRecord.scope);
-      const workspacePath = createTarget === 'project' ? scope.workspacePath : undefined;
-      const workspaceName = createTarget === 'project' ? scope.workspaceName : undefined;
+      let workspacePath = createTarget === 'project' ? scope.workspacePath : undefined;
+      let workspaceName = createTarget === 'project' ? scope.workspaceName : undefined;
+      if (createTarget === 'project' && !workspacePath) {
+        // The webview scope is a display snapshot, not the source of truth. A
+        // scope message can be missed while the webview mounts or lag one
+        // selection event behind. Resolve the canonical Explorer selection at
+        // the mutation boundary before claiming no workspace is selected.
+        const selectedWorkspace = await this._readSelectedWorkspaceScope();
+        const selectedWorkspacePath = selectedWorkspace?.path?.trim();
+        if (selectedWorkspacePath) {
+          workspacePath = selectedWorkspacePath;
+          workspaceName = selectedWorkspace?.name?.trim() || path.basename(selectedWorkspacePath);
+          // Heal the UI snapshot too, so the approved plan and any subsequent
+          // Create request display the same destination the host authorized.
+          void this._sendInlineScope();
+        }
+      }
       if (createTarget === 'project' && !workspacePath) {
         this._postInlineCreate('sidebarAiCreateError', {
           error:
@@ -2074,6 +2116,15 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     const approvalTarget: 'workspace' | 'project' =
       rawPlanRecord.type === 'project' ? 'project' : 'workspace';
     if (approvalTarget === 'project' && !approvalScope.workspacePath) {
+      const selectedWorkspace = await this._readSelectedWorkspaceScope();
+      const selectedWorkspacePath = selectedWorkspace?.path?.trim();
+      if (selectedWorkspacePath) {
+        approvalScope.workspacePath = selectedWorkspacePath;
+        approvalScope.workspaceName =
+          selectedWorkspace?.name?.trim() || path.basename(selectedWorkspacePath);
+      }
+    }
+    if (approvalTarget === 'project' && !approvalScope.workspacePath) {
       this._postInlineCreate('sidebarAiCreateError', {
         error:
           'The destination workspace is no longer selected. Select it and draft the project plan again.',
@@ -2260,8 +2311,13 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       vscode: 'vscode-extension',
       'vscode-extension': 'vscode-extension',
       'extension-vscode': 'vscode-extension',
+      'microsoft-agent-framework': 'microsoft-agent-framework',
+      'agent-microsoft-python': 'microsoft-agent-framework',
+      'agent-microsoft-dotnet': 'microsoft-agent-framework',
     };
-    const defaultKitMap: Record<string, string> = {
+    // Compatibility aliases are accepted for older webview bundles. Canonical
+    // UI payloads send the contract kit id directly.
+    const legacyKitMap: Record<string, string> = {
       fastapi: 'fastapi.standard',
       'fastapi-standard': 'fastapi.standard',
       'fastapi-ddd': 'fastapi.ddd',
@@ -2288,6 +2344,8 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       vscode: 'extension.vscode',
       'vscode-extension': 'extension.vscode',
       'extension-vscode': 'extension.vscode',
+      'agent-microsoft-python': 'agent.microsoft.python',
+      'agent-microsoft-dotnet': 'agent.microsoft.dotnet',
       nextjs: 'frontend.nextjs',
       remix: 'frontend.remix',
       'react-router': 'frontend.remix',
@@ -2303,9 +2361,21 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     };
     const frameworkKey =
       typeof payloadRecord.framework === 'string' ? payloadRecord.framework.trim() : 'fastapi';
-    const framework = frameworkMap[frameworkKey] ?? 'fastapi';
     const requestedKit = typeof payloadRecord.kit === 'string' ? payloadRecord.kit.trim() : '';
-    const kitName = requestedKit || defaultKitMap[framework] || defaultKitMap.fastapi;
+    const executableKits = new Set(listExecutableScaffoldKits());
+    const canonicalRequestedKit = executableKits.has(requestedKit) ? requestedKit : undefined;
+    const legacyKit = legacyKitMap[frameworkKey];
+    const compatibleKit = canonicalRequestedKit ?? legacyKit;
+    const frameworkFromKit = compatibleKit
+      ? listExecutableScaffoldFrameworks().find((candidate) =>
+          scaffoldKitsForFramework(candidate).includes(compatibleKit)
+        )
+      : undefined;
+    const frameworkCandidate = isScaffoldFramework(frameworkKey)
+      ? frameworkKey
+      : frameworkMap[frameworkKey];
+    const framework: ScaffoldFramework = frameworkFromKit ?? frameworkCandidate ?? 'fastapi';
+    const kitName = compatibleKit ?? defaultScaffoldKitForFramework(framework);
 
     try {
       if (mode === 'project') {
@@ -2336,8 +2406,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
         }
 
         this._postCreateTimelineStep(
-          'Running RapidKit scaffold',
-          `Generating files and installing dependencies for ${kitName}…`,
+          isAgentScaffoldKit(kitName) ? 'Creating governed agent' : 'Running Workspai scaffold',
+          isAgentScaffoldKit(kitName)
+            ? 'Generating runtime files, bounded-context bindings, ownership, and verification evidence…'
+            : `Generating project files for ${kitName}…`,
           sessionId
         );
 

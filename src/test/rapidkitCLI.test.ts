@@ -170,6 +170,23 @@ describe('WorkspaiCLI', () => {
     );
   });
 
+  it('does not run legacy init after governed agent creation', async () => {
+    vi.mocked(run).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 } as any);
+
+    await cli.createProjectInWorkspace({
+      name: 'apex-agent',
+      kit: 'agent.microsoft.python',
+      workspacePath: '/tmp/workspace',
+    });
+
+    expect(vi.mocked(run)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(run)).toHaveBeenCalledWith(
+      'npx',
+      expect.arrayContaining(['create', 'project', 'agent.microsoft.python', 'apex-agent']),
+      expect.objectContaining({ cwd: '/tmp/workspace' })
+    );
+  });
+
   it('passes optional Python engine skip flag when creating lightweight workspaces', async () => {
     vi.mocked(run).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 } as any);
 

@@ -11,6 +11,10 @@ import {
 } from './welcomePanelAiCreationMessages';
 import type { AiCreationDispatchHost } from './welcomePanelAiCreationMessages';
 import {
+  tryDispatchRepositoryAnalysisWebviewMessage,
+  type RepositoryAnalysisMessageHost,
+} from './welcomePanelRepositoryAnalysisMessages';
+import {
   tryDispatchAnalyzeReportWebviewMessage,
   type AnalyzeReportMessageHost,
 } from './welcomePanelAnalyzeReportMessages';
@@ -52,6 +56,7 @@ import {
   type IncidentStudioWebviewMessageHost,
 } from './welcomePanelIncidentStudioMessages';
 import { asRecord } from './welcomePanel.shared.js';
+import { tryDispatchChangeReviewMessage } from './welcomePanelChangeReviewMessages.js';
 
 export type WelcomePanelWebviewMessageDispatchHost = {
   context: vscode.ExtensionContext;
@@ -69,6 +74,7 @@ export type WelcomePanelWebviewMessageDispatchHost = {
   getReadyMessageHost: () => ReadyMessageHost;
   getCreationNavigationMessageHost: () => CreationNavigationMessageHost;
   getAiCreationDispatchHost: () => AiCreationDispatchHost;
+  getRepositoryAnalysisMessageHost: () => RepositoryAnalysisMessageHost;
 } & DashboardMessageDispatchHost;
 
 export async function runWelcomePanelOptionalMessageLane(
@@ -120,6 +126,26 @@ export async function dispatchWelcomePanelWebviewMessage(
   if (
     await tryDispatchAnalyzeReportWebviewMessage(
       host.getAnalyzeReportMessageHost(),
+      message.command,
+      message.data
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await tryDispatchChangeReviewMessage(
+      host.getRepositoryAnalysisMessageHost(),
+      message.command,
+      message.data
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await tryDispatchRepositoryAnalysisWebviewMessage(
+      host.getRepositoryAnalysisMessageHost(),
       message.command,
       message.data
     )

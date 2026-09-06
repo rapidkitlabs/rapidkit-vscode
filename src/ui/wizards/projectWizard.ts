@@ -7,9 +7,11 @@ import * as vscode from 'vscode';
 import { ProjectConfig } from '../../types';
 import type { ScaffoldFramework } from '../../core/scaffoldKits';
 import {
+  AGENT_SCAFFOLD_KITS,
   DESKTOP_SCAFFOLD_KITS,
   EXTENSION_SCAFFOLD_KITS,
   FRONTEND_SCAFFOLD_KITS,
+  scaffoldKitsForFramework,
 } from '../../core/scaffoldKits';
 import { KitsService } from '../../core/kitsService';
 
@@ -63,67 +65,131 @@ export class ProjectWizard {
           description: 'Modern Python web framework',
           detail: 'High performance, easy to learn, fast to code',
           framework: 'fastapi' as const,
+          category: 'backend' as const,
         },
         {
           label: '$(symbol-class) NestJS',
           description: 'Progressive Node.js framework',
           detail: 'TypeScript-first, modular architecture',
           framework: 'nestjs' as const,
+          category: 'backend' as const,
         },
         {
           label: '$(symbol-namespace) Go',
           description: 'High-performance Go web service',
           detail: 'Fiber or Gin framework, fast compile times',
           framework: 'go' as const,
+          category: 'backend' as const,
         },
         {
           label: '$(symbol-structure) Spring Boot',
           description: 'Java + Spring ecosystem',
           detail: 'Production-ready Java service with Maven/Gradle',
           framework: 'springboot' as const,
+          category: 'backend' as const,
         },
         {
           label: '$(symbol-method) .NET Web API',
           description: 'C# + ASP.NET Core ecosystem',
           detail: 'Clean architecture Web API service',
           framework: 'dotnet' as const,
+          category: 'backend' as const,
         },
         {
           label: '$(flame) Rust Axum',
           description: 'Rust backend',
           detail: 'Typed Axum service with Cargo-owned dependencies',
           framework: 'rust' as const,
+          category: 'backend' as const,
         },
         {
           label: '$(server-process) Laravel',
           description: 'PHP backend',
           detail: 'Latest stable official Laravel application',
           framework: 'laravel' as const,
+          category: 'backend' as const,
         },
         ...FRONTEND_SCAFFOLD_KITS.map((definition) => ({
           label: `$(browser) ${definition.displayName}`,
           description: 'Official frontend generator',
           detail: definition.description,
           framework: definition.framework,
+          category: 'frontend' as const,
         })),
         ...DESKTOP_SCAFFOLD_KITS.map((definition) => ({
           label: `$(device-desktop) ${definition.displayName}`,
           description: 'Official desktop generator',
           detail: definition.description,
           framework: definition.framework,
+          category: 'desktop' as const,
         })),
         ...EXTENSION_SCAFFOLD_KITS.map((definition) => ({
           label: `$(extensions) ${definition.displayName}`,
           description: 'Official extension generator',
           detail: definition.description,
           framework: definition.framework,
+          category: 'extension' as const,
         })),
+        ...(AGENT_SCAFFOLD_KITS.length > 0
+          ? [
+              {
+                label: '$(hubot) Microsoft Agent Framework',
+                description: 'Governed AI agent',
+                detail: 'Choose a release-admitted Python or .NET agent kit',
+                framework: 'microsoft-agent-framework' as const,
+                category: 'agent' as const,
+              },
+            ]
+          : []),
       ];
 
-      const selectedFramework = await vscode.window.showQuickPick(frameworkItems, {
-        placeHolder: 'Select framework',
+      const categoryItems = [
+        {
+          label: '$(server) Backend',
+          detail: 'APIs and services',
+          category: 'backend' as const,
+        },
+        {
+          label: '$(browser) Frontend',
+          detail: 'Web applications and sites',
+          category: 'frontend' as const,
+        },
+        {
+          label: '$(device-desktop) Desktop',
+          detail: 'Installable desktop applications',
+          category: 'desktop' as const,
+        },
+        ...(AGENT_SCAFFOLD_KITS.length > 0
+          ? [
+              {
+                label: '$(hubot) AI Agent',
+                detail: 'Governed agent-framework projects',
+                category: 'agent' as const,
+              },
+            ]
+          : []),
+        {
+          label: '$(extensions) Extension',
+          detail: 'Editor extensions',
+          category: 'extension' as const,
+        },
+      ];
+      const selectedCategory = await vscode.window.showQuickPick(categoryItems, {
+        placeHolder: 'What are you building?',
         ignoreFocusOut: true,
       });
+
+      if (!selectedCategory) {
+        return undefined;
+      }
+
+      const selectedFramework = await vscode.window.showQuickPick(
+        frameworkItems.filter((item) => item.category === selectedCategory.category),
+        {
+          placeHolder: `Select a ${selectedCategory.label.replace(/^\$\([^)]*\)\s*/, '').toLowerCase()} framework`,
+          ignoreFocusOut: true,
+        }
+      );
 
       if (!selectedFramework) {
         return undefined;
@@ -136,7 +202,13 @@ export class ProjectWizard {
     let selectedKitName: string;
 
     if (preselectedKit) {
-      // Kit already selected from modal
+      if (!scaffoldKitsForFramework(framework).includes(preselectedKit)) {
+        vscode.window.showErrorMessage(
+          `Kit ${preselectedKit} is not available for ${framework} in the current Workspai CLI contract.`
+        );
+        return undefined;
+      }
+      // Kit already selected from a contract-backed surface.
       selectedKitName = preselectedKit;
     } else {
       // Load kits and show picker
@@ -152,6 +224,17 @@ export class ProjectWizard {
 
       if (availableKits.length === 0) {
         vscode.window.showErrorMessage(`No kits available for ${framework}`);
+        return undefined;
+      }
+
+      availableKits = availableKits.filter((kit) =>
+        scaffoldKitsForFramework(framework).includes(kit.name)
+      );
+
+      if (availableKits.length === 0) {
+        vscode.window.showErrorMessage(
+          `No executable kits admitted for ${framework} by the current Workspai CLI contract.`
+        );
         return undefined;
       }
 

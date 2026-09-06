@@ -3,6 +3,7 @@
  */
 
 import createContract from '../contracts/create-planner-capabilities.v1.json';
+import agentFrameworkContract from '../../contracts/agent-framework-capabilities.v1.json';
 
 export type BackendScaffoldFramework =
   | 'fastapi'
@@ -28,12 +29,14 @@ export type FrontendScaffoldFramework =
 
 export type DesktopScaffoldFramework = 'tauri' | 'electron';
 export type ExtensionScaffoldFramework = 'vscode-extension';
+export type AgentScaffoldFramework = 'microsoft-agent-framework';
 
 export type ScaffoldFramework =
   | BackendScaffoldFramework
   | FrontendScaffoldFramework
   | DesktopScaffoldFramework
-  | ExtensionScaffoldFramework;
+  | ExtensionScaffoldFramework
+  | AgentScaffoldFramework;
 
 export type ScaffoldRuntimeFamily = 'node' | 'python' | 'go' | 'java' | 'dotnet' | 'rust' | 'php';
 export type ScaffoldWorkspaceProfile =
@@ -61,6 +64,14 @@ type ContractCreateEntry = {
   workspacePythonEngine: 'required' | 'optional' | 'none';
 };
 
+export type ExecutableScaffoldKitCapability = Readonly<{
+  id: string;
+  category: string;
+  framework: ScaffoldFramework;
+  runtime: ScaffoldRuntimeFamily;
+  runtimeCandidates: readonly ScaffoldRuntimeFamily[];
+}>;
+
 const EXECUTABLE_CREATE_ENTRIES: ContractCreateEntry[] = [
   ...(createContract.nativeCreate as ContractCreateEntry[]),
   ...(createContract.officialCreate as ContractCreateEntry[]).filter(
@@ -73,9 +84,14 @@ export const BACKEND_SCAFFOLD_KIT_IDS = EXECUTABLE_CREATE_ENTRIES.filter(
 ).map((entry) => entry.id);
 
 export const SCAFFOLD_FRAMEWORK_RUNTIME = Object.freeze(
-  Object.fromEntries(
-    EXECUTABLE_CREATE_ENTRIES.map((entry) => [entry.plannerFramework, entry.runtime])
-  ) as Record<ScaffoldFramework, ScaffoldRuntimeFamily>
+  EXECUTABLE_CREATE_ENTRIES.reduce<Partial<Record<ScaffoldFramework, ScaffoldRuntimeFamily>>>(
+    (runtimes, entry) => {
+      const framework = entry.plannerFramework as ScaffoldFramework;
+      runtimes[framework] ??= entry.runtime as ScaffoldRuntimeFamily;
+      return runtimes;
+    },
+    {}
+  ) as Readonly<Record<ScaffoldFramework, ScaffoldRuntimeFamily>>
 );
 
 export function scaffoldRuntimeForFramework(framework: ScaffoldFramework): ScaffoldRuntimeFamily {
@@ -101,6 +117,28 @@ export function defaultWorkspaceProfileForFramework(
       } as Partial<Record<ScaffoldRuntimeFamily, ScaffoldWorkspaceProfile>>
     )[runtime] ?? 'minimal'
   );
+}
+
+export function scaffoldRuntimeCandidatesForKit(kit: string): ScaffoldRuntimeFamily[] {
+  const entry = CREATE_ENTRY_BY_KIT.get(kit);
+  return [...new Set(entry?.runtimeCandidates ?? (entry ? [entry.runtime] : []))].filter(
+    isScaffoldRuntimeFamily
+  );
+}
+
+export function defaultWorkspaceProfileForKit(
+  kit: string,
+  fallbackFramework?: ScaffoldFramework
+): ScaffoldWorkspaceProfile {
+  const runtimes = scaffoldRuntimeCandidatesForKit(kit);
+  if (runtimes.length > 1) {
+    return 'polyglot';
+  }
+  const runtime = runtimes[0];
+  if (!runtime) {
+    return fallbackFramework ? defaultWorkspaceProfileForFramework(fallbackFramework) : 'minimal';
+  }
+  return runtimeProfile(runtime);
 }
 
 /**
@@ -130,14 +168,33 @@ export function scaffoldRuntimeCandidatesForFramework(
     (candidate) => candidate.plannerFramework === framework
   );
   return [...new Set(entry?.runtimeCandidates ?? (entry ? [entry.runtime] : []))].filter(
-    (runtime): runtime is ScaffoldRuntimeFamily =>
-      runtime === 'node' ||
-      runtime === 'python' ||
-      runtime === 'go' ||
-      runtime === 'java' ||
-      runtime === 'dotnet' ||
-      runtime === 'rust' ||
-      runtime === 'php'
+    isScaffoldRuntimeFamily
+  );
+}
+
+function isScaffoldRuntimeFamily(runtime: string): runtime is ScaffoldRuntimeFamily {
+  return (
+    runtime === 'node' ||
+    runtime === 'python' ||
+    runtime === 'go' ||
+    runtime === 'java' ||
+    runtime === 'dotnet' ||
+    runtime === 'rust' ||
+    runtime === 'php'
+  );
+}
+
+function runtimeProfile(runtime: ScaffoldRuntimeFamily): ScaffoldWorkspaceProfile {
+  return (
+    (
+      {
+        python: 'python-only',
+        node: 'node-only',
+        go: 'go-only',
+        java: 'java-only',
+        dotnet: 'dotnet-only',
+      } as Partial<Record<ScaffoldRuntimeFamily, ScaffoldWorkspaceProfile>>
+    )[runtime] ?? 'minimal'
   );
 }
 
@@ -147,6 +204,18 @@ export function listExecutableScaffoldFrameworks(): ScaffoldFramework[] {
 
 export function listExecutableScaffoldKits(): string[] {
   return [...new Set(Object.values(SCAFFOLD_FRAMEWORK_KITS).flatMap((kits) => [...kits]))];
+}
+
+export function listExecutableScaffoldKitCapabilities(): ExecutableScaffoldKitCapability[] {
+  return EXECUTABLE_CREATE_ENTRIES.map((entry) => ({
+    id: entry.id,
+    category: entry.category,
+    framework: entry.plannerFramework as ScaffoldFramework,
+    runtime: entry.runtime as ScaffoldRuntimeFamily,
+    runtimeCandidates: [...new Set(entry.runtimeCandidates ?? [entry.runtime])].filter(
+      isScaffoldRuntimeFamily
+    ),
+  }));
 }
 
 export function scaffoldKitsForFramework(framework: ScaffoldFramework): readonly string[] {
@@ -206,6 +275,26 @@ export const EXTENSION_SCAFFOLD_KITS: Array<
     tags: ['extension', 'vscode', 'typescript'],
   },
 ];
+
+export const AGENT_SCAFFOLD_KITS: Array<OfficialScaffoldKitDefinition<AgentScaffoldFramework>> =
+  EXECUTABLE_CREATE_ENTRIES.filter(
+    (entry) =>
+      entry.category === 'agent' &&
+      agentFrameworkContract.schemaVersion === 'workspai.agent-framework-capabilities.v1' &&
+      agentFrameworkContract.protocolVersion === 'workspai.agent-framework-adapter-protocol.v1'
+  ).map((entry) => ({
+    kitId: entry.id,
+    framework: 'microsoft-agent-framework',
+    displayName:
+      entry.runtime === 'dotnet'
+        ? 'Microsoft Agent Framework · .NET'
+        : 'Microsoft Agent Framework · Python',
+    description:
+      entry.runtime === 'dotnet'
+        ? 'Governed .NET agent with bounded Workspai context and deterministic verification.'
+        : 'Governed Python agent with bounded Workspai context and deterministic verification.',
+    tags: ['ai-agent', 'microsoft-agent-framework', entry.runtime, 'governed'],
+  }));
 
 export const FRONTEND_SCAFFOLD_KITS: FrontendScaffoldKitDefinition[] = [
   {
@@ -295,6 +384,10 @@ export function isFrontendScaffoldKit(kit: string | undefined): kit is `frontend
   return typeof kit === 'string' && kit.startsWith('frontend.');
 }
 
+export function isAgentScaffoldKit(kit: string | undefined): kit is `agent.${string}` {
+  return typeof kit === 'string' && kit.startsWith('agent.');
+}
+
 export function isFrontendScaffoldFramework(
   framework: string | undefined
 ): framework is FrontendScaffoldFramework {
@@ -327,12 +420,19 @@ export function isExtensionScaffoldFramework(
   return EXTENSION_SCAFFOLD_KITS.some((kit) => kit.framework === framework);
 }
 
+export function isAgentScaffoldFramework(
+  framework: string | undefined
+): framework is AgentScaffoldFramework {
+  return framework === 'microsoft-agent-framework';
+}
+
 export function isScaffoldFramework(framework: string | undefined): framework is ScaffoldFramework {
   return (
     isBackendScaffoldFramework(framework) ||
     isFrontendScaffoldFramework(framework) ||
     isDesktopScaffoldFramework(framework) ||
-    isExtensionScaffoldFramework(framework)
+    isExtensionScaffoldFramework(framework) ||
+    isAgentScaffoldFramework(framework)
   );
 }
 

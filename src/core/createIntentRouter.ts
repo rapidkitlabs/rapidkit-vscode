@@ -100,7 +100,7 @@ const CREATE_ACTIONS = new Set<CreateGuidanceAction>([
 ]);
 const EXPLICIT_CREATE_PATTERN = /\b(create|scaffold|bootstrap|generate|start|set up|build)\b/i;
 const CREATE_TARGET_PATTERN =
-  /\b(workspace|project|application|app|service|website|web app|storefront|frontend|backend|api)\b/i;
+  /\b(workspace|project|application|app|service|website|web app|storefront|frontend|backend|api|ai agent|agent workflow|automation bot)\b/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -192,7 +192,7 @@ export function buildCreateIntentRoutingPrompt(input: {
     `- Stack focus: ${safeName(input.stackFocus)}.`,
     '',
     'Call route-workspai-create-request exactly once:',
-    '- create: the user clearly wants a new workspace, project, application, API, service, frontend, backend, desktop app, or extension scaffolded.',
+    '- create: the user clearly wants a new workspace, project, application, API, service, frontend, backend, desktop app, AI agent, or extension scaffolded.',
     '- adopt-project: the user wants existing local source linked into Workspai.',
     '- import-project: the user wants an existing Workspai project or supported project artifact imported.',
     '- import-workspace: the user wants an existing Workspai workspace or archive imported.',

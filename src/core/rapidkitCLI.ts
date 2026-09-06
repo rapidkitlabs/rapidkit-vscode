@@ -9,6 +9,7 @@
  */
 
 import {
+  isAgentScaffoldKit,
   isFrontendScaffoldKit,
   resolveFrontendKitDefinition,
   SCAFFOLD_KIT_IDS,
@@ -200,7 +201,12 @@ export class WorkspaiCLI {
       },
     });
 
-    if (result.exitCode === 0 && !options.skipInstall && !isFrontendScaffoldKit(options.kit)) {
+    if (
+      result.exitCode === 0 &&
+      !options.skipInstall &&
+      !isFrontendScaffoldKit(options.kit) &&
+      !isAgentScaffoldKit(options.kit)
+    ) {
       const projectPath = (await import('path')).join(options.parentPath, options.name);
       await run('npx', this.buildPortableNpxRapidkitArgs(['init', projectPath]), {
         cwd: options.parentPath,
@@ -259,7 +265,12 @@ export class WorkspaiCLI {
       },
     });
 
-    if (result.exitCode === 0 && !options.skipInstall && !isFrontendScaffoldKit(options.kit)) {
+    if (
+      result.exitCode === 0 &&
+      !options.skipInstall &&
+      !isFrontendScaffoldKit(options.kit) &&
+      !isAgentScaffoldKit(options.kit)
+    ) {
       const projectPath = path.join(outputParentPath, options.name);
 
       this.logger.info('Running rapidkit init in project:', projectPath);

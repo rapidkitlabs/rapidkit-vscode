@@ -2,7 +2,7 @@
 
 <!-- WORKSPAI:CLI-RELEASE-POLICY:START -->
 
-> Extension 0.46.0 · verified with Workspai CLI 0.72.0 · minimum compatible CLI 0.72.0
+> Extension 0.47.0 · verified with Workspai CLI 0.75.0 · minimum compatible CLI 0.75.0
 
 <!-- WORKSPAI:CLI-RELEASE-POLICY:END -->
 
@@ -40,6 +40,21 @@ for Python-backed kits or modules.
 
 The global install is never used as hidden execution authority by the
 extension. Extension commands remain bound to the packaged, verified runtime.
+
+## Understand a public repository first
+
+Open **Analyze Repo**, paste a public GitHub, GitLab, or Bitbucket repository
+URL, and select **Analyze**. Workspai creates an isolated shallow copy and
+projects canonical Model, Graph, readiness, connected-surface, and bounded
+retrieval evidence without installing dependencies or running repository code.
+
+See [Analyze Repo](./REPOSITORY_ANALYSIS.md) for the evidence, cache, and safety
+boundaries.
+
+To assess a local working tree before handing it to an agent, open **Review
+Changes**. It combines the Git comparison with CLI-authored impact, freshness,
+and verification evidence without running project scripts automatically. See
+[Review Changes](./REVIEW_CHANGES.md) for its scope and evidence boundaries.
 
 ## Start with a workspace
 

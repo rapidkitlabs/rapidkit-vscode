@@ -108,6 +108,7 @@ describe('webviewProtocol', () => {
     expect(readAICreationMode({ mode: 'project' })).toBe('project');
     expect(readAICreationMode({ mode: 'bad' })).toBe('workspace');
     expect(readAICreationStackIntent({ stackIntent: 'polyglot' })).toBe('polyglot');
+    expect(readAICreationStackIntent({ stackIntent: 'agent' })).toBe('agent');
     expect(readAICreationStackIntent({ stackIntent: 'invented' })).toBeUndefined();
     expect(readAIQueryMode({ mode: 'debug' })).toBe('debug');
     expect(readAIQueryMode({ mode: 'ask' })).toBe('ask');

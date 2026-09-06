@@ -4,7 +4,7 @@ import type {
   WorkspaceCreationResult,
 } from './workspaceCreationService.js';
 import {
-  scaffoldRuntimeCandidatesForFramework,
+  scaffoldRuntimeCandidatesForKit,
   workspacePythonEngineForKit,
   type ScaffoldRuntimeFamily,
 } from './scaffoldKits.js';
@@ -93,10 +93,8 @@ export function resolveCreatePlanWorkspaceProfile(
   }
 
   const runtimes = new Set<ScaffoldRuntimeFamily>([
-    ...scaffoldRuntimeCandidatesForFramework(plan.framework),
-    ...(plan.secondaryProject
-      ? scaffoldRuntimeCandidatesForFramework(plan.secondaryProject.framework)
-      : []),
+    ...scaffoldRuntimeCandidatesForKit(plan.kit),
+    ...(plan.secondaryProject ? scaffoldRuntimeCandidatesForKit(plan.secondaryProject.kit) : []),
   ]);
   if (runtimes.size > 1) {
     return 'polyglot';

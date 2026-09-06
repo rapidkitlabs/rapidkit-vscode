@@ -52,7 +52,13 @@ describe('Create tab durable session contract', () => {
     expect(secondary).toContain('activeSession.target === target');
     expect(provider).toContain("payloadRecord.target === 'project' ? 'project' : 'workspace'");
     expect(provider).toContain(
-      "const workspacePath = createTarget === 'project' ? scope.workspacePath : undefined"
+      "let workspacePath = createTarget === 'project' ? scope.workspacePath : undefined"
+    );
+    expect(provider).toContain('await this._readSelectedWorkspaceScope()');
+    expect(provider).toContain("executeCommand('workspai.getSelectedWorkspace')");
+    expect(provider).toContain('selectedWorkspace?.name?.trim()');
+    expect(provider).toMatch(
+      /const approvalScope = resolveExplicitWorkspaceScope[\s\S]{0,500}await this\._readSelectedWorkspaceScope\(\)/
     );
     expect(provider).toContain(
       'bindCreatePlanDestination(parsedPlan, { workspacePath, workspaceName })'

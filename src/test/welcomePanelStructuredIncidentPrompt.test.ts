@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,5 +52,34 @@ describe('welcomePanelStructuredIncidentPrompt', () => {
     expect(source).toContain('Workspace Status:');
     expect(source).toContain('PROJECT EXECUTION STATE:');
     expect(source).toContain('buildIncidentFirstResponseRules');
+  });
+
+  it('reports governed agent readiness without treating it as a generic service', async () => {
+    const project = mkdtempSync(path.join(os.tmpdir(), 'workspai-studio-agent-'));
+    try {
+      mkdirSync(path.join(project, 'agents', 'primary'), { recursive: true });
+      mkdirSync(path.join(project, '.workspai', 'agent-frameworks'), { recursive: true });
+      mkdirSync(path.join(project, '.workspai', 'reports'), { recursive: true });
+      writeFileSync(path.join(project, 'agents', 'primary', 'pyproject.toml'), '[project]\n');
+      writeFileSync(
+        path.join(project, '.workspai', 'reports', 'project-context-agent.md'),
+        'bounded evidence\n'
+      );
+
+      const { buildProjectExecutionBlock } =
+        await import('../ui/panels/welcomePanelStructuredIncidentPrompt.js');
+      const block = await buildProjectExecutionBlock(
+        { projectPath: project, projectName: 'support-agent', projectType: 'agent' },
+        async () => 'unknown'
+      );
+
+      expect(block).toContain('Governed agent runtime: python');
+      expect(block).toContain('Managed adapter state: present');
+      expect(block).toContain('Bounded agent context: present');
+      expect(block).toContain('verified agent handoff');
+      expect(block).not.toContain('path to a running service');
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });

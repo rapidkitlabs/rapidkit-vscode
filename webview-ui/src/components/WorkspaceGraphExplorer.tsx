@@ -30,6 +30,7 @@ import {
 import {
   detectWorkspaceGraphRendererCapabilities,
   resolveWorkspaceGraphRenderer,
+  WORKSPACE_GRAPH_DEFAULT_3D_RENDERER,
 } from '@/lib/workspaceGraphRenderer';
 import {
   captureWorkspaceGraphSurface,
@@ -238,7 +239,7 @@ export function WorkspaceGraphExplorer({
     setGifExportMessage('VS Code could not initialize either 3D rendering backend.');
   }, []);
   const renderer = resolveWorkspaceGraphRenderer(
-    view === '3d' ? 'webgl3d' : view === 'map' ? 'canvas2d' : 'list',
+    view === '3d' ? WORKSPACE_GRAPH_DEFAULT_3D_RENDERER : view === 'map' ? 'canvas2d' : 'list',
     rendererCapabilities
   );
   const availableViews: GraphView[] = ['map', '3d', 'list'];

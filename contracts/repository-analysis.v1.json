@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workspai.dev/contracts/vscode/repository-analysis.v1.json",
+  "title": "Workspai VS Code Repository Analysis",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "generatedAt",
+    "repository",
+    "execution",
+    "verdict",
+    "summary",
+    "identity",
+    "readiness",
+    "doctor",
+    "insights",
+    "graph",
+    "connectedSurfaces",
+    "questions",
+    "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "workspai-vscode-repository-analysis.v1" },
+    "requestId": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "repository": {
+      "type": "object",
+      "required": ["url", "host", "owner", "name", "commit", "localPath"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "host": { "enum": ["github.com", "gitlab.com", "bitbucket.org"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "minLength": 1 },
+        "localPath": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "mode",
+        "cliVersion",
+        "sourceCodeExecuted",
+        "dependencyInstallExecuted",
+        "cacheReused"
+      ],
+      "properties": {
+        "mode": { "const": "local-static" },
+        "cliVersion": { "type": "string", "minLength": 1 },
+        "sourceCodeExecuted": { "const": false },
+        "dependencyInstallExecuted": { "const": false },
+        "cacheReused": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "verdict": { "enum": ["ready", "limited", "blocked"] },
+    "summary": {
+      "type": "object",
+      "required": ["projects", "entities", "relations", "proofs", "diagnostics"],
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "identity": {
+      "type": "object",
+      "required": ["runtimes", "frameworks"],
+      "properties": {
+        "runtimes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "frameworks": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    },
+    "readiness": {
+      "type": "object",
+      "required": ["status", "stagesPassed", "stagesBlocked", "stagesFailed", "blockers"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "stagesPassed": { "type": "integer", "minimum": 0 },
+        "stagesBlocked": { "type": "integer", "minimum": 0 },
+        "stagesFailed": { "type": "integer", "minimum": 0 },
+        "blockers": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "doctor": {
+      "type": "object",
+      "required": ["canonical", "verdict", "blockers", "advisories", "counts", "findings"],
+      "properties": {
+        "canonical": { "type": "boolean" },
+        "verdict": { "enum": ["passed", "attention", "blocked"] },
+        "freshness": { "enum": ["fresh", "stale", "unknown"] },
+        "blockers": { "type": "array", "items": { "type": "string" } },
+        "advisories": { "type": "array", "items": { "type": "string" } },
+        "counts": {
+          "type": "object",
+          "required": [
+            "projectsScanned",
+            "affectedProjects",
+            "blockingCauses",
+            "advisoryFindings",
+            "unknownFindings",
+            "repairableFindings"
+          ],
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "symptom", "status"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "projectName": { "type": "string", "minLength": 1 },
+              "issueClass": { "type": "string", "minLength": 1 },
+              "symptom": { "type": "string", "minLength": 1 },
+              "status": { "enum": ["blocking", "advisory", "informational", "unknown"] },
+              "diagnosisState": { "enum": ["confirmed", "candidate", "unknown"] },
+              "repairDisposition": {
+                "enum": ["automatic", "approval-required", "manual", "unavailable", "not-needed"]
+              },
+              "verifyCommand": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "insights": {
+      "type": "object",
+      "description": "Static observations and preparation hints. Unknown security coverage must not be presented as a clean audit; portable context does not verify remote execution.",
+      "required": ["webAgent", "security", "delivery", "changeSurface"],
+      "properties": {
+        "webAgent": {
+          "type": "object",
+          "description": "Remote preparation only. The local-static producer emits conditional or blocked because it does not launch a remote environment.",
+          "required": ["verdict", "signals", "gaps", "claimBoundary"],
+          "properties": {
+            "verdict": { "enum": ["ready", "conditional", "blocked"] },
+            "signals": { "type": "array", "items": { "type": "string" } },
+            "gaps": { "type": "array", "items": { "type": "string" } },
+            "claimBoundary": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "security": {
+          "type": "object",
+          "description": "Doctor-observed findings. The local-static producer emits unknown when there is no security finding; no-observed-blocker is retained for compatibility, not emitted by this producer.",
+          "required": ["verdict", "findingCount", "signals", "claimBoundary"],
+          "properties": {
+            "verdict": { "enum": ["no-observed-blocker", "attention", "unknown"] },
+            "findingCount": { "type": "integer", "minimum": 0 },
+            "signals": { "type": "array", "items": { "type": "string" } },
+            "claimBoundary": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "delivery": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "ciProjects",
+            "releaseProjects",
+            "ownershipProjects",
+            "verificationCommands"
+          ],
+          "properties": {
+            "verdict": { "enum": ["ready", "partial", "unknown"] },
+            "ciProjects": { "type": "integer", "minimum": 0 },
+            "releaseProjects": { "type": "integer", "minimum": 0 },
+            "ownershipProjects": { "type": "integer", "minimum": 0 },
+            "verificationCommands": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "changeSurface": {
+          "type": "object",
+          "required": ["verdict", "hotspotCount", "highestConnections", "signals"],
+          "properties": {
+            "verdict": { "enum": ["concentrated", "distributed", "unknown"] },
+            "hotspotCount": { "type": "integer", "minimum": 0 },
+            "highestConnections": { "type": "integer", "minimum": 0 },
+            "signals": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "graph": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "sourceSchemaVersion",
+        "revision",
+        "truncated",
+        "total",
+        "entities",
+        "relations",
+        "proofs",
+        "providers",
+        "quality",
+        "diagnostics"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "workspace-graph-projection.v1" },
+        "sourceSchemaVersion": { "type": "string", "minLength": 1 },
+        "generatedAt": { "type": "string" },
+        "revision": { "type": "string", "minLength": 1 },
+        "truncated": { "type": "boolean" },
+        "total": { "type": "object" },
+        "entities": { "type": "array" },
+        "relations": { "type": "array" },
+        "proofs": { "type": "array" },
+        "workspace": { "type": "object" },
+        "source": { "type": "object" },
+        "providers": { "type": "array" },
+        "quality": { "type": "object" },
+        "diagnostics": { "type": "array" },
+        "highlightedEntityIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "retrieval": {
+      "type": "object",
+      "required": [
+        "query",
+        "corpusEstimatedTokens",
+        "boundedEstimatedTokens",
+        "reductionPercent",
+        "estimated",
+        "claimBoundary"
+      ],
+      "properties": {
+        "query": { "type": "string" },
+        "corpusEstimatedTokens": { "type": "integer", "minimum": 0 },
+        "boundedEstimatedTokens": { "type": "integer", "minimum": 0 },
+        "reductionPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "estimated": { "const": true },
+        "claimBoundary": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "connectedSurfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "kind", "connections"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "connections": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["workspacePath", "model", "graph", "doctor", "intelligence"],
+      "properties": {
+        "workspacePath": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "graph": { "type": "string", "minLength": 1 },
+        "doctor": { "type": "string", "minLength": 1 },
+        "intelligence": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -173,6 +173,9 @@ export function WorkspaceGraphWebgl({
   const requestRef = useRef(0);
   const processedExportRequestRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
+  // Callback identity must not tear down a live GPU context on a parent render.
+  const fallbackRef = useRef(onFallback);
+  fallbackRef.current = onFallback;
   const dragRef = useRef<{ x: number; y: number; camera: Camera; moved: boolean } | null>(null);
   const [size, setSize] = useState({ width: 800, height: 520 });
   const [layoutSize, setLayoutSize] = useState({ width: 1200, height: 800 });
@@ -282,7 +285,7 @@ export function WorkspaceGraphWebgl({
     if (softwareFallback || !preferWebgl) {
       const context = canvas.getContext('2d');
       if (!context) {
-        onFallback();
+        fallbackRef.current();
         return;
       }
       resourcesRef.current = { kind: 'canvas2d', context };
@@ -294,6 +297,7 @@ export function WorkspaceGraphWebgl({
     const gl = canvas.getContext('webgl2', {
       alpha: true,
       antialias: true,
+      preserveDrawingBuffer: true,
       powerPreference: 'high-performance',
     });
     if (!gl) {
@@ -321,7 +325,7 @@ export function WorkspaceGraphWebgl({
       gl.deleteBuffer(resources.colorBuffer);
       gl.deleteProgram(resources.program);
     };
-  }, [onFallback, preferWebgl, softwareFallback]);
+  }, [preferWebgl, softwareFallback]);
 
   useEffect(() => {
     let disposed = false;
@@ -440,6 +444,18 @@ export function WorkspaceGraphWebgl({
     const exportLayoutSize = { ...layoutSize };
     const exportCamera = { ...camera };
     const exportOrbit = async () => {
+      // Export owns a separate canvas. The visible scene keeps its size and orbit.
+      const exportCanvas = document.createElement('canvas');
+      const exportLabels = document.createElement('canvas');
+      const exportRoot = document.createElement('div');
+      exportRoot.style.backgroundColor = '#071017';
+      exportRoot.append(exportCanvas, exportLabels);
+      const exportContext = exportCanvas.getContext('2d');
+      if (!exportContext) {
+        onGifExportFailed?.(request.id, 'Export canvas is unavailable.');
+        return;
+      }
+      const exportResources: CanvasRenderResources = { kind: 'canvas2d', context: exportContext };
       try {
         const frames: WorkspaceGraphGifFrame[] = [];
         const exportDefaults = video ? WORKSPACE_GRAPH_MP4_DEFAULTS : WORKSPACE_GRAPH_GIF_DEFAULTS;
@@ -467,9 +483,10 @@ export function WorkspaceGraphWebgl({
             pathCamera,
             exportDefaults.capturePaddingRatio
           );
-          renderWorkspaceGraph3d(resources, {
-            canvas,
-            labelsCanvas: labelsCanvasRef.current,
+          if (!mountedRef.current) return;
+          renderWorkspaceGraph3d(exportResources, {
+            canvas: exportCanvas,
+            labelsCanvas: exportLabels,
             size: gifSize,
             layoutSize: exportLayoutSize,
             points: exportPoints,
@@ -477,10 +494,10 @@ export function WorkspaceGraphWebgl({
             relations: exportRelations,
             selectedId,
             camera: frameCamera,
-            projected: projectedRef.current,
+            projected: [],
             shape,
           });
-          const image = captureWorkspaceGraphImageData(root, {
+          const image = captureWorkspaceGraphImageData(exportRoot, {
             width: exportDefaults.width,
             height: exportDefaults.height,
           });
@@ -604,6 +621,21 @@ export function WorkspaceGraphWebgl({
         </button>
         <button type="button" onClick={resetCamera}>
           Reset view
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            setCamera((current) =>
+              fitWorkspaceGraphCameraToViewport(
+                pointsRef.current.values(),
+                layoutSize,
+                size,
+                current
+              )
+            )
+          }
+        >
+          Fit view
         </button>
       </div>
       <div className="workspace-graph-webgl__hint" aria-hidden="true">
@@ -830,12 +862,15 @@ function renderWorkspaceGraphWebgl3d(
 ): void {
   const { gl } = resources;
   const ratio = window.devicePixelRatio || 1;
-  input.canvas.width = Math.floor(input.size.width * ratio);
-  input.canvas.height = Math.floor(input.size.height * ratio);
+  const width = Math.floor(input.size.width * ratio);
+  const height = Math.floor(input.size.height * ratio);
+  if (input.canvas.width !== width) input.canvas.width = width;
+  if (input.canvas.height !== height) input.canvas.height = height;
   input.canvas.style.width = `${input.size.width}px`;
   input.canvas.style.height = `${input.size.height}px`;
   gl.viewport(0, 0, input.canvas.width, input.canvas.height);
   gl.clearColor(0, 0, 0, 0);
+  gl.depthMask(true);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -875,7 +910,10 @@ function renderWorkspaceGraphWebgl3d(
     linePositions.push(...from.clip, ...to.clip);
     lineColors.push(...depthColor(color, from.scale), ...depthColor(color, to.scale));
   }
+  // Transparent edges must not occlude their endpoint sprites as the camera turns.
+  gl.depthMask(false);
   uploadAndDraw(resources, linePositions, lineColors, gl.LINES, 1, false);
+  gl.depthMask(true);
 
   const nodeBuckets = [
     { positions: [] as number[], colors: [] as number[], size: 6.5 },
@@ -957,8 +995,10 @@ function renderWorkspaceGraphSoftware3d(
   input: GraphSceneRenderInput
 ): void {
   const ratio = window.devicePixelRatio || 1;
-  input.canvas.width = Math.floor(input.size.width * ratio);
-  input.canvas.height = Math.floor(input.size.height * ratio);
+  const width = Math.floor(input.size.width * ratio);
+  const height = Math.floor(input.size.height * ratio);
+  if (input.canvas.width !== width) input.canvas.width = width;
+  if (input.canvas.height !== height) input.canvas.height = height;
   input.canvas.style.width = `${input.size.width}px`;
   input.canvas.style.height = `${input.size.height}px`;
   const context = resources.context;

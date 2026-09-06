@@ -8,16 +8,17 @@ import '@/styles/workspai-primitives.css';
 import '@/styles/workspai-studio.css';
 import '@/styles/workspai-studio-chrome.css';
 import '@/styles/workspai-analyze-report.css';
+import '@/styles/workspai-repository-analysis.css';
 import '@/styles/responsive.css';
 import '@/styles/workspai-a11y.css';
 
 const root = document.getElementById('root');
 if (root) {
-    createRoot(root).render(
-        <StrictMode>
-            <WebviewErrorBoundary>
-                <App />
-            </WebviewErrorBoundary>
-        </StrictMode>
-    );
+  createRoot(root).render(
+    <StrictMode>
+      <WebviewErrorBoundary>
+        <App />
+      </WebviewErrorBoundary>
+    </StrictMode>
+  );
 }

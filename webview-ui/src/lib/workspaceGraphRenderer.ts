@@ -1,5 +1,10 @@
 export type WorkspaceGraphRendererMode = 'canvas2d' | 'canvas3d' | 'webgl3d' | 'list';
 
+// Use the same depth-sorted, color-preserving renderer for the dashboard,
+// repository analysis and exports. GPU availability alone does not establish
+// point-sprite reliability in an embedded Electron webview.
+export const WORKSPACE_GRAPH_DEFAULT_3D_RENDERER = 'canvas3d' as const;
+
 export type WorkspaceGraphRendererCapabilities = {
   canvas2d: boolean;
   webgl2: boolean;
@@ -8,9 +13,13 @@ export type WorkspaceGraphRendererCapabilities = {
 
 export function detectWorkspaceGraphRendererCapabilities(): WorkspaceGraphRendererCapabilities {
   const canvas = document.createElement('canvas');
+  const gpuCanvas = document.createElement('canvas');
+  const gl = gpuCanvas.getContext('webgl2');
+  const webgl2 = Boolean(gl);
+  gl?.getExtension('WEBGL_lose_context')?.loseContext();
   return {
     canvas2d: Boolean(canvas.getContext('2d')),
-    webgl2: Boolean(canvas.getContext('webgl2')),
+    webgl2,
     prefersReducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
   };
 }

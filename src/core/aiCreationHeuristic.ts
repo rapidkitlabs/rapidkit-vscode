@@ -9,6 +9,7 @@ import {
 } from './creationStackIntent';
 import {
   isDesktopScaffoldFramework,
+  isAgentScaffoldFramework,
   isExtensionScaffoldFramework,
   isFrontendScaffoldFramework,
   type ScaffoldFramework,
@@ -48,6 +49,7 @@ function inferSuggestedModules(promptLower: string, framework: ScaffoldFramework
     framework === 'rust' ||
     framework === 'laravel' ||
     isDesktopScaffoldFramework(framework) ||
+    isAgentScaffoldFramework(framework) ||
     isExtensionScaffoldFramework(framework) ||
     isFrontendScaffoldFramework(framework)
   ) {
@@ -97,6 +99,7 @@ export function buildHeuristicCreationDraft(
   const promptLower = trimmedPrompt.toLowerCase();
   const framework = inferFrameworkFromCreationPrompt(promptLower, frameworkHint, stackIntent);
   const names = inferCreationNames(trimmedPrompt, framework);
+  const kit = defaultKitForFramework(framework, promptLower);
   const secondaryProject =
     mode === 'workspace'
       ? inferPolyglotCompanionProject(trimmedPrompt, framework, stackIntent)
@@ -109,11 +112,13 @@ export function buildHeuristicCreationDraft(
       framework,
       promptLower,
       stackIntent,
-      secondaryProject?.framework
+      secondaryProject?.framework,
+      kit,
+      secondaryProject?.kit
     ),
     installMethod: 'auto',
     framework,
-    kit: defaultKitForFramework(framework, promptLower),
+    kit,
     projectName: names.projectName,
     suggestedModules: inferSuggestedModules(promptLower, framework),
     description: trimmedPrompt.slice(0, 240),

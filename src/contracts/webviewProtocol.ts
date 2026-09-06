@@ -1,4 +1,6 @@
 import { isDashboardEvidenceCardId, type DashboardEvidenceCardId } from './dashboardEvidenceCards';
+import type { RepositoryAnalysisProgress, RepositoryAnalysisReport } from './repositoryAnalysis';
+import type { ChangeReview } from './changeReview';
 
 export type WebviewProtocolRequestId = string | number;
 
@@ -45,7 +47,13 @@ export type CopyTextData = {
 
 export type AICreationMode = 'workspace' | 'project';
 
-export type AICreationStackIntent = 'balanced' | 'frontend' | 'backend' | 'polyglot' | 'enterprise';
+export type AICreationStackIntent =
+  | 'balanced'
+  | 'frontend'
+  | 'backend'
+  | 'agent'
+  | 'polyglot'
+  | 'enterprise';
 
 export type AIParseCreationData = {
   prompt: string;
@@ -286,6 +294,13 @@ export type RunIncidentInlineCommandDoneHostData = Record<string, unknown>;
 
 export type UiPreferencesHostData = Record<string, unknown>;
 
+export type RepositoryAnalysisRequestData = {
+  repositoryUrl: string;
+  requestId: string;
+};
+
+export type RepositoryAnalysisProgressHostData = RepositoryAnalysisProgress;
+
 export type WebviewToExtensionMessage<C extends string = string, D = unknown> = {
   command: C;
   data?: D;
@@ -357,7 +372,30 @@ export type DashboardHostWebviewMessage =
       'runIncidentInlineCommandDone',
       RunIncidentInlineCommandDoneHostData
     >
-  | WebviewFromExtensionMessage<'uiPreferences', UiPreferencesHostData>;
+  | WebviewFromExtensionMessage<'uiPreferences', UiPreferencesHostData>
+  | WebviewFromExtensionMessage<'repositoryAnalysisProgress', RepositoryAnalysisProgressHostData>
+  | WebviewFromExtensionMessage<'repositoryAnalysisCompleted', RepositoryAnalysisReport>
+  | WebviewFromExtensionMessage<
+      'changeReviewCompleted',
+      { requestId: string; report: ChangeReview }
+    >
+  | WebviewFromExtensionMessage<'changeReviewProgress', { requestId: string; message: string }>
+  | WebviewFromExtensionMessage<'changeReviewFailed', { requestId: string; error: string }>
+  | WebviewFromExtensionMessage<
+      'changeReviewFreshness',
+      { requestId: string; reviewId: string; stale: boolean }
+    >
+  | WebviewFromExtensionMessage<
+      'changeReviewCancelled' | 'changeReviewCopied',
+      { requestId: string }
+    >
+  | WebviewFromExtensionMessage<'repositoryAnalysisFailed', { requestId: string }>
+  | WebviewFromExtensionMessage<'repositoryAnalysisCancelled', { requestId: string }>
+  | WebviewFromExtensionMessage<'repositoryAnalysisDeleted', RepositoryAnalysisRequestData>
+  | WebviewFromExtensionMessage<
+      'repositoryAnalysisExported',
+      { requestId: string; kind: string; path: string }
+    >;
 
 export type NormalizedWebviewMessage = {
   command: string;
@@ -576,6 +614,7 @@ export function readAICreationStackIntent(
 ): AICreationStackIntent | undefined {
   return data.stackIntent === 'frontend' ||
     data.stackIntent === 'backend' ||
+    data.stackIntent === 'agent' ||
     data.stackIntent === 'polyglot' ||
     data.stackIntent === 'enterprise' ||
     data.stackIntent === 'balanced'

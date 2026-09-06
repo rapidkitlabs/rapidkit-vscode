@@ -111,7 +111,8 @@ describe('shared runtime command surface contract (extension)', () => {
       (kitId) => !contract.scaffoldKits.includes(kitId)
     )) {
       expect(
-        createPlanner.officialCreate.find((entry) => entry.id === kitId)?.canExecuteCreate,
+        createPlanner.nativeCreate.some((entry) => entry.id === kitId) ||
+          createPlanner.officialCreate.find((entry) => entry.id === kitId)?.canExecuteCreate,
         kitId
       ).toBe(true);
     }

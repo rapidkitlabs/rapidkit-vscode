@@ -1,5 +1,74 @@
 # Release Notes
 
+## v0.47.0 (September 6, 2026)
+
+### Local repository intelligence before the first agent change
+
+Workspai for VS Code 0.47.0 is validated against Workspai CLI 0.75.0. This
+release adds a local-first Analyze Repo experience and aligns every mirrored
+contract and the bundled runtime with the CLI's reliable polyglot intelligence
+and bounded agent-context release.
+
+Highlights:
+
+- Create now starts with a product category instead of one growing flat list.
+  The new AI Agent lane exposes release-admitted Microsoft Agent Framework
+  Python and .NET kits with exact runtime profiles, governed ownership, bounded
+  agent context, and CLI verification.
+- Primary-sidebar creation, Dashboard starters, the secondary Create tab, AI
+  Create, and Studio grounding now share the CLI-authored executable kit
+  contract. Studio recognizes governed agent projects as agent runtimes rather
+  than treating them as generic web services.
+- Analysis recording now captures the actual themed panel at observed stages and
+  tours the rendered results. Recorded GIFs are separate from illustrated summaries.
+- Shared Graph rendering keeps node sprites visible through transparent edges;
+  export runs on a separate canvas. Unverified remote execution and missing
+  vulnerability audits remain explicitly unverified in the report.
+- Paste a public GitHub, GitLab, or Bitbucket repository URL and receive a
+  minimal evidence-backed report without running repository code or installing
+  project dependencies.
+- Analysis uses a shallow isolated clone, an isolated Workspai registry, the
+  canonical Model and Knowledge Graph, the complete intelligence chain, and a
+  bounded Graph retrieval benchmark.
+- Repository identity, project/entity/relation/proof totals, agent readiness,
+  high-connection architecture surfaces, and retrieval reduction are projected
+  from CLI artifacts instead of inferred UI scores.
+- The result experience embeds the production 3D Graph renderer, canonical
+  Doctor findings and quality coverage, plus locally encoded Analysis Story and
+  360° Graph GIF exports.
+- The Graph opens as a full-width, architecture-first explorer instead of an
+  unfiltered node cloud. Decision panels explain Web/remote-agent fit, observed
+  security signals, verification and delivery controls, and high-reach change
+  surfaces without inventing a quality score. The guided Story GIF includes the
+  live rendered Graph and focused result scenes.
+- Local evidence is cached by normalized repository, remote commit, and
+  verified CLI version. The operator can open the isolated source, inspect
+  canonical artifacts, or delete the local analysis.
+- Node/TypeScript retrieval, nested polyglot topology, explicit external scope,
+  Agent Framework admission, and bounded Project Agent Context behavior consume
+  Workspai CLI 0.75.0 truth.
+- The extension bundles the integrity-checked Workspai CLI 0.75.0 runtime and
+  mirrors its complete published contract catalog and command inventory.
+- Review Changes combines the local working-tree diff with CLI-authored impact,
+  freshness, verification recommendations, searchable changed paths, and a
+  copyable agent handoff without running project scripts automatically.
+- Dashboard is now the first primary tab. Analyze Repo and Review Changes use a
+  clearer action hierarchy, evidence labels, scope guidance, and keyboard focus
+  treatment across their enterprise-facing surfaces.
+
+Compatibility:
+
+- VS Code 1.106.0+
+- Workspai CLI 0.75.0+
+- Git for remote repository analysis
+- RapidKit Core 0.6.0 only for Python-backed kits/modules
+
+[Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.47.0/releases/RELEASE_NOTES_v0.47.0.md)
+
+Release posture: `expansion-eligible`.
+
+Publication status: Released September 6, 2026.
+
 ## v0.46.0 (September 1, 2026)
 
 ### Proof-carrying Studio and live operational assurance

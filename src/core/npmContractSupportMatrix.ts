@@ -13,6 +13,48 @@ export type NpmContractSupportEntry = {
 
 export const NPM_CONTRACT_SUPPORT_MATRIX: NpmContractSupportEntry[] = [
   {
+    contractPath: 'agent-framework-capabilities.v1.json',
+    mode: 'runtime-consumed',
+    extensionSurface: 'Create agent category and governed framework kit selection',
+    usage:
+      'Constrains agent framework identity, runtime ownership, version policy, and lifecycle capabilities exposed by the extension.',
+  },
+  {
+    contractPath: 'workspace-intelligence/agent-framework-adapter-manifest.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Agent framework adapter compatibility boundary',
+    usage:
+      'Guards portable adapter identity, runtime, framework version, entrypoint, and Workspai context bindings.',
+  },
+  {
+    contractPath: 'workspace-intelligence/agent-framework-admission-candidate.v1.json',
+    mode: 'mirrored-reserved',
+    extensionSurface: 'Agent framework release admission compatibility boundary',
+    usage:
+      'Preserves the cross-platform admission schema without allowing the extension to declare framework releases verified.',
+  },
+  {
+    contractPath: 'workspace-intelligence/agent-framework-change-plan.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Governed agent framework plan and approval boundary',
+    usage:
+      'Guards the CLI-authored preview of files, ownership, dependencies, context binding, and verification before mutation.',
+  },
+  {
+    contractPath: 'workspace-intelligence/agent-framework-conformance-report.v1.json',
+    mode: 'mirrored-reserved',
+    extensionSurface: 'Agent framework conformance evidence compatibility boundary',
+    usage:
+      'Preserves platform and runtime conformance evidence while keeping admission authority in the CLI release pipeline.',
+  },
+  {
+    contractPath: 'workspace-intelligence/agent-framework-ownership-receipt.v1.json',
+    mode: 'schema-guarded',
+    extensionSurface: 'Agent framework ownership and verification boundary',
+    usage:
+      'Guards durable project ownership, managed paths, framework binding, and verification commands created by the CLI.',
+  },
+  {
     contractPath: 'workspace-activity-board.v1.json',
     mode: 'runtime-consumed',
     extensionSurface: 'Dashboard Live Operations and Command Center projection',

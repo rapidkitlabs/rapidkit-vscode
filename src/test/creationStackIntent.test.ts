@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  defaultKitForFramework,
   inferFrameworkFromCreationPrompt,
   inferExplicitCreationFrameworks,
   inferStackIntentFromPrompt,
@@ -29,6 +30,9 @@ describe('creationStackIntent', () => {
     );
     expect(inferFrameworkFromCreationPrompt('product platform', undefined, 'backend')).toBe(
       'nestjs'
+    );
+    expect(inferFrameworkFromCreationPrompt('repository maintainer', undefined, 'agent')).toBe(
+      'microsoft-agent-framework'
     );
     expect(
       inferWorkspaceProfileFromCreationPrompt(
@@ -106,5 +110,35 @@ describe('creationStackIntent', () => {
     expect(projectNameSuffixForFramework('nextjs')).toBe('app');
     expect(projectNameSuffixForFramework('nestjs')).toBe('api');
     expect(projectNameSuffixForFramework('springboot')).toBe('service');
+    expect(projectNameSuffixForFramework('microsoft-agent-framework')).toBe('app');
+  });
+
+  it('selects governed Microsoft Agent Framework kits and exact runtime profiles', () => {
+    const prompt = 'Create an AI agent with Microsoft Agent Framework and C#';
+    expect(inferFrameworkFromCreationPrompt(prompt.toLowerCase())).toBe(
+      'microsoft-agent-framework'
+    );
+    expect(inferStackIntentFromPrompt(prompt.toLowerCase())).toBe('agent');
+    expect(defaultKitForFramework('microsoft-agent-framework', prompt.toLowerCase())).toBe(
+      'agent.microsoft.dotnet'
+    );
+    expect(
+      inferWorkspaceProfileFromCreationPrompt(
+        'microsoft-agent-framework',
+        prompt.toLowerCase(),
+        undefined,
+        undefined,
+        'agent.microsoft.dotnet'
+      )
+    ).toBe('dotnet-only');
+    expect(
+      inferWorkspaceProfileFromCreationPrompt(
+        'microsoft-agent-framework',
+        'create an ai agent in python',
+        undefined,
+        undefined,
+        'agent.microsoft.python'
+      )
+    ).toBe('python-only');
   });
 });

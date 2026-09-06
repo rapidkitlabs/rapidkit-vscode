@@ -36,9 +36,11 @@ describe('aiCoreModuleCatalog', () => {
     expect(buildCatalogModuleArchitectureContract('gofiber.standard')).toBe('');
   });
 
-  it('kit registry has 7 kits with 3 module-capable', () => {
+  it('kit registry includes governed agent runtimes without widening module support', () => {
     const kits = listAllKitBlueprints();
-    expect(kits).toHaveLength(7);
+    expect(kits.map((kit) => kit.id)).toEqual(
+      expect.arrayContaining(['agent.microsoft.python', 'agent.microsoft.dotnet'])
+    );
     expect(kits.filter((k) => k.moduleSupport)).toHaveLength(3);
   });
 
