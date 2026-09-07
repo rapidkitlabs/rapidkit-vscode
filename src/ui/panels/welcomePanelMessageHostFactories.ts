@@ -89,7 +89,6 @@ export type WelcomePanelMessageHostFactoryBindings = {
     triggeredBy: 'clone' | 'ai-create' | 'import' | 'create' | 'add'
   ) => Promise<void>;
   runOptionalMessageLane: (laneName: string, lane: () => Promise<void> | void) => Promise<void>;
-  refreshDashboardForWorkspaceSelection: () => Promise<void>;
 };
 
 export function buildWelcomePanelRecentWorkspacesHost(): RecentWorkspacesHost {
@@ -198,7 +197,6 @@ export function buildWelcomePanelWorkspaceSelectionMessageHost(
     sendRecentWorkspaces: bindings.sendRecentWorkspaces,
     cloneExample: (example) => cloneExampleWorkspace(getExampleWorkspacesHost(), example),
     updateExample: (example) => updateExampleWorkspace(getExampleWorkspacesHost(), example),
-    refreshDashboardForWorkspaceSelection: bindings.refreshDashboardForWorkspaceSelection,
   };
 }
 

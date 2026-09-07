@@ -385,15 +385,19 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
     new vscode.EventEmitter<ProjectTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData: vscode.Event<ProjectTreeItem | undefined | null | void> =
     this._onDidChangeTreeData.event;
+  private _onDidChangeSelectedProject = new vscode.EventEmitter<WorkspaiProject | null>();
+  readonly onDidChangeSelectedProject: vscode.Event<WorkspaiProject | null> =
+    this._onDidChangeSelectedProject.event;
 
   private selectedWorkspace: WorkspaiWorkspace | null = null;
   private projects: WorkspaiProject[] = [];
   private selectedProject: WorkspaiProject | null = null;
   private _projectsLoaded = false;
   private _projectsLoadInProgress = false;
-  private _projectListSignature = '';
+  private _projectLoadToken = 0;
   private _treeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private _projectLoadError: string | null = null;
+  private _workspaceGeneration = 0;
 
   constructor() {
     // NOTE: 'workspai.workspaceSelected' is registered once in extension.ts
@@ -406,10 +410,13 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
   }
 
   refresh(): void {
-    // Clear cached project list so next render triggers a fresh background load
+    // Invalidate both the visible cache and any in-flight scan. Keeping rows
+    // while the source has changed can briefly show projects from stale state.
+    this._projectLoadToken += 1;
+    this._projectsLoadInProgress = false;
     this._projectsLoaded = false;
-    this._projectListSignature = '';
     this._projectLoadError = null;
+    this.projects = [];
     this._scheduleTreeRefresh();
   }
 
@@ -424,34 +431,42 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
     }, TREE_REFRESH_DEBOUNCE_MS);
   }
 
-  private _projectPathsSignature(projects: WorkspaiProject[]): string {
-    return projects
-      .map((project) => project.path)
-      .sort()
-      .join('|');
-  }
-
   setWorkspace(workspace: WorkspaiWorkspace | null): void {
-    const nextPath = workspace?.path ?? null;
-    const currentPath = this.selectedWorkspace?.path ?? null;
+    const nextPath = workspace?.path ? path.resolve(workspace.path) : null;
+    const currentPath = this.selectedWorkspace?.path
+      ? path.resolve(this.selectedWorkspace.path)
+      : null;
     if (nextPath === currentPath) {
+      // An explicit re-selection is also the recovery path for a view whose
+      // previous asynchronous scan failed or was invalidated.
+      if (workspace && !this._projectsLoaded) {
+        this.refresh();
+      }
       return;
     }
 
     this.selectedWorkspace = workspace;
+    this._workspaceGeneration += 1;
+    // Invalidate any in-flight scan so its completion cannot keep the load lock.
+    this._projectLoadToken += 1;
+    this._projectsLoadInProgress = false;
 
     // Reset project cache so next render triggers a fresh load for the new workspace
     this._projectsLoaded = false;
-    this._projectListSignature = '';
     this._projectLoadError = null;
     this.projects = [];
 
-    // Clear selected project when workspace changes
+    // Clear selected project without emitting project-selection events. The
+    // workspaceSelected handler owns Doctor/Contract refresh for this transition,
+    // so a second doctor reload here would only duplicate work.
     if (this.selectedProject) {
       console.log('[ProjectExplorer] Workspace changed - clearing selected project');
-      this.setSelectedProject(null);
+      this.selectedProject = null;
+      void vscode.commands.executeCommand('setContext', 'workspai:projectSelected', false);
+      void clearProjectCapabilityContext();
+      const { setSelectedProjectPath } = require('../../core/selectedProject');
+      setSelectedProjectPath(undefined);
 
-      // Also clear in WelcomePanel
       const { WelcomePanel } = require('../panels/welcomePanel');
       WelcomePanel.clearSelectedProject();
     }
@@ -482,6 +497,7 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
     if (!project) {
       void clearProjectCapabilityContext();
     }
+    this._onDidChangeSelectedProject.fire(project);
     this._scheduleTreeRefresh();
   }
 
@@ -491,17 +507,22 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
 
   /** Load projects for the selected workspace when the tree has not scanned yet. */
   public async ensureProjectsLoaded(): Promise<WorkspaiProject[]> {
-    if (!this.selectedWorkspace) {
-      return [];
-    }
-
-    if (!this._projectsLoaded) {
-      await this.loadProjects();
+    while (this.selectedWorkspace && !this._projectsLoaded) {
+      const workspace = this.selectedWorkspace;
+      const generation = this._workspaceGeneration;
+      const applied = await this.loadProjects(path.resolve(workspace.path), generation);
+      if (generation !== this._workspaceGeneration) {
+        // Workspace switched while scanning; retry against the live selection.
+        continue;
+      }
+      if (!applied) {
+        return [...this.projects];
+      }
       this._projectsLoaded = true;
       await this.updateProjectsContext();
     }
 
-    return [...this.projects];
+    return this.selectedWorkspace ? [...this.projects] : [];
   }
 
   private async updateProjectsContext(): Promise<void> {
@@ -592,25 +613,52 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
    * Never blocks the initial getChildren call.
    */
   private _scheduleProjectLoad(): void {
-    if (this._projectsLoadInProgress) {
+    if (this._projectsLoadInProgress || this._projectsLoaded) {
       return;
     }
 
+    const workspace = this.selectedWorkspace;
+    if (!workspace) {
+      return;
+    }
+    const generation = this._workspaceGeneration;
+    const loadToken = ++this._projectLoadToken;
+    const workspacePath = path.resolve(workspace.path);
     this._projectsLoadInProgress = true;
 
-    this.loadProjects()
-      .then(async () => {
-        this._projectsLoaded = true;
-        this._projectsLoadInProgress = false;
-        await this.updateProjectsContext();
-        const signature = this._projectPathsSignature(this.projects);
-        if (signature !== this._projectListSignature) {
-          this._projectListSignature = signature;
-          this._scheduleTreeRefresh();
+    this.loadProjects(workspacePath, generation)
+      .then(async (applied) => {
+        if (loadToken !== this._projectLoadToken) {
+          return;
         }
+        this._projectsLoadInProgress = false;
+
+        if (generation !== this._workspaceGeneration) {
+          // Selection moved again while we were the active loader. Recover.
+          if (this.selectedWorkspace && !this._projectsLoaded) {
+            this._scheduleProjectLoad();
+          }
+          return;
+        }
+
+        if (!applied) {
+          this._scheduleTreeRefresh();
+          return;
+        }
+
+        this._projectsLoaded = true;
+        await this.updateProjectsContext();
+        // Always repaint — the first getChildren may have returned an empty cache
+        // before this scan finished.
+        this._scheduleTreeRefresh();
       })
       .catch(() => {
-        this._projectsLoadInProgress = false;
+        if (loadToken === this._projectLoadToken) {
+          this._projectsLoadInProgress = false;
+          if (generation === this._workspaceGeneration && !this._projectsLoaded) {
+            this._scheduleTreeRefresh();
+          }
+        }
       });
   }
 
@@ -655,15 +703,7 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
     return items;
   }
 
-  private async loadProjects(): Promise<void> {
-    this.projects = [];
-
-    if (!this.selectedWorkspace) {
-      return;
-    }
-
-    const wsPath = this.selectedWorkspace.path;
-
+  private async loadProjects(wsPath: string, generation: number): Promise<boolean> {
     try {
       const importedRegistryEntries = await readImportedProjectsRegistry(wsPath);
       const importedByPath = new Map<string, ImportedProjectRegistryEntry>();
@@ -859,11 +899,27 @@ export class ProjectExplorerProvider implements vscode.TreeDataProvider<ProjectT
         })
       );
 
+      if (
+        generation !== this._workspaceGeneration ||
+        !this.selectedWorkspace ||
+        path.resolve(this.selectedWorkspace.path) !== path.resolve(wsPath)
+      ) {
+        return false;
+      }
       this.projects = detected.filter((p): p is WorkspaiProject => p !== null);
       this._projectLoadError = null;
+      return true;
     } catch (error) {
       console.error('Error loading projects:', error);
-      this._projectLoadError = error instanceof Error ? error.message : String(error);
+      if (
+        generation === this._workspaceGeneration &&
+        this.selectedWorkspace &&
+        path.resolve(this.selectedWorkspace.path) === path.resolve(wsPath)
+      ) {
+        this.projects = [];
+        this._projectLoadError = error instanceof Error ? error.message : String(error);
+      }
+      return false;
     }
   }
 }

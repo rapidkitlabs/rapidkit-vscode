@@ -73,7 +73,7 @@ import { WorkspaceMemoryService } from './core/workspaceMemoryService';
 import { registerWorkspaiChatParticipant } from './commands/chatParticipant';
 import { registerModelCacheConfigListener } from './core/aiModelSelection';
 import { WorkspaceManager } from './core/workspaceManager';
-import { PROJECT_REFRESH_WATCH_PATTERNS } from './core/projectRefreshContract';
+import { PROJECT_REFRESH_WATCH_GLOB } from './core/projectRefreshContract';
 import {
   buildWorkspaceShareBundleDashboardSummary,
   parseWorkspaceShareBundle,
@@ -89,6 +89,7 @@ let projectExplorer: ProjectExplorerProvider;
 let moduleExplorer: ModuleExplorerProvider;
 let doctorEvidenceExplorer: DoctorEvidenceProvider;
 let workspaceContractGraphExplorer: WorkspaceContractGraphProvider;
+let projectRefreshWatcherController: ProjectRefreshWatcherController | undefined;
 // templateExplorer removed
 
 const PROJECT_WATCHER_REFRESH_DEBOUNCE_MS = 250;
@@ -490,10 +491,15 @@ async function runOptionalActivationLane(
   laneName: string,
   lane: () => Promise<void> | void
 ): Promise<void> {
+  const startedAt = Date.now();
   try {
     await lane();
+    logger.info(`[Activation Lane: ${laneName}] completed in ${Date.now() - startedAt}ms`);
   } catch (error) {
-    logger.warn(`[Activation Lane: ${laneName}] failed (non-critical)`, error);
+    logger.warn(
+      `[Activation Lane: ${laneName}] failed after ${Date.now() - startedAt}ms (non-critical)`,
+      error
+    );
   }
 }
 
@@ -553,15 +559,17 @@ async function promptToRegisterDetectedWorkspaceRoots(
   logger.info(`Registered detected Workspai workspace: ${candidate.path}`);
 }
 
+type ProjectRefreshWatcherController = vscode.Disposable & {
+  watchWorkspace: (workspacePath?: string) => void;
+};
+
 function registerProjectRefreshWatchers(
   context: vscode.ExtensionContext,
   config: vscode.WorkspaceConfiguration,
   onRefresh: () => void
-): void {
-  const fileWatchers = PROJECT_REFRESH_WATCH_PATTERNS.map((pattern) =>
-    vscode.workspace.createFileSystemWatcher(pattern, false, false, false)
-  );
-
+): ProjectRefreshWatcherController {
+  let fileWatcher: vscode.FileSystemWatcher | undefined;
+  let watchedWorkspacePath: string | undefined;
   let projectRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   const scheduleProjectRefresh = () => {
     if (!config.get('autoRefresh', true)) {
@@ -576,22 +584,40 @@ function registerProjectRefreshWatchers(
     }, PROJECT_WATCHER_REFRESH_DEBOUNCE_MS);
   };
 
-  for (const watcher of fileWatchers) {
-    watcher.onDidCreate(scheduleProjectRefresh);
-    watcher.onDidChange(scheduleProjectRefresh);
-    watcher.onDidDelete(scheduleProjectRefresh);
-  }
-
-  context.subscriptions.push({
+  const controller: ProjectRefreshWatcherController = {
+    watchWorkspace(workspacePath?: string) {
+      const normalized = workspacePath?.trim();
+      if (normalized === watchedWorkspacePath) {
+        return;
+      }
+      fileWatcher?.dispose();
+      fileWatcher = undefined;
+      watchedWorkspacePath = normalized;
+      if (!normalized) {
+        return;
+      }
+      fileWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(vscode.Uri.file(normalized), PROJECT_REFRESH_WATCH_GLOB),
+        false,
+        false,
+        false
+      );
+      fileWatcher.onDidCreate(scheduleProjectRefresh);
+      fileWatcher.onDidChange(scheduleProjectRefresh);
+      fileWatcher.onDidDelete(scheduleProjectRefresh);
+    },
     dispose: () => {
+      fileWatcher?.dispose();
+      fileWatcher = undefined;
+      watchedWorkspacePath = undefined;
       if (projectRefreshTimer) {
         clearTimeout(projectRefreshTimer);
         projectRefreshTimer = null;
       }
     },
-  });
-
-  context.subscriptions.push(...fileWatchers);
+  };
+  context.subscriptions.push(controller);
+  return controller;
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -1001,17 +1027,11 @@ export async function activate(context: vscode.ExtensionContext) {
         .catch((err) => logger.warn('Workspace detection failed (non-critical):', err));
     });
 
-    await runOptionalActivationLane(logger, 'modules-catalog-init', async () => {
-      ModulesCatalogService.initialize(context);
-    });
-
-    await runOptionalActivationLane(logger, 'examples-service-init', async () => {
-      ExamplesService.initialize(context);
-    });
-
-    await runOptionalActivationLane(logger, 'kits-service-init', async () => {
-      KitsService.initialize(context);
-    });
+    // Service construction is cheap (paths only). Do not await discovery/network
+    // work here — catalogs and examples hydrate lazily on first consumer call.
+    ModulesCatalogService.initialize(context);
+    ExamplesService.initialize(context);
+    KitsService.initialize(context);
 
     // Ensure default workspace is registered
     logger.info('Activation: checking default workspace');
@@ -1051,6 +1071,16 @@ export async function activate(context: vscode.ExtensionContext) {
     workspaceContractGraphExplorer = new WorkspaceContractGraphProvider(
       () => workspaceExplorer?.getSelectedWorkspace()?.path ?? null
     );
+    projectRefreshWatcherController = registerProjectRefreshWatchers(
+      context,
+      vscode.workspace.getConfiguration('workspai'),
+      () => {
+        projectExplorer.refresh();
+        void moduleExplorer.reloadModuleStates();
+        doctorEvidenceExplorer.refresh();
+        workspaceContractGraphExplorer.refresh();
+      }
+    );
 
     context.subscriptions.push(
       vscode.commands.registerCommand('workspai.getSelectedWorkspace', () => {
@@ -1065,14 +1095,20 @@ export async function activate(context: vscode.ExtensionContext) {
         const selectedWorkspace = asWorkspaiWorkspace(workspace);
         refreshStatusBarAmbientTruth(selectedWorkspace);
         projectExplorer?.setWorkspace(selectedWorkspace);
-        doctorEvidenceExplorer.refresh();
-        workspaceContractGraphExplorer.refresh();
+        projectRefreshWatcherController?.watchWorkspace(selectedWorkspace?.path);
+        doctorEvidenceExplorer.setWorkspacePath(selectedWorkspace?.path ?? null);
+        workspaceContractGraphExplorer.setWorkspacePath(selectedWorkspace?.path ?? null);
+        actionsWebviewProvider?.refreshScope();
         secondaryActionsWebviewProvider?.refreshScope();
-        await WelcomePanel.refreshDashboardForWorkspaceSelection();
-        await syncWalkthroughEvidenceContext(selectedWorkspace?.path ?? null, {
-          context,
-          extensionVersion: context.extension.packageJSON.version,
-        });
+        // Sidebar selection must stay responsive. Dashboard/evidence hydration is
+        // generation-guarded and must not block the workspace switch transaction.
+        void Promise.all([
+          WelcomePanel.refreshDashboardForWorkspaceSelection(),
+          syncWalkthroughEvidenceContext(selectedWorkspace?.path ?? null, {
+            context,
+            extensionVersion: context.extension.packageJSON.version,
+          }),
+        ]);
       })
     );
 
@@ -1092,8 +1128,26 @@ export async function activate(context: vscode.ExtensionContext) {
         ActionsWebviewProvider.secondaryViewType,
         secondaryActionsWebviewProvider
       ),
-      registerStudioRepairDiffContentProvider(),
-      vscode.window.registerTreeDataProvider('rapidkitWorkspaces', workspaceExplorer)
+      registerStudioRepairDiffContentProvider()
+    );
+    const workspacesTreeView = vscode.window.createTreeView('rapidkitWorkspaces', {
+      treeDataProvider: workspaceExplorer,
+    });
+    context.subscriptions.push(
+      workspacesTreeView,
+      workspacesTreeView.onDidChangeSelection((event) => {
+        const item = event.selection[0];
+        if (item?.contextValue !== 'workspace' || !item.workspace?.path) {
+          return;
+        }
+        logger.info('Workspace tree selection changed:', item.workspace.path);
+        void workspaceExplorer.selectWorkspace(item.workspace).catch((error) => {
+          logger.error('Failed to activate selected workspace', error);
+          void vscode.window.showErrorMessage(
+            `Failed to activate workspace: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+      })
     );
     const projectsDropController: vscode.TreeDragAndDropController<ProjectTreeItem> = {
       dragMimeTypes: [],
@@ -1159,12 +1213,7 @@ export async function activate(context: vscode.ExtensionContext) {
       logger.error('Failed to register Contract Graph tree provider', error);
     }
     context.subscriptions.push(
-      // Refresh evidence panel whenever workspace tree changes (fires right after selectedWorkspace is updated)
-      workspaceExplorer.onDidChangeTreeData(() => {
-        doctorEvidenceExplorer.refresh();
-        workspaceContractGraphExplorer.refresh();
-      }),
-      projectExplorer.onDidChangeTreeData(() => {
+      projectExplorer.onDidChangeSelectedProject(() => {
         doctorEvidenceExplorer.refresh();
       })
     );
@@ -1291,11 +1340,6 @@ export async function activate(context: vscode.ExtensionContext) {
         workspaceExplorer?.getSelectedWorkspace()?.path ??
         vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       await presentCliVersionGate({ cwd });
-
-      await syncWalkthroughEvidenceContext(cwd ?? null, {
-        context,
-        extensionVersion: context.extension.packageJSON.version,
-      });
     });
 
     void runOptionalActivationLane(logger, 'detected-workspace-registration', async () => {
@@ -1366,13 +1410,11 @@ export async function activate(context: vscode.ExtensionContext) {
     (async () => {
       try {
         logger.info('Activation: initializing workspace selection');
-        await workspaceExplorer.refresh();
+        await workspaceExplorer.whenReady();
 
         // Sync evidence panel with whatever workspace was auto-selected on load
         const initialWs = workspaceExplorer.getSelectedWorkspace();
         refreshStatusBarAmbientTruth(initialWs);
-        doctorEvidenceExplorer.setWorkspacePath(initialWs?.path ?? null);
-        workspaceContractGraphExplorer.setWorkspacePath(initialWs?.path ?? null);
 
         // Show welcome page on first activation
         logger.info('Activation: checking welcome page settings');
@@ -1392,13 +1434,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // Non-blocking: onboarding toast should not delay activation completion.
         void showAIFeatureOnboarding(context);
-
-        registerProjectRefreshWatchers(context, config, () => {
-          projectExplorer.refresh();
-          void moduleExplorer.reloadModuleStates();
-          doctorEvidenceExplorer.refresh();
-          workspaceContractGraphExplorer.refresh();
-        });
       } catch (error) {
         logger.error('Error during async initialization:', error);
       }

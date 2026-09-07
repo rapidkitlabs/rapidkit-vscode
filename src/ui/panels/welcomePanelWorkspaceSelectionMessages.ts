@@ -21,7 +21,6 @@ export type WorkspaceSelectionMessageHost = {
   sendRecentWorkspaces: () => void | Promise<void>;
   cloneExample: (example: ExampleWorkspaceDescriptor) => Promise<void>;
   updateExample: (example: ExampleWorkspaceDescriptor) => Promise<void>;
-  refreshDashboardForWorkspaceSelection: () => Promise<void>;
 };
 
 const WORKSPACE_SELECTION_COMMANDS = new Set([
@@ -112,7 +111,6 @@ export async function tryDispatchWorkspaceSelectionWebviewMessage(
     case 'selectWorkspace':
       if (data) {
         await vscode.commands.executeCommand('workspai.selectWorkspace', data);
-        await host.refreshDashboardForWorkspaceSelection();
       }
       return true;
     case 'removeWorkspace':

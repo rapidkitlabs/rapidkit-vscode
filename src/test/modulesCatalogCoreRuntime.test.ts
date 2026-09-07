@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
-import { coreRuntimeCacheKey, type CoreRuntimeResolution } from '../utils/coreRuntimeResolver';
+import {
+  coreRuntimeCacheKey,
+  resolveCatalogWorkspaceRoot,
+  type CoreRuntimeResolution,
+} from '../utils/coreRuntimeResolver';
 import { isModulesCatalogCacheValid } from '../core/modulesCatalogCache';
 
 describe('modules catalog core runtime cache', () => {
@@ -42,6 +49,7 @@ describe('modules catalog core runtime cache', () => {
           modules: [],
           rapidkit_core_version: '0.5.3',
           rapidkit_core_location: 'workspace',
+          rapidkit_core_cache_key: 'workspace:0.5.3',
         },
         {
           workspacePath: '/tmp/ws',
@@ -51,5 +59,37 @@ describe('modules catalog core runtime cache', () => {
         }
       )
     ).toBe(true);
+  });
+
+  it('rejects legacy cache entries without a complete runtime fingerprint', () => {
+    expect(
+      isModulesCatalogCacheValid(
+        {
+          schema_version: 1,
+          modules: [],
+        },
+        {
+          workspacePath: '/tmp/ws',
+          executable: '/tmp/ws/.venv/bin/rapidkit',
+          version: '0.5.3',
+          location: 'workspace',
+        }
+      )
+    ).toBe(false);
+  });
+
+  it('resolves nested projects through the current Workspai workspace marker', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'workspai-catalog-root-'));
+    const nestedProject = path.join(root, 'services', 'api');
+
+    try {
+      await mkdir(path.join(root, '.workspai'), { recursive: true });
+      await writeFile(path.join(root, '.workspai', 'workspace.json'), '{}');
+      await mkdir(nestedProject, { recursive: true });
+
+      await expect(resolveCatalogWorkspaceRoot(nestedProject)).resolves.toBe(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

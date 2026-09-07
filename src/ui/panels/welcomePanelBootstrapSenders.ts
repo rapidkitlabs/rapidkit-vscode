@@ -51,14 +51,22 @@ export async function sendWelcomePanelModulesCatalog(
 
 export async function refreshWelcomePanelModulesCatalog(
   catalogHost: ModulesCatalogHost,
-  options?: { forceRefresh?: boolean }
+  options?: {
+    forceRefresh?: boolean;
+    workspacePath?: string;
+    shouldApply?: () => boolean;
+  }
 ): Promise<void> {
   await refreshModulesCatalog(catalogHost, options);
 }
 
 export async function sendWelcomePanelWorkspaceStatus(
   bootstrapHost: BootstrapPayloadHost,
-  options?: { forceCapabilityRefresh?: boolean }
+  options?: {
+    forceCapabilityRefresh?: boolean;
+    workspaceOverride?: { name?: string; path: string } | null;
+    shouldApply?: () => boolean;
+  }
 ): Promise<void> {
   await sendWorkspaceStatus(bootstrapHost, options);
 }

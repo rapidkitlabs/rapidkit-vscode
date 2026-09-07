@@ -8,6 +8,25 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 const modulesFile = path.join(rootDir, 'src', 'data', 'modules.ts');
 
+async function resolveRapidkitCoreExecutable() {
+  const configured = process.env.RAPIDKIT_CORE_EXECUTABLE?.trim();
+  const localCoreRoot = path.resolve(rootDir, '..', '..', 'core');
+  const candidates = [
+    configured,
+    path.join(localCoreRoot, '.venv', 'bin', 'rapidkit'),
+    path.join(localCoreRoot, '.venv', 'Scripts', 'rapidkit.exe'),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (await fs.pathExists(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Standalone extension checkouts can use an installed rapidkit-core CLI.
+  return 'rapidkit';
+}
+
 function escapeString(value) {
   return String(value)
     .replace(/\\/g, '\\\\')
@@ -49,7 +68,8 @@ function titleForCategory(category, source) {
 function moduleToTs(entry, iconMap) {
   const slug = typeof entry.slug === 'string' ? entry.slug : '';
   const nameRaw = typeof entry.display_name === 'string' ? entry.display_name : entry.name;
-  const name = typeof nameRaw === 'string' && nameRaw.trim() ? nameRaw.trim() : fallbackIdFromSlug(slug);
+  const name =
+    typeof nameRaw === 'string' && nameRaw.trim() ? nameRaw.trim() : fallbackIdFromSlug(slug);
   const idRaw = typeof entry.name === 'string' ? entry.name : fallbackIdFromSlug(slug);
   const id = idRaw.replace(/\s+/g, '_').toLowerCase();
   const category = typeof entry.category === 'string' ? entry.category : 'unknown';
@@ -81,12 +101,23 @@ function moduleToTs(entry, iconMap) {
 }
 
 async function main() {
-  const result = await execa('rapidkit', ['modules', 'list', '--json-schema', '1'], {
-    reject: false,
-  });
+  const executable = await resolveRapidkitCoreExecutable();
+  let result;
+  try {
+    result = await execa(executable, ['modules', 'list', '--json-schema', '1'], {
+      reject: false,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `RapidKit Core CLI is unavailable (${detail}). Install rapidkit-core or set RAPIDKIT_CORE_EXECUTABLE to its executable.`
+    );
+  }
 
   if (result.exitCode !== 0) {
-    throw new Error(`rapidkit modules list failed: ${result.stderr || result.stdout}`);
+    throw new Error(
+      `RapidKit Core modules contract failed via ${executable}: ${result.stderr || result.stdout}`
+    );
   }
 
   const raw = result.stdout || '';
@@ -155,7 +186,9 @@ async function main() {
   const nextContent = `${header}${modulesBlock}\n\n${tail.trimStart()}`;
   await fs.writeFile(modulesFile, nextContent, 'utf-8');
 
-  console.log(`✅ Synced ${payload.modules.length} modules into ${path.relative(rootDir, modulesFile)}`);
+  console.log(
+    `✅ Synced ${payload.modules.length} modules into ${path.relative(rootDir, modulesFile)}`
+  );
 }
 
 main().catch((error) => {

@@ -26,6 +26,7 @@ export class WorkspaceManager {
   private static instance: WorkspaceManager;
   private workspaces: WorkspaiWorkspace[] = [];
   private storageFile: string;
+  private saveQueue: Promise<void> = Promise.resolve();
 
   private constructor() {
     // Store in user's home directory - cross-platform compatible
@@ -57,6 +58,7 @@ export class WorkspaceManager {
 
         // Normalize projects format for backward compatibility
         this.workspaces = this.workspaces.map((ws) => {
+          ws.path = path.resolve(ws.path);
           // If projects is array of strings, convert to new format
           if (ws.projects && ws.projects.length > 0 && typeof ws.projects[0] === 'string') {
             ws.projects = (ws.projects as unknown as string[]).map((name) => ({
@@ -69,6 +71,9 @@ export class WorkspaceManager {
 
         // Validate that paths still exist
         this.workspaces = this.workspaces.filter((ws) => fs.pathExistsSync(ws.path));
+        this.workspaces = Array.from(
+          new Map(this.workspaces.map((workspace) => [workspace.path, workspace])).values()
+        );
 
         // Save cleaned list
         await this.saveWorkspaces();
@@ -87,8 +92,24 @@ export class WorkspaceManager {
    * Save workspaces to storage
    */
   private async saveWorkspaces(): Promise<void> {
+    // Capture at enqueue time and serialize writes. Selection touches, refreshes,
+    // imports, and discovery can otherwise write the same registry concurrently,
+    // allowing an older snapshot to overwrite a newer one or exposing partial JSON.
+    const snapshot = structuredClone(this.workspaces);
+    const operation = this.saveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const tempFile = `${this.storageFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+        try {
+          await fs.writeJSON(tempFile, { workspaces: snapshot }, { spaces: 2 });
+          await fs.move(tempFile, this.storageFile, { overwrite: true });
+        } finally {
+          await fs.remove(tempFile).catch(() => undefined);
+        }
+      });
+    this.saveQueue = operation;
     try {
-      await fs.writeJSON(this.storageFile, { workspaces: this.workspaces }, { spaces: 2 });
+      await operation;
     } catch (_error) {
       console.error('Error saving workspaces:', _error);
     }
@@ -98,6 +119,7 @@ export class WorkspaceManager {
    * Add a new workspace
    */
   public async addWorkspace(workspacePath: string): Promise<WorkspaiWorkspace | null> {
+    workspacePath = path.resolve(workspacePath);
     // Ensure we have the latest workspaces loaded from storage
     // This prevents overwriting existing workspaces when adding a new one
     if (this.workspaces.length === 0) {
@@ -141,7 +163,8 @@ export class WorkspaceManager {
    * Remove a workspace from the list
    */
   public async removeWorkspace(workspacePath: string): Promise<void> {
-    this.workspaces = this.workspaces.filter((ws) => ws.path !== workspacePath);
+    const normalizedPath = path.resolve(workspacePath);
+    this.workspaces = this.workspaces.filter((ws) => path.resolve(ws.path) !== normalizedPath);
     await this.saveWorkspaces();
   }
 
@@ -379,7 +402,8 @@ export class WorkspaceManager {
    * Update workspace information (re-scan projects)
    */
   public async updateWorkspace(workspacePath: string): Promise<void> {
-    const workspace = this.workspaces.find((ws) => ws.path === workspacePath);
+    workspacePath = path.resolve(workspacePath);
+    const workspace = this.workspaces.find((ws) => path.resolve(ws.path) === workspacePath);
     if (workspace) {
       workspace.projects = await this.getWorkspaceProjects(workspacePath);
       workspace.mode = (await this.isDemoWorkspace(workspacePath)) ? 'demo' : 'full';
@@ -392,7 +416,8 @@ export class WorkspaceManager {
    * Update last accessed time for a workspace
    */
   public async touchWorkspace(workspacePath: string): Promise<void> {
-    const workspace = this.workspaces.find((ws) => ws.path === workspacePath);
+    workspacePath = path.resolve(workspacePath);
+    const workspace = this.workspaces.find((ws) => path.resolve(ws.path) === workspacePath);
     if (workspace) {
       (workspace as any).lastAccessed = Date.now();
       await this.saveWorkspaces();

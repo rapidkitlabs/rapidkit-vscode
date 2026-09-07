@@ -294,6 +294,7 @@ export class DoctorEvidenceProvider implements vscode.TreeDataProvider<DoctorEvi
   private evidence: DoctorEvidence | null = null;
   private verifyReportRaw: Record<string, unknown> | null = null;
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private reloadGeneration = 0;
 
   constructor(
     workspacePathResolver: () => string | null = () => null,
@@ -301,11 +302,11 @@ export class DoctorEvidenceProvider implements vscode.TreeDataProvider<DoctorEvi
   ) {
     this.workspacePathResolver = workspacePathResolver;
     this.projectPathResolver = projectPathResolver;
-    this.setupFileWatcher();
   }
 
   setWorkspacePath(workspacePath: string | null): void {
     this._overridePath = workspacePath;
+    this.setupFileWatcher(workspacePath);
     this.reload();
   }
 
@@ -330,15 +331,32 @@ export class DoctorEvidenceProvider implements vscode.TreeDataProvider<DoctorEvi
   }
 
   private async reload(): Promise<void> {
-    this.evidence = null;
-    this.evidence = await this.readEvidence();
-    this.verifyReportRaw = await this.readVerifyReportRaw();
+    const generation = ++this.reloadGeneration;
+    const [evidence, verifyReportRaw] = await Promise.all([
+      this.readEvidence(),
+      this.readVerifyReportRaw(),
+    ]);
+    if (generation !== this.reloadGeneration) {
+      return;
+    }
+    this.evidence = evidence;
+    this.verifyReportRaw = verifyReportRaw;
     this._onDidChangeTreeData.fire();
   }
 
-  private setupFileWatcher(): void {
+  private setupFileWatcher(workspacePath: string | null): void {
+    this.fileWatcher?.dispose();
+    this.verifyWatcher?.dispose();
+    this.fileWatcher = undefined;
+    this.verifyWatcher = undefined;
+    if (!workspacePath) {
+      return;
+    }
     this.fileWatcher = vscode.workspace.createFileSystemWatcher(
-      '**/{.workspai,.rapidkit}/reports/doctor-*.json',
+      new vscode.RelativePattern(
+        vscode.Uri.file(workspacePath),
+        '{.workspai,.rapidkit}/reports/doctor-*.json'
+      ),
       false,
       false,
       true
@@ -348,7 +366,10 @@ export class DoctorEvidenceProvider implements vscode.TreeDataProvider<DoctorEvi
 
     // Workspace verify drives the governance/policy section of the health tree.
     this.verifyWatcher = vscode.workspace.createFileSystemWatcher(
-      '**/{.workspai,.rapidkit}/reports/workspace-verify-last-run.json',
+      new vscode.RelativePattern(
+        vscode.Uri.file(workspacePath),
+        '{.workspai,.rapidkit}/reports/workspace-verify-last-run.json'
+      ),
       false,
       false,
       true
@@ -387,6 +408,7 @@ export class DoctorEvidenceProvider implements vscode.TreeDataProvider<DoctorEvi
   }
 
   dispose(): void {
+    this.reloadGeneration += 1;
     this.fileWatcher?.dispose();
     this.verifyWatcher?.dispose();
     if (this.reloadTimer) {

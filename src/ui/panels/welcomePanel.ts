@@ -217,6 +217,7 @@ export class WelcomePanel {
     workspaceName?: string;
   } | null = null;
   private static _projectSelectionSequence = new ProjectSelectionSequence();
+  private static _workspaceSelectionSequence = new ProjectSelectionSequence();
   private _modulesCatalog: ModuleData[] = MODULES;
   private _runningStudioActionId: string | null = null;
   private _runningDashboardAIActionOperation: AIActionOperation | null = null;
@@ -889,7 +890,8 @@ export class WelcomePanel {
         workspacePath: selectedWorkspace?.path,
         installedModules: [],
       });
-      void WelcomePanel.currentPanel._sendDashboardEvidence();
+      // Workspace selection owns the full dashboard refresh transaction. Sending
+      // evidence here would race with refreshDashboardForWorkspaceSelection.
     }
   }
 
@@ -1008,10 +1010,25 @@ export class WelcomePanel {
       return;
     }
 
-    await dashboardPanel._sendRecentWorkspaces();
-    await dashboardPanel._sendWorkspaceStatus();
-    await dashboardPanel._refreshModulesCatalog();
-    await dashboardPanel._sendDashboardEvidence();
+    const workspace = WelcomePanel._workspaceExplorer?.getSelectedWorkspace() ?? null;
+    const generation = WelcomePanel._workspaceSelectionSequence.begin();
+    const shouldApply = () =>
+      WelcomePanel._workspaceSelectionSequence.isCurrent(generation) &&
+      (WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path ?? null) ===
+        (workspace?.path ?? null);
+
+    await Promise.all([
+      dashboardPanel._sendRecentWorkspaces(),
+      dashboardPanel._sendWorkspaceStatus({
+        workspaceOverride: workspace,
+        shouldApply,
+      }),
+      dashboardPanel._refreshModulesCatalog({
+        workspacePath: workspace?.path,
+        shouldApply,
+      }),
+      dashboardPanel._sendDashboardEvidence({ workspacePath: workspace?.path }),
+    ]);
   }
 
   public static async refreshDashboardForWorkspacePath(workspacePath: string) {
@@ -1021,15 +1038,26 @@ export class WelcomePanel {
       return;
     }
 
-    await dashboardPanel._sendRecentWorkspaces();
-    await dashboardPanel._sendWorkspaceStatus({
-      workspaceOverride: {
-        path: workspacePath,
-        name: path.basename(workspacePath),
-      },
-    });
-    await dashboardPanel._refreshModulesCatalog();
-    await WelcomePanel.refreshDashboardEvidenceSnapshotForWorkspacePath(workspacePath);
+    const generation = WelcomePanel._workspaceSelectionSequence.begin();
+    const shouldApply = () =>
+      WelcomePanel._workspaceSelectionSequence.isCurrent(generation) &&
+      (WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path ?? null) === workspacePath;
+
+    await Promise.all([
+      dashboardPanel._sendRecentWorkspaces(),
+      dashboardPanel._sendWorkspaceStatus({
+        workspaceOverride: {
+          path: workspacePath,
+          name: path.basename(workspacePath),
+        },
+        shouldApply,
+      }),
+      dashboardPanel._refreshModulesCatalog({
+        workspacePath,
+        shouldApply,
+      }),
+      WelcomePanel.refreshDashboardEvidenceSnapshotForWorkspacePath(workspacePath),
+    ]);
   }
 
   /**
@@ -1641,8 +1669,6 @@ export class WelcomePanel {
         this._beginGovernanceChainForWorkspace(workspacePath, workspaceName, triggeredBy),
       runOptionalMessageLane: (laneName, lane) =>
         runWelcomePanelOptionalMessageLane(laneName, lane),
-      refreshDashboardForWorkspaceSelection: () =>
-        WelcomePanel.refreshDashboardForWorkspaceSelection(),
     };
   }
 
@@ -2144,13 +2170,18 @@ export class WelcomePanel {
     await sendWelcomePanelModulesCatalog(this._modulesCatalogHost());
   }
 
-  private async _refreshModulesCatalog(options?: { forceRefresh?: boolean }): Promise<void> {
+  private async _refreshModulesCatalog(options?: {
+    forceRefresh?: boolean;
+    workspacePath?: string;
+    shouldApply?: () => boolean;
+  }): Promise<void> {
     await refreshWelcomePanelModulesCatalog(this._modulesCatalogHost(), options);
   }
 
   private async _sendWorkspaceStatus(options?: {
     forceCapabilityRefresh?: boolean;
     workspaceOverride?: { name?: string; path: string } | null;
+    shouldApply?: () => boolean;
   }) {
     await sendWelcomePanelWorkspaceStatus(this._bootstrapPayloadHost(), options);
   }

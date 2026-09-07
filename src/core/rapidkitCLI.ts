@@ -346,10 +346,12 @@ export class WorkspaiCLI {
           stdio: 'pipe',
         });
       } catch (error) {
-        this.logger.warn(
-          'Preferred workspace rapidkit executable failed; falling back to discovery chain.',
-          error
-        );
+        // A caller that supplies an executable has already resolved the Core
+        // runtime it intends to use. Falling through to npx/global here would
+        // execute a different version while preserving the original runtime
+        // identity in downstream evidence and caches.
+        this.logger.error('Resolved RapidKit Core executable could not be started.', error);
+        throw error;
       }
     }
 

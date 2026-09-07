@@ -393,6 +393,7 @@ describe('smoke: dashboard catalog load truthfulness', () => {
     const {
       resolveCatalogTemplatesReady,
       resolveCatalogModulesReady,
+      catalogAllowsModuleMutation,
       catalogShowsFallbackBanner,
       shouldRequestCatalogRefresh,
     } = await import('../../webview-ui/src/lib/dashboardCatalogLoad');
@@ -409,6 +410,9 @@ describe('smoke: dashboard catalog load truthfulness', () => {
     expect(catalogShowsFallbackBanner('fallback')).toBe(true);
     expect(catalogShowsFallbackBanner('cache')).toBe(true);
     expect(catalogShowsFallbackBanner('live')).toBe(false);
+    expect(catalogAllowsModuleMutation('live')).toBe(true);
+    expect(catalogAllowsModuleMutation('cache')).toBe(true);
+    expect(catalogAllowsModuleMutation('fallback')).toBe(false);
 
     expect(shouldRequestCatalogRefresh(true, 'dashboard')).toBe(true);
     expect(shouldRequestCatalogRefresh(true, 'welcome')).toBe(false);

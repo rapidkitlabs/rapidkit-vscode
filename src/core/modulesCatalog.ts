@@ -78,7 +78,8 @@ function getWorkspaceHash(workspacePath: string | undefined): string | undefined
 
 /**
  * Invalidate the modules catalog cache so the next load fetches fresh data.
- * Called when switching workspaces to ensure correct per-workspace versions.
+ * Reserved for explicit refresh and runtime-change paths; cache files are
+ * already isolated by workspace and Core identity during normal switching.
  */
 export async function invalidateModulesCatalogCache(
   storagePath: string,
@@ -224,7 +225,23 @@ export async function loadModulesCatalog(opts: {
     rapidkitCoreVersion: runtime.version,
     rapidkitCoreLocation: runtime.location,
     workspacePath: catalogWorkspacePath,
+    ...(source === 'fallback'
+      ? {
+          loadError:
+            'The exact workspace Core catalog was unavailable. Bundled modules are reference-only until a live catalog is verified.',
+        }
+      : {}),
   });
+
+  const runCatalogCommand = async (args: string[]) => {
+    try {
+      return await opts.cli.run(args, catalogWorkspacePath, true, runtime.executable ?? undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`[ModulesCatalog] Resolved Core runtime failed: ${message}`);
+      return { stdout: '', stderr: message, exitCode: 1 };
+    }
+  };
 
   const cached = await readCache(opts.storagePath, catalogWorkspacePath, runtime);
   if (!opts.forceRefresh && cached?.fetched_at && now - cached.fetched_at < ttlMs) {
@@ -236,12 +253,7 @@ export async function loadModulesCatalog(opts: {
     };
   }
 
-  const live = await opts.cli.run(
-    ['modules', 'list', '--json-schema', '1'],
-    catalogWorkspacePath,
-    true,
-    runtime.executable ?? undefined
-  );
+  const live = await runCatalogCommand(['modules', 'list', '--json-schema', '1']);
   if (live.exitCode === 0) {
     const payload = safeParseJson(live.stdout) as ModulesCatalogPayload | null;
     if (payload && payload.schema_version === 1 && Array.isArray(payload.modules)) {
@@ -262,12 +274,7 @@ export async function loadModulesCatalog(opts: {
     }
   }
 
-  const legacy = await opts.cli.run(
-    ['modules', 'list', '--json'],
-    catalogWorkspacePath,
-    true,
-    runtime.executable ?? undefined
-  );
+  const legacy = await runCatalogCommand(['modules', 'list', '--json']);
   if (legacy.exitCode === 0) {
     const data = safeParseJson(legacy.stdout);
     if (Array.isArray(data)) {

@@ -1512,7 +1512,10 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     };
     const watchers = watchRoots.map((rootPath) => {
       const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(rootPath, '{.workspai,.rapidkit}/**/*')
+        new vscode.RelativePattern(
+          rootPath,
+          '{.workspai/reports/**,.rapidkit/reports/**,.workspai/*.json,.rapidkit/*.json}'
+        )
       );
       watcher.onDidCreate((uri) => schedulePulse(rootPath, uri));
       watcher.onDidChange((uri) => schedulePulse(rootPath, uri));

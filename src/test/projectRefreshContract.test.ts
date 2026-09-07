@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PROJECT_REFRESH_WATCH_PATTERNS } from '../core/projectRefreshContract';
+import {
+  PROJECT_REFRESH_WATCH_GLOB,
+  PROJECT_REFRESH_WATCH_PATTERNS,
+} from '../core/projectRefreshContract';
 
 describe('primary sidebar project refresh contract', () => {
   it('watches canonical ownership artifacts before compatibility markers', () => {
@@ -14,19 +17,12 @@ describe('primary sidebar project refresh contract', () => {
     expect(PROJECT_REFRESH_WATCH_PATTERNS).toContain('**/.rapidkit/project.json');
   });
 
-  it('refreshes when supported runtime manifests change', () => {
-    expect(PROJECT_REFRESH_WATCH_PATTERNS).toEqual(
-      expect.arrayContaining([
-        '**/pyproject.toml',
-        '**/package.json',
-        '**/go.mod',
-        '**/pom.xml',
-        '**/build.gradle.kts',
-        '**/Cargo.toml',
-        '**/composer.json',
-        '**/mix.exs',
-        '**/Gemfile',
-      ])
-    );
+  it('scopes live refresh to governed ownership artifacts only', () => {
+    expect(PROJECT_REFRESH_WATCH_GLOB).toContain('.workspai/project.json');
+    expect(PROJECT_REFRESH_WATCH_GLOB).toContain('.rapidkit/registry.json');
+    expect(PROJECT_REFRESH_WATCH_GLOB).not.toContain('package.json');
+    expect(PROJECT_REFRESH_WATCH_GLOB).not.toContain('go.mod');
+    expect(PROJECT_REFRESH_WATCH_GLOB).not.toContain('pyproject.toml');
+    expect(PROJECT_REFRESH_WATCH_PATTERNS).not.toContain('**/package.json');
   });
 });

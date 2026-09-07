@@ -2,9 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs-extra';
 import type { WorkspaiProject, WorkspaiWorkspace } from '../types';
 import { Logger } from '../utils/logger';
-import { ModulesCatalogService } from '../core/modulesCatalogService';
-import { CoreVersionService } from '../core/coreVersionService';
-import { resolveCatalogWorkspaceRoot } from '../utils/coreRuntimeResolver';
 import { WelcomePanel } from '../ui/panels/welcomePanel';
 import { setSelectedProjectPath } from '../core/selectedProject';
 import { openWorkspace, openWorkspaceFolder, copyWorkspacePath } from './workspaceContextMenu';
@@ -458,24 +455,9 @@ export function registerWorkspaceSelectionCommands(options: {
         }
       }
 
-      try {
-        const catalogService = ModulesCatalogService.getInstance();
-        const catalogRoot = (await resolveCatalogWorkspaceRoot(workspacePath)) || workspacePath;
-        await catalogService.invalidateCache(catalogRoot);
-        CoreVersionService.getInstance().clearCache(catalogRoot);
-      } catch (error) {
-        logger.warn('Workspace catalog cache invalidation failed', {
-          code: 'WORKSPACE_CATALOG_INVALIDATE_FAILED',
-          workspacePath,
-          error: error instanceof Error ? error.message : String(error),
-          isRecoverable: true,
-        });
-      }
-
-      if (WelcomePanel.currentPanel) {
-        await WelcomePanel.refreshWorkspaceStatus();
-        WelcomePanel.refreshRecentWorkspaces();
-      }
+      // The selection event owns dependent-surface refresh. Catalog caches are
+      // scoped by workspace and Core fingerprint, so a normal switch must not
+      // discard a valid cache or trigger a second full refresh.
     }),
 
     vscode.commands.registerCommand('workspai.addWorkspace', async () => {

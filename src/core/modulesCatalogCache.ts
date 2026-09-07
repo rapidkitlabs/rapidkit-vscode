@@ -13,21 +13,16 @@ export function isModulesCatalogCacheValid(
   runtime: CoreRuntimeResolution
 ): boolean {
   const runtimeKey = coreRuntimeCacheKey(runtime);
-  if (cached.rapidkit_core_cache_key && cached.rapidkit_core_cache_key !== runtimeKey) {
+  // Pre-versioned cache entries are intentionally rejected. A catalog without
+  // its producing Core identity can otherwise leak across workspace/runtime
+  // upgrades and advertise modules the selected project cannot install.
+  if (cached.rapidkit_core_cache_key !== runtimeKey) {
     return false;
   }
-  if (
-    runtime.version &&
-    cached.rapidkit_core_version &&
-    cached.rapidkit_core_version !== runtime.version
-  ) {
+  if (runtime.version && cached.rapidkit_core_version !== runtime.version) {
     return false;
   }
-  if (
-    runtime.location &&
-    cached.rapidkit_core_location &&
-    cached.rapidkit_core_location !== runtime.location
-  ) {
+  if (cached.rapidkit_core_location !== runtime.location) {
     return false;
   }
   return true;

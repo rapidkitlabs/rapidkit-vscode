@@ -27,7 +27,10 @@ import {
   GitCompare,
 } from 'lucide-react';
 import type { ModuleData, CategoryInfo, WorkspaceStatus, ModulesCatalogMeta } from '@/types';
-import { catalogShowsFallbackBanner } from '@/lib/dashboardCatalogLoad';
+import {
+  catalogAllowsModuleMutation,
+  catalogShowsFallbackBanner,
+} from '@/lib/dashboardCatalogLoad';
 import { getProjectFrameworkLabel, isUnsupportedModuleProjectType } from '@/lib/moduleSupport';
 import { WORKSPAI_AI_ASSISTANT_MODULE_TITLE } from '@/lib/workspaiAiNarrative';
 import { ProjectActions } from './ProjectActions';
@@ -136,7 +139,8 @@ export function ModuleBrowser({
       workspaceStatus.projectCapabilities
     );
   const unsupportedFrameworkLabel = getProjectFrameworkLabel(workspaceStatus.projectType);
-  const canInstall = hasProjectSelected && !unsupportedProject;
+  const catalogVerifiedForMutation = catalogAllowsModuleMutation(catalogMeta?.source);
+  const canInstall = hasProjectSelected && !unsupportedProject && catalogVerifiedForMutation;
   const showModuleControls =
     modules.length > 0 && (isCatalogSurface || (hasProjectSelected && !unsupportedProject));
   const showModuleList =
@@ -144,13 +148,15 @@ export function ModuleBrowser({
 
   const installBlockedReason = !hasProjectSelected
     ? 'Select a project in the Project tab to install modules'
-    : unsupportedProject
-      ? workspaceStatus.projectCapabilities?.available
-        ? workspaceStatus.projectCapabilities.frameworkDisplayName
-          ? `Module installs are not supported for ${workspaceStatus.projectCapabilities.frameworkDisplayName} projects`
-          : 'Module installs are not supported for this project'
-        : `Module installs are not supported for ${unsupportedFrameworkLabel} projects yet`
-      : undefined;
+    : !catalogVerifiedForMutation
+      ? 'The exact workspace Core catalog is unavailable. Refresh after Core is ready.'
+      : unsupportedProject
+        ? workspaceStatus.projectCapabilities?.available
+          ? workspaceStatus.projectCapabilities.frameworkDisplayName
+            ? `Module installs are not supported for ${workspaceStatus.projectCapabilities.frameworkDisplayName} projects`
+            : 'Module installs are not supported for this project'
+          : `Module installs are not supported for ${unsupportedFrameworkLabel} projects yet`
+        : undefined;
 
   // Get unique categories
   const categories = useMemo(() => {
@@ -191,6 +197,7 @@ export function ModuleBrowser({
     return modules.map((module) => {
       const installedInfo = module.slug ? getInstalledModule(module.slug) : undefined;
       const hasUpdate =
+        catalogVerifiedForMutation &&
         Boolean(installedInfo) &&
         Boolean(module.version) &&
         isNewerVersion(module.version || '0.0.0', installedInfo!.version);
@@ -201,7 +208,7 @@ export function ModuleBrowser({
         hasUpdate,
       };
     });
-  }, [modules, workspaceStatus.installedModules]);
+  }, [catalogVerifiedForMutation, modules, workspaceStatus.installedModules]);
 
   const moduleViewCounts = useMemo(
     () => ({
@@ -346,7 +353,14 @@ export function ModuleBrowser({
         >
           <Sparkles size={13} aria-hidden="true" />
           <span>
-            {catalogMeta?.rapidkitCoreVersion ? (
+            {catalogMeta?.source === 'fallback' ? (
+              <>
+                Bundled reference catalog
+                {catalogMeta.rapidkitCoreVersion
+                  ? ` · Core ${catalogMeta.rapidkitCoreVersion} could not be verified`
+                  : ''}
+              </>
+            ) : catalogMeta?.rapidkitCoreVersion ? (
               <>
                 Module catalog resolved from{' '}
                 <strong>RapidKit Core {catalogMeta.rapidkitCoreVersion}</strong>
@@ -616,7 +630,14 @@ export function ModuleBrowser({
                     <button
                       className={`ws-btn ws-btn--ghost ws-btn--icon module-action-btn ${copiedModuleId === module.id ? 'copied' : ''}`}
                       onClick={() => handleCopyCommand(module.id, module.slug)}
-                      title={copiedModuleId === module.id ? 'Copied!' : 'Copy install command'}
+                      title={
+                        !catalogVerifiedForMutation
+                          ? 'Install command unavailable until the workspace Core catalog is verified'
+                          : copiedModuleId === module.id
+                            ? 'Copied!'
+                            : 'Copy install command'
+                      }
+                      disabled={!catalogVerifiedForMutation}
                     >
                       {copiedModuleId === module.id ? (
                         <Check size={14} aria-hidden="true" />

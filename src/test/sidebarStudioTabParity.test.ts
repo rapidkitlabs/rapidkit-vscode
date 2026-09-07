@@ -333,7 +333,9 @@ describe('React Studio tab ↔ host protocol parity (roadmap 2.11f)', () => {
     expect(provider).toContain('session.steer');
     expect(provider).toContain('session.cancel');
     expect(provider).toContain('sidebarStudioEvidencePulse');
-    expect(provider).toContain("'{.workspai,.rapidkit}/**/*'");
+    expect(provider).toContain(
+      "'{.workspai/reports/**,.rapidkit/reports/**,.workspai/*.json,.rapidkit/*.json}'"
+    );
     expect(provider).toContain('evidenceGeneration: repairEvidence.evidenceFingerprint');
     expect(provider).toContain('_ensureStudioEvidenceWatcher(handoff, sessionId)');
     expect(provider).toContain('\\.workspai\\/repair\\/inbox');

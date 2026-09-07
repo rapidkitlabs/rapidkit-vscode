@@ -5,6 +5,7 @@ const {
   watcherRegistrations,
   mockExecuteCommand,
   mockLoadWorkspaces,
+  mockTouchWorkspace,
   mockClearCache,
   mockGetVersionInfo,
 } = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const {
   }>,
   mockExecuteCommand: vi.fn(),
   mockLoadWorkspaces: vi.fn(),
+  mockTouchWorkspace: vi.fn(),
   mockClearCache: vi.fn(),
   mockGetVersionInfo: vi.fn(),
 }));
@@ -44,6 +46,13 @@ vi.mock('vscode', () => {
     constructor(id: string) {
       this.id = id;
     }
+  }
+
+  class RelativePattern {
+    constructor(
+      public readonly base: { fsPath: string },
+      public readonly pattern: string
+    ) {}
   }
 
   const createWatcher = () => {
@@ -88,6 +97,8 @@ vi.mock('vscode', () => {
     workspace: {
       createFileSystemWatcher: mockCreateFileSystemWatcher,
     },
+    Uri: { file: (fsPath: string) => ({ fsPath }) },
+    RelativePattern,
     commands: {
       executeCommand: mockExecuteCommand,
     },
@@ -110,6 +121,7 @@ vi.mock('../core/workspaceManager', () => ({
   WorkspaceManager: {
     getInstance: () => ({
       loadWorkspaces: mockLoadWorkspaces,
+      touchWorkspace: mockTouchWorkspace,
       addWorkspace: vi.fn(),
       removeWorkspace: vi.fn(),
     }),
@@ -135,6 +147,7 @@ describe('watcher debounce behavior', () => {
     watcherRegistrations.length = 0;
 
     mockLoadWorkspaces.mockResolvedValue([]);
+    mockTouchWorkspace.mockResolvedValue(undefined);
     mockGetVersionInfo.mockResolvedValue({
       coreVersion: null,
       npmVersion: null,
@@ -144,6 +157,8 @@ describe('watcher debounce behavior', () => {
 
   it('debounces workspace explorer watcher refresh events', async () => {
     const provider = new WorkspaceExplorerProvider();
+    await provider.whenReady();
+    await provider.selectWorkspace({ name: 'workspace', path: '/tmp/workspace' } as never);
     const refreshSpy = vi.spyOn(provider, 'refresh').mockResolvedValue(undefined);
 
     const watcher = watcherRegistrations[0];
@@ -164,8 +179,65 @@ describe('watcher debounce behavior', () => {
     provider.dispose();
   });
 
+  it('publishes workspace selection before last-access persistence settles', async () => {
+    let settleTouch!: () => void;
+    mockTouchWorkspace.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settleTouch = resolve;
+        })
+    );
+    const workspace = { name: 'workspace', path: '/tmp/workspace' };
+    mockLoadWorkspaces.mockResolvedValue([workspace]);
+    const provider = new WorkspaceExplorerProvider();
+    await provider.whenReady();
+
+    await expect(provider.selectWorkspace(workspace as never)).resolves.toBeUndefined();
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workspai.workspaceSelected', workspace);
+    expect(mockTouchWorkspace).toHaveBeenCalledWith(workspace.path);
+
+    settleTouch();
+    await Promise.resolve();
+    provider.dispose();
+  });
+
+  it('drops a stale initial publication when the user switches workspaces', async () => {
+    const first = { name: 'first', path: '/tmp/first' };
+    const second = { name: 'second', path: '/tmp/second' };
+    mockLoadWorkspaces.mockResolvedValue([first, second]);
+
+    let releaseInitialContext!: () => void;
+    let contextCalls = 0;
+    mockExecuteCommand.mockImplementation((command: string) => {
+      if (command === 'setContext' && contextCalls++ === 0) {
+        return new Promise<void>((resolve) => {
+          releaseInitialContext = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const provider = new WorkspaceExplorerProvider();
+    await provider.whenReady();
+    const initialPublish = provider.publishSelectedWorkspaceContext();
+    await Promise.resolve();
+
+    await provider.selectWorkspace(second as never);
+    releaseInitialContext();
+    await initialPublish;
+
+    const published = mockExecuteCommand.mock.calls
+      .filter(([command]) => command === 'workspai.workspaceSelected')
+      .map(([, workspace]) => workspace);
+    expect(published).toEqual([second]);
+    expect(provider.getSelectedWorkspace()?.path).toBe(second.path);
+    provider.dispose();
+  });
+
   it('cancels pending workspace explorer refresh timer on dispose', async () => {
     const provider = new WorkspaceExplorerProvider();
+    await provider.whenReady();
+    await provider.selectWorkspace({ name: 'workspace', path: '/tmp/workspace' } as never);
     const refreshSpy = vi.spyOn(provider, 'refresh').mockResolvedValue(undefined);
 
     const watcher = watcherRegistrations[0];
@@ -181,6 +253,7 @@ describe('watcher debounce behavior', () => {
 
   it('debounces doctor evidence reload events', async () => {
     const provider = new DoctorEvidenceProvider(() => '/tmp/workspace');
+    provider.setWorkspacePath('/tmp/workspace');
     const reloadSpy = vi.spyOn(provider as any, 'reload').mockResolvedValue(undefined);
 
     const watcher = watcherRegistrations[0];
@@ -202,6 +275,7 @@ describe('watcher debounce behavior', () => {
 
   it('cancels pending doctor evidence timer on dispose', async () => {
     const provider = new DoctorEvidenceProvider(() => '/tmp/workspace');
+    provider.setWorkspacePath('/tmp/workspace');
     const reloadSpy = vi.spyOn(provider as any, 'reload').mockResolvedValue(undefined);
 
     const watcher = watcherRegistrations[0];

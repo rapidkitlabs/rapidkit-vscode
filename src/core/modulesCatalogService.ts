@@ -38,7 +38,9 @@ export class ModulesCatalogService {
 
   /**
    * Invalidate the modules catalog cache.
-   * Call this when switching workspaces to ensure fresh data.
+   * Use for an explicit refresh or after the underlying Core runtime changes.
+   * Normal workspace switches reuse the cache isolated by workspace/runtime
+   * fingerprint and must not trigger duplicate catalog discovery.
    * @param workspacePath - Optional workspace path to invalidate cache for specific workspace
    */
   async invalidateCache(workspacePath?: string): Promise<void> {

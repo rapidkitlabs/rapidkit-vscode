@@ -32,3 +32,8 @@ export function shouldRequestCatalogRefresh(
 export function catalogShowsFallbackBanner(source: string | undefined): boolean {
   return source === 'fallback' || source === 'cache';
 }
+
+/** Only a live or runtime-fingerprinted cache may authorize module mutation. */
+export function catalogAllowsModuleMutation(source: string | undefined): boolean {
+  return source === 'live' || source === 'cache';
+}

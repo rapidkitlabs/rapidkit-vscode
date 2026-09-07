@@ -56,14 +56,14 @@ describe('welcomePanelEvidenceWatcher', () => {
       (filePath, workspacePathHint) => scheduled.push({ filePath, workspacePathHint })
     );
 
-    expect(watcherRecords).toHaveLength(1);
+    expect(watcherRecords).toHaveLength(0);
     controller.watchWorkspace('/tmp/managed-workspace', ['/external/linked-project']);
-    expect(watcherRecords).toHaveLength(3);
+    expect(watcherRecords).toHaveLength(2);
 
-    watcherRecords[1].change?.({
+    watcherRecords[0].change?.({
       fsPath: '/tmp/managed-workspace/.workspai/reports/workspace-explain-last-run.json',
     });
-    watcherRecords[2].delete?.({
+    watcherRecords[1].delete?.({
       fsPath: '/external/linked-project/.workspai/adopt-readiness.json',
     });
 
@@ -79,14 +79,13 @@ describe('welcomePanelEvidenceWatcher', () => {
     ]);
 
     controller.watchWorkspace('/tmp/managed-workspace', ['/external/linked-project']);
-    expect(watcherRecords).toHaveLength(3);
+    expect(watcherRecords).toHaveLength(2);
     controller.watchWorkspace('/tmp/another-workspace');
-    expect(watcherRecords).toHaveLength(4);
+    expect(watcherRecords).toHaveLength(3);
+    expect(watcherRecords[0].dispose).toHaveBeenCalledTimes(1);
     expect(watcherRecords[1].dispose).toHaveBeenCalledTimes(1);
-    expect(watcherRecords[2].dispose).toHaveBeenCalledTimes(1);
 
     controller.dispose();
-    expect(watcherRecords[0].dispose).toHaveBeenCalledTimes(1);
-    expect(watcherRecords[3].dispose).toHaveBeenCalledTimes(1);
+    expect(watcherRecords[2].dispose).toHaveBeenCalledTimes(1);
   });
 });

@@ -12,6 +12,11 @@ import { ModulesCatalogService } from '../../core/modulesCatalogService';
 import { resolveCatalogWorkspaceRoot } from '../../utils/coreRuntimeResolver';
 import { projectModuleRegistryCandidates } from '../../utils/workspaceCanonicalPaths';
 import { WorkspaiModule } from '../../types';
+import {
+  fetchProjectCommandCapabilities,
+  isModuleMutationSupported,
+} from '../../core/projectCommandCapabilities';
+import type { ModulesCatalogSource } from '../../core/modulesCatalog';
 
 interface InstalledModule {
   slug: string;
@@ -32,6 +37,10 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
   private _catalogLoaded = false;
   private _catalogLoadInProgress = false;
   private _catalogLoadError: string | null = null;
+  private _catalogSource: ModulesCatalogSource = 'fallback';
+  private _moduleMutationSupported = false;
+  private _moduleSupportReason = 'Select a module-capable project';
+  private _projectGeneration = 0;
 
   // Static instance for external access
   public static instance: ModuleExplorerProvider | null = null;
@@ -47,19 +56,30 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
   async reloadModuleStates(): Promise<void> {
     // Reload installed modules for the current project
     if (this._currentProjectPath) {
-      await this._loadInstalledModules();
-      this.refresh();
+      const generation = this._projectGeneration;
+      await this._loadInstalledModules(this._currentProjectPath, generation);
+      if (generation === this._projectGeneration) {
+        this.refresh();
+      }
     }
   }
 
   setProjectPath(projectPath: string | null, projectType?: string): void {
+    this._projectGeneration += 1;
     this._currentProjectPath = projectPath;
     this._currentProjectType = projectType ?? null;
     // Reset catalog loaded flag so catalog is re-fetched for the new project/workspace
     this._catalogLoaded = false;
     this._catalogLoadInProgress = false;
     this._catalogLoadError = null;
-    this._loadInstalledModules();
+    this._catalogSource = 'fallback';
+    this._moduleMutationSupported = false;
+    this._moduleSupportReason = 'Checking project module capabilities';
+    if (!projectPath) {
+      this._installedModules.clear();
+    } else {
+      void this._loadInstalledModules(projectPath, this._projectGeneration);
+    }
     this.refresh();
   }
 
@@ -74,34 +94,6 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
         return [];
       }
 
-      // Modules are currently supported only for FastAPI and NestJS projects
-      if (
-        this._currentProjectType &&
-        this._currentProjectType !== 'fastapi' &&
-        this._currentProjectType !== 'nestjs'
-      ) {
-        const isSpring = this._currentProjectType === 'springboot';
-        const isGo = this._currentProjectType === 'go';
-        const item = new vscode.TreeItem(
-          isSpring
-            ? 'Modules not available for Spring Boot projects'
-            : isGo
-              ? 'Modules not available for Go projects'
-              : 'Modules not available for Generic projects'
-        );
-        item.contextValue = 'placeholder';
-        item.description = isSpring
-          ? 'Spring Boot kit manages dependencies via Maven/Gradle'
-          : isGo
-            ? 'Go kits manage dependencies via go mod'
-            : 'Use Convert to Workspai Project to enable guided module installs';
-        item.tooltip =
-          'Workspai modules are currently available for FastAPI and NestJS projects only';
-        item.collapsibleState = vscode.TreeItemCollapsibleState.None;
-        item.iconPath = new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.gray'));
-        return [new ModuleTreeItem(item, 'placeholder')];
-      }
-
       // Phase 1: If catalog not loaded yet, show loading state immediately and kick off background load.
       if (!this._catalogLoaded) {
         this._scheduleBackgroundCatalogLoad();
@@ -112,12 +104,24 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
         return [new ModuleTreeItem(item, 'placeholder')];
       }
 
+      if (!this._moduleMutationSupported) {
+        const item = new vscode.TreeItem('Modules not available for this project');
+        item.contextValue = 'placeholder';
+        item.description = this._currentProjectType || 'capability unavailable';
+        item.tooltip = this._moduleSupportReason;
+        item.collapsibleState = vscode.TreeItemCollapsibleState.None;
+        item.iconPath = new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.gray'));
+        return [new ModuleTreeItem(item, 'placeholder')];
+      }
+
       // Phase 2: catalog ready — show categories
-      if (this._catalogLoadError) {
+      if (this._catalogLoadError || this._catalogSource === 'fallback') {
         const item = new vscode.TreeItem('Module catalog fallback active');
         item.contextValue = 'placeholder';
-        item.description = 'Using bundled modules';
-        item.tooltip = `Workspai could not load the live module catalog: ${this._catalogLoadError}`;
+        item.description = 'Reference only · install disabled';
+        item.tooltip =
+          this._catalogLoadError ||
+          'The exact workspace Core catalog could not be verified. Bundled modules are browse-only.';
         item.collapsibleState = vscode.TreeItemCollapsibleState.None;
         item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
         return [new ModuleTreeItem(item, 'placeholder'), ...this.getModuleCategories()];
@@ -140,13 +144,20 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
       return;
     }
     this._catalogLoadInProgress = true;
+    const generation = this._projectGeneration;
 
-    this._refreshModulesCatalog()
+    this._refreshModulesCatalog(false, generation)
       .then(() => {
+        if (generation !== this._projectGeneration) {
+          return;
+        }
         this._catalogLoadInProgress = false;
         this._onDidChangeTreeData.fire();
       })
       .catch(() => {
+        if (generation !== this._projectGeneration) {
+          return;
+        }
         this._catalogLoadInProgress = false;
         this._onDidChangeTreeData.fire(); // show fallback catalog
       });
@@ -192,7 +203,10 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
       // Check if installed by slug
       const installed = this._installedModules.get(moduleData.slug);
       const statusText = this.getModuleStatus(moduleData, installed);
-      const hasUpdate = installed && this.isNewerVersion(moduleData.version, installed.version);
+      const hasUpdate =
+        this._catalogSource !== 'fallback' &&
+        installed &&
+        this.isNewerVersion(moduleData.version, installed.version);
 
       const item = new vscode.TreeItem(moduleData.name);
       item.description = statusText;
@@ -239,7 +253,12 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
       (moduleObj as any).slug = moduleData.slug;
 
       // Only add command if project is selected AND (not installed or has update available)
-      if (this._currentProjectPath && (!installed || hasUpdate)) {
+      if (
+        this._currentProjectPath &&
+        this._moduleMutationSupported &&
+        this._catalogSource !== 'fallback' &&
+        (!installed || hasUpdate)
+      ) {
         // Normalize to webview ModuleData shape (adds display_name required by InstallModuleModal)
         const modalData = { ...moduleData, display_name: moduleData.name };
         item.command = {
@@ -275,6 +294,9 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
     moduleData: { id: string; name: string; version: string },
     installed?: InstalledModule
   ): string {
+    if (this._catalogSource === 'fallback') {
+      return installed ? `✓ Installed (v${installed.version})` : 'Reference only';
+    }
     if (!installed) {
       return '↓ Install';
     }
@@ -307,57 +329,80 @@ export class ModuleExplorerProvider implements vscode.TreeDataProvider<ModuleTre
     return false;
   }
 
-  private async _refreshModulesCatalog(forceRefresh = false): Promise<void> {
+  private async _refreshModulesCatalog(
+    forceRefresh = false,
+    generation = this._projectGeneration
+  ): Promise<void> {
     try {
-      const service = ModulesCatalogService.getInstance();
-      let workspacePath: string | undefined;
-      if (this._currentProjectPath) {
-        workspacePath = path.dirname(this._currentProjectPath);
+      const projectPath = this._currentProjectPath;
+      if (!projectPath) {
+        return;
       }
+      const service = ModulesCatalogService.getInstance();
+      let workspacePath: string | undefined = path.dirname(projectPath);
       workspacePath = (await resolveCatalogWorkspaceRoot(workspacePath)) || workspacePath;
 
-      const result = await service.getModulesCatalog(workspacePath, { forceRefresh });
+      const [result, capabilities] = await Promise.all([
+        service.getModulesCatalog(workspacePath, { forceRefresh }),
+        fetchProjectCommandCapabilities(projectPath, { forceRefresh }),
+      ]);
+      if (projectPath !== this._currentProjectPath || generation !== this._projectGeneration) {
+        return;
+      }
+      this._moduleMutationSupported = Boolean(
+        capabilities && isModuleMutationSupported(capabilities)
+      );
+      this._moduleSupportReason = capabilities
+        ? capabilities.moduleSupport
+          ? 'The project does not expose both add and modules commands as supported operations.'
+          : `RapidKit modules are not supported for ${capabilities.frameworkDisplayName} projects.`
+        : 'Workspai could not verify this project’s module capabilities.';
+      this._catalogSource = result.source;
       if (result.modules.length) {
         this._modulesCatalog = result.modules;
       } else {
         this._modulesCatalog = MODULES;
       }
       this._catalogLoaded = true;
-      this._catalogLoadError = null;
+      this._catalogLoadError = result.meta.loadError ?? null;
     } catch (error) {
       console.error('[ModuleExplorer] Failed to load modules catalog:', error);
+      if (generation !== this._projectGeneration) {
+        return;
+      }
       this._modulesCatalog = MODULES;
       this._catalogLoaded = true;
       this._catalogLoadError = error instanceof Error ? error.message : String(error);
     }
   }
 
-  private async _loadInstalledModules(): Promise<void> {
-    if (!this._currentProjectPath) {
-      this._installedModules.clear();
-      return;
-    }
-
+  private async _loadInstalledModules(
+    projectPath: string,
+    generation = this._projectGeneration
+  ): Promise<void> {
     try {
-      const registryCandidates = projectModuleRegistryCandidates(this._currentProjectPath);
+      const registryCandidates = projectModuleRegistryCandidates(projectPath);
       const registryPath =
         registryCandidates.find((candidate) => fs.pathExistsSync(candidate)) ??
         registryCandidates[0];
 
+      const installedModules = new Map<string, InstalledModule>();
       if (await fs.pathExists(registryPath)) {
         const registry = await fs.readJson(registryPath);
-        this._installedModules.clear();
-
         if (registry.installed_modules && Array.isArray(registry.installed_modules)) {
           registry.installed_modules.forEach((mod: InstalledModule) => {
-            // Use slug as key directly (no mapping needed)
-            this._installedModules.set(mod.slug, mod);
+            installedModules.set(mod.slug, mod);
           });
         }
       }
+      if (generation === this._projectGeneration && projectPath === this._currentProjectPath) {
+        this._installedModules = installedModules;
+      }
     } catch (error) {
       console.error('[ModuleExplorer] Failed to load installed modules:', error);
-      this._installedModules.clear();
+      if (generation === this._projectGeneration && projectPath === this._currentProjectPath) {
+        this._installedModules.clear();
+      }
     }
   }
 }

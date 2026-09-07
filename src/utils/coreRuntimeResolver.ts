@@ -32,9 +32,7 @@ async function readExecutableVersion(executable: string, cwd: string): Promise<s
   }
 }
 
-/**
- * Walk upward to find the RapidKit workspace root (.venv and/or .rapidkit/workspace.json).
- */
+/** Walk upward to find the current Workspai or legacy RapidKit workspace root. */
 export async function resolveCatalogWorkspaceRoot(startPath?: string): Promise<string | undefined> {
   if (!startPath) {
     return undefined;
@@ -45,7 +43,9 @@ export async function resolveCatalogWorkspaceRoot(startPath?: string): Promise<s
     const hasVenv = getWorkspaceVenvRapidkitCandidates(current).some((candidate) =>
       fs.pathExistsSync(candidate)
     );
-    const hasWorkspaceMarker = fs.pathExistsSync(path.join(current, '.rapidkit', 'workspace.json'));
+    const hasWorkspaceMarker =
+      fs.pathExistsSync(path.join(current, '.workspai', 'workspace.json')) ||
+      fs.pathExistsSync(path.join(current, '.rapidkit', 'workspace.json'));
 
     if (hasVenv || hasWorkspaceMarker) {
       return current;

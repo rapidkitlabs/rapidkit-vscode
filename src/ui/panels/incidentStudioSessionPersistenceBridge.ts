@@ -1,8 +1,13 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs-extra';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 
 import { createExtensionWebviewMessage } from '../../contracts/webviewProtocol';
 
 export const INCIDENT_STUDIO_SESSION_KEY_PREFIX = 'rapidkit.incidentStudio.session.';
+const INCIDENT_STUDIO_SESSION_DIR = 'incident-studio-sessions';
+const sessionWriteQueues = new WeakMap<object, Map<string, Promise<void>>>();
 
 export const MAX_INCIDENT_STUDIO_APPROVAL_AUDIT_EVENTS = 50;
 export const MAX_INCIDENT_STUDIO_CHAT_MESSAGES = 100;
@@ -107,6 +112,60 @@ export type IncidentStudioSession = {
 
 function buildIncidentStudioSessionKey(workspacePath: string): string {
   return `${INCIDENT_STUDIO_SESSION_KEY_PREFIX}${workspacePath.trim()}`;
+}
+
+function incidentStudioSessionFilePath(
+  context: vscode.ExtensionContext,
+  workspacePath: string
+): string | undefined {
+  const storageRoot = context.globalStorageUri?.fsPath;
+  if (!storageRoot) {
+    return undefined;
+  }
+  const digest = createHash('sha256').update(workspacePath.trim()).digest('hex').slice(0, 40);
+  return path.join(storageRoot, INCIDENT_STUDIO_SESSION_DIR, `${digest}.json`);
+}
+
+function getSessionWriteQueue(
+  context: vscode.ExtensionContext,
+  workspacePath: string
+): { queue: Map<string, Promise<void>>; key: string } {
+  let queue = sessionWriteQueues.get(context);
+  if (!queue) {
+    queue = new Map();
+    sessionWriteQueues.set(context, queue);
+  }
+  return { queue, key: buildIncidentStudioSessionKey(workspacePath) };
+}
+
+async function serializeIncidentStudioWrite<T>(
+  context: vscode.ExtensionContext,
+  workspacePath: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const { queue, key } = getSessionWriteQueue(context, workspacePath);
+  const previous = queue.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  queue.set(
+    key,
+    current.then(
+      () => undefined,
+      () => undefined
+    )
+  );
+  return current;
+}
+
+function createEmptyIncidentStudioSession(workspacePath: string): IncidentStudioSession {
+  return {
+    workspacePath: workspacePath.trim(),
+    phase: 'detect',
+    approvalAuditEvents: [],
+    proofEvents: [],
+    executionTranscripts: [],
+    chatMessages: [],
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function normalizePhase(value: unknown): IncidentStudioSessionPhase {
@@ -426,18 +485,6 @@ function normalizeExecutionTranscript(
   };
 }
 
-function createEmptyIncidentStudioSession(workspacePath: string): IncidentStudioSession {
-  return {
-    workspacePath: workspacePath.trim(),
-    phase: 'detect',
-    approvalAuditEvents: [],
-    proofEvents: [],
-    executionTranscripts: [],
-    chatMessages: [],
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 function normalizeIncidentStudioSession(
   workspacePath: string,
   value: unknown
@@ -497,10 +544,42 @@ export function readIncidentStudioSession(
     return createEmptyIncidentStudioSession('');
   }
 
+  const filePath = incidentStudioSessionFilePath(context, trimmedWorkspacePath);
+  if (filePath && fs.pathExistsSync(filePath)) {
+    try {
+      const stored = fs.readJSONSync(filePath) as unknown;
+      return normalizeIncidentStudioSession(trimmedWorkspacePath, stored);
+    } catch {
+      // Fall through to legacy globalState / empty session.
+    }
+  }
+
   const stored = context.globalState.get<unknown>(
     buildIncidentStudioSessionKey(trimmedWorkspacePath)
   );
   return normalizeIncidentStudioSession(trimmedWorkspacePath, stored);
+}
+
+async function persistIncidentStudioSessionFile(
+  context: vscode.ExtensionContext,
+  workspacePath: string,
+  session: IncidentStudioSession
+): Promise<void> {
+  const filePath = incidentStudioSessionFilePath(context, workspacePath);
+  if (!filePath) {
+    await context.globalState.update(buildIncidentStudioSessionKey(workspacePath), session);
+    return;
+  }
+
+  await fs.ensureDir(path.dirname(filePath));
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  try {
+    await fs.writeJSON(tempPath, session);
+    await fs.move(tempPath, filePath, { overwrite: true });
+  } finally {
+    await fs.remove(tempPath).catch(() => undefined);
+  }
+  await context.globalState.update(buildIncidentStudioSessionKey(workspacePath), undefined);
 }
 
 export async function writeIncidentStudioSession(
@@ -513,14 +592,33 @@ export async function writeIncidentStudioSession(
     return createEmptyIncidentStudioSession('');
   }
 
-  const normalized = normalizeIncidentStudioSession(trimmedWorkspacePath, {
-    ...session,
-    workspacePath: trimmedWorkspacePath,
-    updatedAt: new Date().toISOString(),
-  });
+  return serializeIncidentStudioWrite(context, trimmedWorkspacePath, async () => {
+    const normalized = normalizeIncidentStudioSession(trimmedWorkspacePath, {
+      ...session,
+      workspacePath: trimmedWorkspacePath,
+      updatedAt: new Date().toISOString(),
+    });
 
-  await context.globalState.update(buildIncidentStudioSessionKey(trimmedWorkspacePath), normalized);
-  return normalized;
+    await persistIncidentStudioSessionFile(context, trimmedWorkspacePath, normalized);
+    return normalized;
+  });
+}
+
+async function migrateIncidentStudioSessionIfNeeded(
+  context: vscode.ExtensionContext,
+  workspacePath: string,
+  session: IncidentStudioSession
+): Promise<IncidentStudioSession> {
+  const trimmedWorkspacePath = workspacePath.trim();
+  if (!trimmedWorkspacePath) {
+    return session;
+  }
+  const filePath = incidentStudioSessionFilePath(context, trimmedWorkspacePath);
+  const legacyKey = buildIncidentStudioSessionKey(trimmedWorkspacePath);
+  if (!filePath || (await fs.pathExists(filePath)) || !context.globalState.get(legacyKey)) {
+    return session;
+  }
+  return writeIncidentStudioSession(context, trimmedWorkspacePath, session);
 }
 
 export async function appendApprovalAuditEvent(
@@ -610,6 +708,10 @@ export async function postSessionToWebview(
   workspacePath: string,
   context: vscode.ExtensionContext
 ): Promise<void> {
-  const session = readIncidentStudioSession(context, workspacePath);
+  const session = await migrateIncidentStudioSessionIfNeeded(
+    context,
+    workspacePath,
+    readIncidentStudioSession(context, workspacePath)
+  );
   webview.postMessage(createExtensionWebviewMessage('incidentStudioSessionLoaded', session));
 }

@@ -44,14 +44,16 @@ export class WorkspaceContractGraphProvider implements vscode.TreeDataProvider<W
   private fileWatcher?: vscode.FileSystemWatcher;
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private overridePath: string | null = null;
+  private workspaceGeneration = 0;
 
   constructor(workspacePathResolver: () => string | null = () => null) {
     this.workspacePathResolver = workspacePathResolver;
-    this.setupFileWatcher();
   }
 
   setWorkspacePath(workspacePath: string | null): void {
     this.overridePath = workspacePath;
+    this.workspaceGeneration += 1;
+    this.setupFileWatcher(workspacePath);
     this.refresh();
   }
 
@@ -75,6 +77,7 @@ export class WorkspaceContractGraphProvider implements vscode.TreeDataProvider<W
   async getChildren(element?: WorkspaceContractGraphItem): Promise<WorkspaceContractGraphItem[]> {
     if (!element) {
       const workspacePath = this.resolvedPath();
+      const generation = this.workspaceGeneration;
       if (!workspacePath) {
         const item = new WorkspaceContractGraphItem(
           'Select a workspace to view contract graph',
@@ -91,6 +94,9 @@ export class WorkspaceContractGraphProvider implements vscode.TreeDataProvider<W
       }
 
       const model = await readWorkspaceContractGraph(workspacePath);
+      if (generation !== this.workspaceGeneration || this.resolvedPath() !== workspacePath) {
+        return [];
+      }
       if (model.status === 'missing') {
         const item = new WorkspaceContractGraphItem(
           'No contract found - initialize one',
@@ -317,9 +323,17 @@ export class WorkspaceContractGraphProvider implements vscode.TreeDataProvider<W
     return this.workspacePathResolver() ?? this.overridePath;
   }
 
-  private setupFileWatcher(): void {
+  private setupFileWatcher(workspacePath: string | null): void {
+    this.fileWatcher?.dispose();
+    this.fileWatcher = undefined;
+    if (!workspacePath) {
+      return;
+    }
     this.fileWatcher = vscode.workspace.createFileSystemWatcher(
-      '**/{.workspai,.rapidkit}/workspace.contract.json',
+      new vscode.RelativePattern(
+        vscode.Uri.file(workspacePath),
+        '{.workspai,.rapidkit}/workspace.contract.json'
+      ),
       false,
       false,
       true

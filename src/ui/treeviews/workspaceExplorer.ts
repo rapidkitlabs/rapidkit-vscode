@@ -25,7 +25,6 @@ import {
   PROJECT_MODULE_REGISTRY_RELATIVE_PATHS,
   WORKSPACE_PROFILE_RELATIVE_PATHS,
   WORKSPACE_SCOPED_WATCH_GLOB,
-  WORKSPACE_TREE_WATCH_GLOBS,
 } from '../../utils/workspaceCanonicalPaths';
 import { WelcomePanel } from '../panels/welcomePanel';
 import { readGoalIndex } from '../../core/workspaceGoals.js';
@@ -66,7 +65,6 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   private versionService = CoreVersionService.getInstance();
   private workspaces: WorkspaiWorkspace[] = [];
   private selectedWorkspace: WorkspaiWorkspace | null = null;
-  private fileWatchers: vscode.FileSystemWatcher[] = [];
   private scopedFileWatchers = new Map<string, vscode.FileSystemWatcher>();
   private versionInfoCache: Map<string, CoreVersionInfo> = new Map();
   private profileCache: Map<string, string | undefined> = new Map();
@@ -74,29 +72,22 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   private activeGoalCache: Map<string, string | undefined> = new Map();
   private _backgroundLoadInProgress = false;
   private _initialLoadPromise: Promise<void>;
-  private _initialSelectionPublished = false;
+  private _workspaceLoadGeneration = 0;
+  private _publishedWorkspacePath: string | null = null;
+  private _selectionGeneration = 0;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this._initialLoadPromise = this.loadWorkspaces({ publishSelection: false });
-    this.setupFileWatcher();
-  }
-
-  private setupFileWatcher(): void {
-    // Canonical Workspai artifacts own the live tree. Legacy markers remain
-    // watched so migrated workspaces still refresh without a manual reload.
-    this.fileWatchers = WORKSPACE_TREE_WATCH_GLOBS.map((glob) => {
-      const watcher = vscode.workspace.createFileSystemWatcher(glob, false, false, false);
-      watcher.onDidCreate(() => this.scheduleRefresh());
-      watcher.onDidChange(() => this.scheduleRefresh());
-      watcher.onDidDelete(() => this.scheduleRefresh());
-      return watcher;
-    });
   }
 
   private syncScopedFileWatchers(): void {
+    // Never recursively watch every folder in the open VS Code window (or every
+    // registered workspace). Large monorepos can exhaust the host's inotify
+    // budget. The active workspace is the only scope whose live state can affect
+    // the visible tree; command-driven registry changes explicitly refresh it.
     const workspacePaths = new Set(
-      this.workspaces.map((workspace) => path.resolve(workspace.path))
+      this.selectedWorkspace ? [path.resolve(this.selectedWorkspace.path)] : []
     );
     for (const [workspacePath, watcher] of this.scopedFileWatchers) {
       if (!workspacePaths.has(workspacePath)) {
@@ -133,10 +124,6 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   }
 
   dispose(): void {
-    for (const watcher of this.fileWatchers) {
-      watcher.dispose();
-    }
-    this.fileWatchers = [];
     for (const watcher of this.scopedFileWatchers.values()) {
       watcher.dispose();
     }
@@ -154,7 +141,6 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
     this.moduleCountCache.clear();
     this.activeGoalCache.clear();
     await this.loadWorkspaces();
-    this._onDidChangeTreeData.fire();
   }
 
   getTreeItem(element: WorkspaceTreeItem): vscode.TreeItem {
@@ -166,7 +152,9 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
       // Phase 1: Return items immediately using only cached data — no blocking I/O.
       // The sidebar appears instantly; metadata fills in via background load.
       const items = this.workspaces.map((ws) => {
-        const isActive = this.selectedWorkspace?.path === ws.path;
+        const isActive =
+          Boolean(this.selectedWorkspace?.path) &&
+          path.resolve(this.selectedWorkspace!.path) === path.resolve(ws.path);
 
         // Use cached version info (undefined on first load — fine)
         const versionInfo = this.versionInfoCache.get(ws.path);
@@ -357,37 +345,90 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   }
 
   private async loadWorkspaces(options: { publishSelection?: boolean } = {}): Promise<void> {
+    const generation = ++this._workspaceLoadGeneration;
     const publishSelection = options.publishSelection !== false;
-    this.workspaces = await this.workspaceManager.loadWorkspaces();
-    this.syncScopedFileWatchers();
+    const workspaces = await this.workspaceManager.loadWorkspaces();
+    if (generation !== this._workspaceLoadGeneration) {
+      return;
+    }
+    const previousSelectedPath = this.selectedWorkspace?.path
+      ? path.resolve(this.selectedWorkspace.path)
+      : null;
+    this.workspaces = workspaces;
+
+    if (this.selectedWorkspace) {
+      this.selectedWorkspace =
+        this.workspaces.find(
+          (workspace) => path.resolve(workspace.path) === path.resolve(this.selectedWorkspace!.path)
+        ) ?? null;
+    }
 
     // Auto-select first workspace if none selected
     if (!this.selectedWorkspace && this.workspaces.length > 0) {
       this.selectedWorkspace = this.workspaces[0];
+      if (path.resolve(this.selectedWorkspace.path) !== previousSelectedPath) {
+        this._selectionGeneration += 1;
+      }
       if (publishSelection) {
         await this.publishSelectedWorkspaceContext();
       }
     } else if (this.workspaces.length === 0 && publishSelection) {
       // No workspaces - clear context
-      await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', false);
+      if (previousSelectedPath !== null) {
+        this._selectionGeneration += 1;
+      }
+      await this.publishSelectedWorkspaceContext();
     }
+    this.syncScopedFileWatchers();
+    // Constructor/whenReady loads must repaint the tree. VS Code may have already
+    // queried getChildren while the registry was still empty.
+    this._onDidChangeTreeData.fire();
   }
 
   public async whenReady(): Promise<void> {
     await this._initialLoadPromise;
+    // If a later refresh superseded the constructor load, wait for the latest
+    // generation to settle so callers never observe an empty discarded snapshot.
+    const generation = this._workspaceLoadGeneration;
+    if (generation > 0 && this.workspaces.length === 0) {
+      await this.loadWorkspaces({ publishSelection: false });
+    }
   }
 
-  public async publishSelectedWorkspaceContext(): Promise<void> {
-    if (this._initialSelectionPublished) {
+  public async publishSelectedWorkspaceContext(options?: { force?: boolean }): Promise<void> {
+    if (!this.selectedWorkspace) {
+      const shouldPublishClear = options?.force || this._publishedWorkspacePath !== null;
+      const selectionGeneration = this._selectionGeneration;
+      await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', false);
+      if (shouldPublishClear && selectionGeneration === this._selectionGeneration) {
+        await vscode.commands.executeCommand('workspai.workspaceSelected', null);
+      }
+      this._publishedWorkspacePath = null;
       return;
     }
-    if (!this.selectedWorkspace) {
-      await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', false);
+    const selectedWorkspace = this.selectedWorkspace;
+    const selectedPath = path.resolve(selectedWorkspace.path);
+    const selectionGeneration = this._selectionGeneration;
+    if (!options?.force && this._publishedWorkspacePath === selectedPath) {
       return;
     }
     await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', true);
-    await vscode.commands.executeCommand('workspai.workspaceSelected', this.selectedWorkspace);
-    this._initialSelectionPublished = true;
+    if (
+      selectionGeneration !== this._selectionGeneration ||
+      !this.selectedWorkspace ||
+      path.resolve(this.selectedWorkspace.path) !== selectedPath
+    ) {
+      return;
+    }
+    await vscode.commands.executeCommand('workspai.workspaceSelected', selectedWorkspace);
+    if (
+      selectionGeneration !== this._selectionGeneration ||
+      !this.selectedWorkspace ||
+      path.resolve(this.selectedWorkspace.path) !== selectedPath
+    ) {
+      return;
+    }
+    this._publishedWorkspacePath = selectedPath;
   }
 
   public async addWorkspace(): Promise<void> {
@@ -895,27 +936,37 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
   }
 
   public async selectWorkspace(workspace: WorkspaiWorkspace): Promise<void> {
-    this.selectedWorkspace = workspace;
+    const canonicalWorkspace = this.getWorkspaceByPath(workspace.path) ?? workspace;
+    const selectionGeneration = ++this._selectionGeneration;
+    this.selectedWorkspace = canonicalWorkspace;
+    this.syncScopedFileWatchers();
 
-    // Update last accessed time
-    await this.workspaceManager.touchWorkspace(workspace.path);
-
+    // Commit visible selection first. Persistence and metadata are secondary;
+    // neither may gate Projects/Doctor/Contract switching.
     this._onDidChangeTreeData.fire();
+    await this.publishSelectedWorkspaceContext({ force: true });
 
-    // Set context for toolbar buttons
-    await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', true);
-
-    // Fire event for other views to update
-    await vscode.commands.executeCommand('workspai.workspaceSelected', workspace);
-    this._initialSelectionPublished = true;
+    // Persist last-accessed metadata after the state transaction has committed.
+    // A slow registry write must never make workspace switching appear hung.
+    void this.workspaceManager
+      .touchWorkspace(canonicalWorkspace.path)
+      .then(() => {
+        if (selectionGeneration === this._selectionGeneration) {
+          this._onDidChangeTreeData.fire();
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to persist workspace access time:', error);
+      });
   }
 
   public getSelectedWorkspace(): WorkspaiWorkspace | null {
     return this.selectedWorkspace;
   }
 
-  public getWorkspaceByPath(path: string): WorkspaiWorkspace | undefined {
-    return this.workspaces.find((ws) => ws.path === path);
+  public getWorkspaceByPath(workspacePath: string): WorkspaiWorkspace | undefined {
+    const normalizedPath = path.resolve(workspacePath);
+    return this.workspaces.find((workspace) => path.resolve(workspace.path) === normalizedPath);
   }
 
   public async quickSwitch(): Promise<void> {
@@ -946,7 +997,9 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
 
     type WsPick = vscode.QuickPickItem & { ws: WorkspaiWorkspace };
     const picks: WsPick[] = this.workspaces.map((ws) => {
-      const isActive = this.selectedWorkspace?.path === ws.path;
+      const isActive =
+        Boolean(this.selectedWorkspace?.path) &&
+        path.resolve(this.selectedWorkspace!.path) === path.resolve(ws.path);
       return {
         label: `$(${isActive ? 'folder-opened' : 'folder-library'}) ${ws.name}`,
         description: isActive ? '🟢 Active' : ws.path,
@@ -1006,13 +1059,6 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
         workspace.mode === 'demo' ? 'rocket' : isActive ? 'folder-opened' : 'folder-library',
         new vscode.ThemeColor(isActive ? 'charts.green' : 'charts.purple')
       );
-
-      // Make workspace selectable
-      this.command = {
-        command: 'workspai.selectWorkspace',
-        title: 'Select Workspace',
-        arguments: [workspace.path], // Pass only the path, not the entire object
-      };
     }
 
     this.contextValue = contextValue;

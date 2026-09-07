@@ -46,6 +46,64 @@ afterEach(async () => {
 });
 
 describe('primary sidebar canonical project discovery', () => {
+  it('discards a late project scan after the active workspace changes', async () => {
+    const firstWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-sidebar-first-'));
+    const secondWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-sidebar-second-'));
+    tempRoots.push(firstWorkspace, secondWorkspace);
+    await fs.ensureDir(path.join(firstWorkspace, 'first-app', '.workspai'));
+    await fs.writeJSON(path.join(firstWorkspace, 'first-app', 'package.json'), {
+      name: 'first-app',
+    });
+    await fs.writeJSON(path.join(firstWorkspace, 'first-app', '.workspai', 'project.json'), {
+      name: 'first-app',
+      kit_name: 'frontend.nextjs',
+    });
+    await fs.ensureDir(path.join(secondWorkspace, 'second-app', '.workspai'));
+    await fs.writeJSON(path.join(secondWorkspace, 'second-app', 'package.json'), {
+      name: 'second-app',
+    });
+    await fs.writeJSON(path.join(secondWorkspace, 'second-app', '.workspai', 'project.json'), {
+      name: 'second-app',
+      kit_name: 'frontend.nextjs',
+    });
+
+    const provider = new ProjectExplorerProvider();
+    const internal = provider as unknown as {
+      selectedWorkspace: { name: string; path: string; mode: 'full'; projects: [] };
+      projects: unknown[];
+      _projectsLoaded: boolean;
+      _workspaceGeneration: number;
+      loadProjects: (workspacePath: string, generation: number) => Promise<boolean>;
+    };
+    internal.selectedWorkspace = {
+      name: 'first',
+      path: firstWorkspace,
+      mode: 'full',
+      projects: [],
+    };
+    internal._workspaceGeneration = 1;
+    const generation = internal._workspaceGeneration;
+    const staleLoad = (
+      provider as unknown as {
+        loadProjects: (workspacePath: string, generation: number) => Promise<boolean>;
+      }
+    ).loadProjects(firstWorkspace, generation);
+
+    internal.selectedWorkspace = {
+      name: 'second',
+      path: secondWorkspace,
+      mode: 'full',
+      projects: [],
+    };
+    internal.projects = [];
+    internal._projectsLoaded = false;
+    internal._workspaceGeneration += 1;
+
+    await expect(staleLoad).resolves.toBe(false);
+    const projects = await provider.ensureProjectsLoaded();
+    expect(projects.map((project) => project.name)).toEqual(['second-app']);
+  });
+
   it('discovers a contract-registered project whose only marker is .workspai/project.json', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-sidebar-project-'));
     tempRoots.push(workspacePath);

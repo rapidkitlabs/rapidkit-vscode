@@ -1,7 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'fs-extra';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { StudioAgentPersistedSession } from '../core/studioAgentEvents.js';
 import { VSCodeStudioAgentSessionStore } from '../core/studioAgentSessionStore.js';
+
+const tempRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempRoots.splice(0).map((entry) => fs.remove(entry)));
+});
 
 function session(id: string, eventCount = 1): StudioAgentPersistedSession {
   return {
@@ -68,5 +77,36 @@ describe('VS Code Studio Agent session store', () => {
     const loaded = await store.load('oversized');
     expect(loaded?.events.length).toBeGreaterThan(0);
     expect(Buffer.byteLength(JSON.stringify(loaded), 'utf8')).toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
+  it('migrates legacy workspaceState payloads into storageUri files', async () => {
+    const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'workspai-studio-store-'));
+    tempRoots.push(storageRoot);
+    let value: unknown = {
+      schemaVersion: 'workspai.studio-agent-session-store.v1',
+      sessions: [session('legacy-1', 2)],
+    };
+    const context = {
+      storageUri: { fsPath: storageRoot },
+      workspaceState: {
+        get: vi.fn(() => value),
+        update: vi.fn(async (_key: string, next: unknown) => {
+          value = next;
+        }),
+      },
+    };
+
+    const store = new VSCodeStudioAgentSessionStore(context as never);
+    const listed = await store.list('/workspace');
+    expect(listed.map((entry) => entry.id)).toEqual(['legacy-1']);
+
+    await store.save(session('legacy-2', 1));
+    expect(value).toBeUndefined();
+    expect(await fs.pathExists(path.join(storageRoot, 'studio-agent-sessions.v1.json'))).toBe(true);
+
+    // Clear memento so subsequent reads prove file-backed persistence.
+    value = undefined;
+    const reloaded = await store.list('/workspace');
+    expect(reloaded.map((entry) => entry.id)).toEqual(['legacy-2', 'legacy-1']);
   });
 });

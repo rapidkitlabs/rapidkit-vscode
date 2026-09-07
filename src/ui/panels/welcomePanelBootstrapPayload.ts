@@ -54,15 +54,41 @@ export type BootstrapPayloadHost = {
 
 export function sendWelcomePanelInitialData(host: BootstrapPayloadHost): void {
   sendExtensionVersion(host);
-  void sendRecentWorkspacesPayload(host);
-  void sendExampleWorkspaces(host);
-  void host.sendAvailableKits();
-  void host.sendModulesCatalog();
-  void sendWorkspaceStatus(host);
-  void sendWorkspaceToolStatus(host);
   host.sendUiPreferences();
-  void host.sendWorkspaiSettings();
-  void host.sendDashboardEvidence();
+
+  // Render workspace truth first. Environment probes and example discovery can
+  // spawn processes or touch the network, so they must not compete with the
+  // first useful dashboard frame.
+  void (async () => {
+    const startedAt = Date.now();
+    const mark = (lane: string, laneStartedAt: number) => {
+      console.log(
+        `[WelcomePanel Bootstrap] ${lane} completed in ${Date.now() - laneStartedAt}ms (total ${Date.now() - startedAt}ms)`
+      );
+    };
+
+    let laneStartedAt = Date.now();
+    await Promise.allSettled([
+      sendRecentWorkspacesPayload(host),
+      sendWorkspaceStatus(host),
+      host.sendWorkspaiSettings(),
+      host.sendDashboardEvidence(),
+    ]);
+    mark('workspace-truth', laneStartedAt);
+
+    // Yield so the first dashboard frame can paint before secondary catalogs.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    laneStartedAt = Date.now();
+    await Promise.allSettled([host.sendAvailableKits(), host.sendModulesCatalog()]);
+    mark('catalogs', laneStartedAt);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    laneStartedAt = Date.now();
+    await Promise.allSettled([sendExampleWorkspaces(host), sendWorkspaceToolStatus(host)]);
+    mark('environment-probes', laneStartedAt);
+  })();
 }
 
 export function sendExtensionVersion(
@@ -75,7 +101,6 @@ export function sendExtensionVersion(
 export async function sendRecentWorkspacesPayload(host: BootstrapPayloadHost): Promise<void> {
   const workspaces = await host.getRecentWorkspaces();
   host.postWebviewMessage('updateRecentWorkspaces', workspaces);
-  void host.sendDashboardEvidence();
 }
 
 export async function sendExampleWorkspaces(
@@ -237,9 +262,13 @@ export async function sendWorkspaceStatus(
   options?: {
     forceCapabilityRefresh?: boolean;
     workspaceOverride?: { name?: string; path: string } | null;
+    shouldApply?: () => boolean;
   }
 ): Promise<void> {
-  const selectedWorkspace = options?.workspaceOverride ?? host.getSelectedWorkspaceInfo();
+  const selectedWorkspace =
+    options && Object.prototype.hasOwnProperty.call(options, 'workspaceOverride')
+      ? (options.workspaceOverride ?? null)
+      : host.getSelectedWorkspaceInfo();
   const selectedProject = host.getSelectedProject();
   const fallbackWorkspacePath = selectedProject?.workspacePath;
   const fallbackWorkspaceName =
@@ -278,6 +307,10 @@ export async function sendWorkspaceStatus(
     });
     projectType = (await host.detectProjectType(selectedProjectPath)) ?? undefined;
 
+    if (options?.shouldApply && !options.shouldApply()) {
+      return;
+    }
+
     await syncProjectCapabilityContext({
       projectPath: selectedProjectPath,
       projectType,
@@ -303,11 +336,17 @@ export async function sendWorkspaceStatus(
   }
 
   if (!hasProjectSelected) {
+    if (options?.shouldApply && !options.shouldApply()) {
+      return;
+    }
     await clearProjectCapabilityContext();
   }
 
   const currentProject = host.getSelectedProject();
 
+  if (options?.shouldApply && !options.shouldApply()) {
+    return;
+  }
   host.postWebviewMessage('updateWorkspaceStatus', {
     hasWorkspace,
     hasProjectSelected,
@@ -321,5 +360,4 @@ export async function sendWorkspaceStatus(
     isRunning,
     runningPort,
   });
-  void host.sendDashboardEvidence();
 }

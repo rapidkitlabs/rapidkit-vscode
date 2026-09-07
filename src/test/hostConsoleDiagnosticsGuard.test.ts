@@ -13,6 +13,7 @@ function read(relativePath: string): string {
 describe('host console diagnostics guard', () => {
   it('keeps module catalog failures visible to the operator', () => {
     const source = read('src/ui/panels/welcomePanelModulesCatalog.ts');
+    const cli = read('src/core/rapidkitCLI.ts');
 
     expect(source).toContain('postCatalog(MODULES, {');
     expect(source).toContain("source: 'fallback'");
@@ -22,6 +23,10 @@ describe('host console diagnostics guard', () => {
     expect(source).toContain(
       'Module details are not available for this catalog item. Refresh the catalog and try again.'
     );
+    expect(cli).toContain('Resolved RapidKit Core executable could not be started.');
+    expect(cli).not.toContain(
+      'Preferred workspace rapidkit executable failed; falling back to discovery chain.'
+    );
   });
 
   it('keeps treeview scan failures visible instead of empty console-only panes', () => {
@@ -30,13 +35,30 @@ describe('host console diagnostics guard', () => {
 
     expect(modules).toContain('_catalogLoadError');
     expect(modules).toContain('Module catalog fallback active');
-    expect(modules).toContain('Using bundled modules');
-    expect(modules).toContain('Workspai could not load the live module catalog');
+    expect(modules).toContain('Reference only · install disabled');
+    expect(modules).toContain('exact workspace Core catalog could not be verified');
+    expect(modules).toContain('fetchProjectCommandCapabilities');
+    expect(modules).toContain('isModuleMutationSupported');
+    expect(modules).toContain("this._catalogSource !== 'fallback'");
 
     expect(projects).toContain('_projectLoadError');
     expect(projects).toContain('Project scan failed');
     expect(projects).toContain('Refresh workspace');
     expect(projects).toContain('Workspai could not scan projects for this workspace');
+  });
+
+  it('resolves the module catalog from the selected project before the workspace fallback', () => {
+    const source = read('src/ui/panels/welcomePanelModulesCatalog.ts');
+    const selectedProjectIndex = source.indexOf(
+      'const selectedProject = host.getSelectedProject()'
+    );
+    const selectedWorkspaceIndex = source.indexOf(
+      'const selectedWorkspace = host.getSelectedWorkspaceInfo()'
+    );
+
+    expect(selectedProjectIndex).toBeGreaterThan(-1);
+    expect(selectedWorkspaceIndex).toBeGreaterThan(selectedProjectIndex);
+    expect(source).toContain('selectedProject.workspacePath || path.dirname(selectedProject.path)');
   });
 
   it('keeps example workspace clone and update failures visible and recoverable', () => {

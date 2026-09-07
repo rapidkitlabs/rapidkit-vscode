@@ -21,7 +21,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'agent_runtime',
     name: 'Agent Runtime',
-    version: '0.1.15',
+    version: '0.1.17',
     category: 'ai',
     icon: '🤖',
     description: 'Agent runtime scaffolding for tools, memory, execution st...',
@@ -33,7 +33,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'ai_assistant',
     name: 'Ai Assistant',
-    version: '0.1.20',
+    version: '0.1.23',
     category: 'ai',
     icon: '🤖',
     description: 'Provider-agnostic...',
@@ -45,7 +45,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'ai_guardrails',
     name: 'Ai Guardrails',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'ai',
     icon: '🤖',
     description: 'AI input/output safety policy, PII redaction hooks, and m...',
@@ -57,7 +57,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'llm_gateway',
     name: 'Llm Gateway',
-    version: '0.1.18',
+    version: '0.1.20',
     category: 'ai',
     icon: '🤖',
     description: 'Provider-neutral LLM gateway with routing, fallback, budg...',
@@ -69,7 +69,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'prompt_ops',
     name: 'Prompt Ops',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'ai',
     icon: '🤖',
     description: 'Prompt versioning, rollout, evaluation, rollback, and aud...',
@@ -81,7 +81,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'rag_pipeline',
     name: 'Rag Pipeline',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'ai',
     icon: '🤖',
     description: 'RAG pipeline scaffolding for ingestion, embeddings, retri...',
@@ -93,7 +93,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'tool_registry',
     name: 'Tool Registry',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'ai',
     icon: '🤖',
     description: 'Tool registry, schemas, permissions, and audit-safe invoc...',
@@ -105,7 +105,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'vector_store',
     name: 'Vector Store',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'ai',
     icon: '🤖',
     description: 'Vector store abstraction for pgvector/Qdrant-style indexe...',
@@ -118,7 +118,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'api_keys',
     name: 'API Keys',
-    version: '0.1.5',
+    version: '0.1.8',
     category: 'auth',
     icon: '🔐',
     description: 'Deterministic API key issuance, verification, and auditing',
@@ -130,7 +130,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'auth_core',
     name: 'Authentication Core',
-    version: '0.1.14',
+    version: '0.1.16',
     category: 'auth',
     icon: '🔐',
     description: 'Opinionated password hashing, token signing, and runtime ...',
@@ -142,7 +142,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'oauth',
     name: 'OAuth Providers',
-    version: '0.1.16',
+    version: '0.1.18',
     category: 'auth',
     icon: '🔐',
     description: 'Lightweight OAuth 2.0 scaffolding with provider registry,...',
@@ -154,7 +154,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'passwordless',
     name: 'Passwordless Authentication',
-    version: '0.1.13',
+    version: '0.1.15',
     category: 'auth',
     icon: '🔐',
     description: 'Magic link and one-time code authentication helpers for f...',
@@ -166,7 +166,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'session',
     name: 'Session Management',
-    version: '0.1.14',
+    version: '0.1.17',
     category: 'auth',
     icon: '🔐',
     description: 'Opinionated session management utilities offering signed ...',
@@ -179,7 +179,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'cart',
     name: 'Cart',
-    version: '0.1.18',
+    version: '0.1.20',
     category: 'billing',
     icon: '💳',
     description: 'Shopping cart service for checkout flows',
@@ -191,7 +191,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'inventory',
     name: 'Inventory',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'billing',
     icon: '💳',
     description: 'Inventory and pricing service backing Cart + Stripe',
@@ -203,7 +203,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'stripe_payment',
     name: 'Stripe Payment',
-    version: '0.1.6',
+    version: '0.1.8',
     category: 'billing',
     icon: '💳',
     description: 'Stripe payments and subscriptions',
@@ -215,7 +215,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'usage_billing',
     name: 'Usage Billing',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'billing',
     icon: '💳',
     description: 'Usage metering, quota enforcement, plan limits, and overa...',
@@ -228,7 +228,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'admin_console',
     name: 'Admin Console',
-    version: '0.1.8',
+    version: '0.1.10',
     category: 'business',
     icon: '💼',
     description: 'Reusable admin console foundation with action registry, p...',
@@ -240,7 +240,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'approval_engine',
     name: 'Approval Engine',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'business',
     icon: '💼',
     description: 'Approval workflow engine with policies, required reasons,...',
@@ -252,7 +252,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'connector_hub',
     name: 'Connector Hub',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'business',
     icon: '💼',
     description: 'Integration connector hub scaffolding for external apps, ...',
@@ -264,7 +264,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'connector_pack_library',
     name: 'Connector Pack Library',
-    version: '0.1.8',
+    version: '0.1.10',
     category: 'business',
     icon: '💼',
     description: 'Connector pack registry for provider catalogs, scopes, in...',
@@ -276,7 +276,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'document_pipeline',
     name: 'Document Pipeline',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'business',
     icon: '💼',
     description: 'Document ingestion, extraction, chunking, classification,...',
@@ -288,7 +288,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'feature_flags',
     name: 'Feature Flags',
-    version: '0.1.10',
+    version: '0.1.12',
     category: 'business',
     icon: '💼',
     description: 'Feature flag scaffolding for staged rollout, entitlement-...',
@@ -300,7 +300,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'forms_engine',
     name: 'Forms Engine',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'business',
     icon: '💼',
     description: 'Schema-driven forms engine with validation, submissions, ...',
@@ -312,7 +312,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'media_pipeline',
     name: 'Media Pipeline',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'business',
     icon: '💼',
     description: 'Media ingestion and transformation pipeline with checksum...',
@@ -324,7 +324,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'multi_tenancy',
     name: 'Multi Tenancy',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'business',
     icon: '💼',
     description: 'Organization, team, tenant isolation, membership, and ten...',
@@ -336,7 +336,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'org_admin_console',
     name: 'Org Admin Console',
-    version: '0.1.8',
+    version: '0.1.10',
     category: 'business',
     icon: '💼',
     description: 'Organization admin console for tenant settings, membershi...',
@@ -348,7 +348,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'storage',
     name: 'Storage',
-    version: '0.1.14',
+    version: '0.1.16',
     category: 'business',
     icon: '💼',
     description: 'File Storage & Media Management Module - Upload, store, a...',
@@ -360,7 +360,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'support_center',
     name: 'Support Center',
-    version: '0.1.8',
+    version: '0.1.10',
     category: 'business',
     icon: '💼',
     description: 'Support center foundation with tickets, SLA state, custom...',
@@ -373,7 +373,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'redis',
     name: 'Redis Cache',
-    version: '0.1.23',
+    version: '0.1.25',
     category: 'cache',
     icon: '🔴',
     description: 'Production-ready Redis runtime with async and sync client...',
@@ -386,7 +386,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'email',
     name: 'Email',
-    version: '0.1.24',
+    version: '0.1.26',
     category: 'communication',
     icon: '📧',
     description: '',
@@ -398,7 +398,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'notifications',
     name: 'Unified Notifications',
-    version: '0.1.31',
+    version: '0.1.33',
     category: 'communication',
     icon: '📧',
     description: 'Email-first notifications runtime offering SMTP delivery,...',
@@ -410,7 +410,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'webhook_platform',
     name: 'Webhook Platform',
-    version: '0.1.11',
+    version: '0.1.13',
     category: 'communication',
     icon: '📧',
     description: 'Inbound and outbound webhook scaffolding with signatures,...',
@@ -423,7 +423,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'db_mongo',
     name: 'Db Mongo',
-    version: '0.1.10',
+    version: '0.1.13',
     category: 'database',
     icon: '🗄️',
     description: 'MongoDB integration with async driver support, health dia...',
@@ -435,7 +435,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'db_sqlite',
     name: 'Db Sqlite',
-    version: '0.1.12',
+    version: '0.1.15',
     category: 'database',
     icon: '🗄️',
     description: 'SQLite database integration for development',
@@ -447,7 +447,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'db_postgres',
     name: 'PostgreSQL',
-    version: '0.1.31',
+    version: '0.1.34',
     category: 'database',
     icon: '🗄️',
     description: 'SQLAlchemy async+sync Postgres with clean DI, healthcheck...',
@@ -460,7 +460,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'settings',
     name: 'Application Settings',
-    version: '0.1.45',
+    version: '0.1.49',
     category: 'essentials',
     icon: '🏗️',
     description: 'Centralized, modular configuration management using Pydan...',
@@ -472,7 +472,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'deployment',
     name: 'Deployment Toolkit',
-    version: '0.1.13',
+    version: '0.1.17',
     category: 'essentials',
     icon: '🏗️',
     description: 'Portable Docker, Compose, Makefile, and CI assets for Rap...',
@@ -484,7 +484,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'middleware',
     name: 'Middleware',
-    version: '0.1.24',
+    version: '0.1.26',
     category: 'essentials',
     icon: '🏗️',
     description: 'HTTP middleware pipeline with FastAPI and NestJS support.',
@@ -496,7 +496,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'logging',
     name: 'Structured Logging & Observability',
-    version: '0.1.13',
+    version: '0.1.18',
     category: 'essentials',
     icon: '🏗️',
     description: 'Structured logging runtime with correlation IDs, multi-si...',
@@ -509,7 +509,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'analytics_dashboard',
     name: 'Analytics Dashboard',
-    version: '0.1.8',
+    version: '0.1.10',
     category: 'observability',
     icon: '📊',
     description: 'Analytics dashboard foundation with metrics, widgets, das...',
@@ -521,7 +521,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'observability_core',
     name: 'Observability Core',
-    version: '0.1.15',
+    version: '0.1.18',
     category: 'observability',
     icon: '📊',
     description: 'Cohesive metrics, tracing, and structured logging foundat...',
@@ -534,7 +534,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'audit_policy',
     name: 'Audit Policy',
-    version: '0.1.10',
+    version: '0.1.12',
     category: 'security',
     icon: '🛡️',
     description: 'Immutable audit event, admin policy, reason capture, and ...',
@@ -546,7 +546,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'cors',
     name: 'Cors',
-    version: '0.1.16',
+    version: '0.1.18',
     category: 'security',
     icon: '🛡️',
     description: 'Cross-Origin Resource Sharing security module',
@@ -558,7 +558,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'rate_limiting',
     name: 'Rate Limiting',
-    version: '0.1.15',
+    version: '0.1.17',
     category: 'security',
     icon: '🛡️',
     description: 'Production-grade request throttling with configurable rul...',
@@ -570,7 +570,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'security_headers',
     name: 'Security Headers',
-    version: '0.1.7',
+    version: '0.1.10',
     category: 'security',
     icon: '🛡️',
     description: 'Harden HTTP responses with industry-standard security hea...',
@@ -583,7 +583,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'celery',
     name: 'Celery',
-    version: '0.1.13',
+    version: '0.1.15',
     category: 'tasks',
     icon: '⚡',
     description: 'Production-ready Celery task orchestration for asynchrono...',
@@ -595,7 +595,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'event_bus',
     name: 'Event Bus',
-    version: '0.1.9',
+    version: '0.1.11',
     category: 'tasks',
     icon: '⚡',
     description: 'In-process event bus with subscriptions, durable-style ev...',
@@ -607,7 +607,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'queue_platform',
     name: 'Queue Platform',
-    version: '0.1.10',
+    version: '0.1.12',
     category: 'tasks',
     icon: '⚡',
     description: 'Tenant-aware durable queue abstraction with retry, delay,...',
@@ -619,7 +619,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'workflow_engine',
     name: 'Workflow Engine',
-    version: '0.1.13',
+    version: '0.1.15',
     category: 'tasks',
     icon: '⚡',
     description: 'Workflow engine scaffolding for triggers, actions, condit...',
@@ -632,7 +632,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'users_core',
     name: 'Users Core',
-    version: '0.1.13',
+    version: '0.1.15',
     category: 'users',
     icon: '👥',
     description: 'Opinionated user management backbone that ships immutable...',
@@ -644,7 +644,7 @@ export const MODULES: ModuleData[] = [
   {
     id: 'users_profiles',
     name: 'Users Profiles',
-    version: '0.1.12',
+    version: '0.1.15',
     category: 'users',
     icon: '👥',
     description: 'Extends the Users Core module with rich profile modelling...',

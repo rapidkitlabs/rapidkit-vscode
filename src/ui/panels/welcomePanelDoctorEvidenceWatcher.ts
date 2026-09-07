@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import path from 'path';
 
-const GOVERNED_EVIDENCE_GLOB = '{.workspai,.rapidkit}/**/*';
+const GOVERNED_EVIDENCE_GLOB =
+  '{.workspai/reports/**,.rapidkit/reports/**,.workspai/*.json,.rapidkit/*.json}';
 
 export type WelcomePanelEvidenceWatcher = vscode.Disposable & {
   watchWorkspace: (workspacePath?: string, projectPaths?: readonly string[]) => void;
@@ -11,7 +12,6 @@ export function registerWelcomePanelDoctorEvidenceWatcher(
   disposables: vscode.Disposable[],
   scheduleRefresh: (filePath?: string, workspacePathHint?: string) => void
 ): WelcomePanelEvidenceWatcher {
-  const ownedDisposables: vscode.Disposable[] = [];
   const scopedDisposables: vscode.Disposable[] = [];
   let watchedScopeKey: string | undefined;
 
@@ -41,11 +41,6 @@ export function registerWelcomePanelDoctorEvidenceWatcher(
     target.push(watcher.onDidChange(onFileSystemEvent));
     target.push(watcher.onDidDelete(onFileSystemEvent));
   };
-
-  bindWatcher(
-    vscode.workspace.createFileSystemWatcher(`**/${GOVERNED_EVIDENCE_GLOB}`, false, false, false),
-    ownedDisposables
-  );
 
   const controller: WelcomePanelEvidenceWatcher = {
     watchWorkspace(workspacePath?: string, projectPaths: readonly string[] = []) {
@@ -90,9 +85,6 @@ export function registerWelcomePanelDoctorEvidenceWatcher(
     },
     dispose() {
       for (const disposable of scopedDisposables.splice(0)) {
-        disposable.dispose();
-      }
-      for (const disposable of ownedDisposables.splice(0)) {
         disposable.dispose();
       }
       watchedScopeKey = undefined;

@@ -113,14 +113,14 @@ export function resolveModuleDetailsInput(
 }
 
 export function resolveModulesCatalogWorkspacePath(host: ModulesCatalogHost): string | undefined {
-  const selectedWorkspace = host.getSelectedWorkspaceInfo();
-  if (selectedWorkspace?.path) {
-    return selectedWorkspace.path;
-  }
-
   const selectedProject = host.getSelectedProject();
   if (selectedProject?.path) {
     return selectedProject.workspacePath || path.dirname(selectedProject.path);
+  }
+
+  const selectedWorkspace = host.getSelectedWorkspaceInfo();
+  if (selectedWorkspace?.path) {
+    return selectedWorkspace.path;
   }
 
   return host.getFallbackWorkspacePath();
@@ -128,7 +128,11 @@ export function resolveModulesCatalogWorkspacePath(host: ModulesCatalogHost): st
 
 export async function refreshModulesCatalog(
   host: ModulesCatalogHost,
-  options?: { forceRefresh?: boolean }
+  options?: {
+    forceRefresh?: boolean;
+    workspacePath?: string;
+    shouldApply?: () => boolean;
+  }
 ): Promise<void> {
   const postCatalog = (modules: ModuleData[], meta: Record<string, unknown>) => {
     host.postWebviewMessage('updateModulesCatalog', { modules, meta });
@@ -136,7 +140,7 @@ export async function refreshModulesCatalog(
 
   try {
     const service = ModulesCatalogService.getInstance();
-    const rawWorkspacePath = resolveModulesCatalogWorkspacePath(host);
+    const rawWorkspacePath = options?.workspacePath || resolveModulesCatalogWorkspacePath(host);
     const workspacePath = (await resolveCatalogWorkspaceRoot(rawWorkspacePath)) || rawWorkspacePath;
 
     if (options?.forceRefresh && workspacePath) {
@@ -147,15 +151,19 @@ export async function refreshModulesCatalog(
       forceRefresh: options?.forceRefresh === true,
     });
 
-    host.setModulesCatalog(result.modules);
-    postCatalog(result.modules, result.meta);
+    if (!options?.shouldApply || options.shouldApply()) {
+      host.setModulesCatalog(result.modules);
+      postCatalog(result.modules, result.meta);
+    }
   } catch (error) {
     console.error('[WelcomePanel] Failed to load modules catalog:', error);
-    host.setModulesCatalog(MODULES);
-    postCatalog(MODULES, {
-      source: 'fallback',
-      loadError: error instanceof Error ? error.message : String(error),
-    });
+    if (!options?.shouldApply || options.shouldApply()) {
+      host.setModulesCatalog(MODULES);
+      postCatalog(MODULES, {
+        source: 'fallback',
+        loadError: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 

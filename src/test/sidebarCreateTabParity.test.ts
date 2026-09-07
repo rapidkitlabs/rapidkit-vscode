@@ -235,7 +235,7 @@ describe('React Create tab ↔ host protocol parity (roadmap 2.11d)', () => {
     expect(provider).toContain('workspacePath,');
     expect(welcomePanel).toContain('workspaceOverride');
     expect(bootstrapPayload).toContain(
-      'options?.workspaceOverride ?? host.getSelectedWorkspaceInfo()'
+      "Object.prototype.hasOwnProperty.call(options, 'workspaceOverride')"
     );
     expect(secondary).toContain('sidebarCreatedWorkspaceBootstrap');
     expect(secondary).toContain('handleBootstrapCreatedWorkspace');
