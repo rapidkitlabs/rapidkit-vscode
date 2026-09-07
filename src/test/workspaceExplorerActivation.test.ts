@@ -9,7 +9,7 @@ function read(relPath: string): string {
 }
 
 describe('workspace explorer activation ordering', () => {
-  it('publishes initial workspace selection only after command and views are registered', () => {
+  it('replays initial workspace selection only after commands and views are registered', () => {
     const explorer = read('src/ui/treeviews/workspaceExplorer.ts');
     const extension = read('src/extension.ts');
 
@@ -18,8 +18,9 @@ describe('workspace explorer activation ordering', () => {
     );
     expect(explorer).toContain('public async whenReady()');
     expect(explorer).toContain('public async publishSelectedWorkspaceContext(');
-    expect(explorer).toContain(
-      "await vscode.commands.executeCommand('workspai.workspaceSelected', selectedWorkspace)"
+    expect(explorer).toContain('this._onDidChangeSelectedWorkspace.fire(this.selectedWorkspace)');
+    expect(extension).toContain(
+      'applyWorkspaceSelection(workspaceExplorer.getSelectedWorkspace())'
     );
     expect(
       extension.indexOf("vscode.commands.registerCommand('workspai.workspaceSelected'")
@@ -49,7 +50,7 @@ describe('workspace explorer activation ordering', () => {
     expect(extension).not.toMatch(/Step \d+(?:\.\d+)?:/);
   });
 
-  it('runs CLI gate and walkthrough evidence inside the non-blocking selection lane', () => {
+  it('installs selection projections before the non-blocking initial replay lane', () => {
     const extension = read('src/extension.ts');
 
     const laneIndex = extension.indexOf("'initial-workspace-selection'");
@@ -60,9 +61,7 @@ describe('workspace explorer activation ordering', () => {
     expect(publishIndex).toBeGreaterThan(-1);
     expect(laneIndex).toBeLessThan(publishIndex);
     expect(publishIndex).toBeLessThan(extension.indexOf('await presentCliVersionGate'));
-    const selectionHandlerIndex = extension.indexOf(
-      "vscode.commands.registerCommand('workspai.workspaceSelected'"
-    );
+    const selectionHandlerIndex = extension.indexOf('const applyWorkspaceSelection =');
     const walkthroughIndex = extension.indexOf(
       'syncWalkthroughEvidenceContext(selectedWorkspace?.path ?? null'
     );
@@ -148,9 +147,9 @@ describe('workspace explorer activation ordering', () => {
   it('keeps workspace switch responsive by not awaiting dashboard hydration', () => {
     const extension = read('src/extension.ts');
     expect(extension).toContain(
-      '// Sidebar selection must stay responsive. Dashboard/evidence hydration is'
+      '// Every asynchronous projection resolves its own immutable path and drops'
     );
-    expect(extension).toContain('void Promise.all([');
+    expect(extension).toContain('void Promise.allSettled([');
     expect(extension).toContain('WelcomePanel.refreshDashboardForWorkspaceSelection()');
   });
 
@@ -183,5 +182,24 @@ describe('workspace explorer activation ordering', () => {
     expect(extension).toContain('workspacesTreeView.onDidChangeSelection');
     expect(extension).toContain('void workspaceExplorer.selectWorkspace(item.workspace)');
     expect(explorer).not.toContain("command: 'workspai.selectWorkspace'");
+  });
+
+  it('commits project selection once before replaying both sidebar scopes', () => {
+    const extension = read('src/extension.ts');
+    const explorer = read('src/ui/treeviews/projectExplorer.ts');
+    const commitIndex = extension.indexOf('projectExplorer.setSelectedProject(item.project)');
+    const primaryScopeIndex = extension.indexOf(
+      'actionsWebviewProvider.refreshScope()',
+      commitIndex
+    );
+    const secondaryScopeIndex = extension.indexOf(
+      'secondaryActionsWebviewProvider?.refreshScope()',
+      commitIndex
+    );
+
+    expect(commitIndex).toBeGreaterThan(-1);
+    expect(primaryScopeIndex).toBeGreaterThan(commitIndex);
+    expect(secondaryScopeIndex).toBeGreaterThan(commitIndex);
+    expect(explorer).not.toContain("command: 'workspai.selectProject'");
   });
 });

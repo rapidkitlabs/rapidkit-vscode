@@ -1,13 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { QuickActionsGrid } from './QuickActionsGrid';
 import { SecondarySidebar } from './SecondarySidebar';
 import { resolveSidebarVariant } from './sidebarTypes';
 import { useSidebarMessages } from './useSidebarMessages';
 import { WorkspaiThemeProvider } from '@/components/WorkspaiThemeProvider';
-import {
-  normalizeThemeMode,
-  type ThemeMode,
-} from '@/components/StudioRedesign/styles/themeSystem';
+import { normalizeThemeMode, type ThemeMode } from '@/components/StudioRedesign/styles/themeSystem';
+import { vscode } from '@/vscode';
 
 /**
  * React root for the Workspai sidebar webviews (roadmap item 2.11).
@@ -21,6 +19,11 @@ export function SidebarApp() {
       setThemeMode(normalizeThemeMode(data.themeMode));
     }
   });
+
+  useEffect(() => {
+    // Host state is replayed only after the React receiver is installed.
+    vscode.postMessage('sidebarReady');
+  }, []);
 
   return (
     <WorkspaiThemeProvider themeMode={themeMode}>

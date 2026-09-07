@@ -1082,6 +1082,26 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     );
 
+    const applyWorkspaceSelection = (workspace: unknown): void => {
+      const selectedWorkspace = asWorkspaiWorkspace(workspace);
+      refreshStatusBarAmbientTruth(selectedWorkspace);
+      projectExplorer.setWorkspace(selectedWorkspace);
+      projectRefreshWatcherController?.watchWorkspace(selectedWorkspace?.path);
+      doctorEvidenceExplorer.setWorkspacePath(selectedWorkspace?.path ?? null);
+      workspaceContractGraphExplorer.setWorkspacePath(selectedWorkspace?.path ?? null);
+      actionsWebviewProvider.refreshScope();
+      secondaryActionsWebviewProvider.refreshScope();
+      // Every asynchronous projection resolves its own immutable path and drops
+      // stale results. None of them owns or delays the committed selection.
+      void Promise.allSettled([
+        WelcomePanel.refreshDashboardForWorkspaceSelection(),
+        syncWalkthroughEvidenceContext(selectedWorkspace?.path ?? null, {
+          context,
+          extensionVersion: context.extension.packageJSON.version,
+        }),
+      ]);
+    };
+
     context.subscriptions.push(
       vscode.commands.registerCommand('workspai.getSelectedWorkspace', () => {
         return workspaceExplorer?.getSelectedWorkspace() ?? null;
@@ -1089,27 +1109,10 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand('workspai.getSelectedProject', () => {
         return projectExplorer?.getSelectedProject() ?? null;
       }),
-      // Refresh dependent surfaces whenever workspace selection changes. This
-      // command must be registered before the initial selection publish lane.
-      vscode.commands.registerCommand('workspai.workspaceSelected', async (workspace: unknown) => {
-        const selectedWorkspace = asWorkspaiWorkspace(workspace);
-        refreshStatusBarAmbientTruth(selectedWorkspace);
-        projectExplorer?.setWorkspace(selectedWorkspace);
-        projectRefreshWatcherController?.watchWorkspace(selectedWorkspace?.path);
-        doctorEvidenceExplorer.setWorkspacePath(selectedWorkspace?.path ?? null);
-        workspaceContractGraphExplorer.setWorkspacePath(selectedWorkspace?.path ?? null);
-        actionsWebviewProvider?.refreshScope();
-        secondaryActionsWebviewProvider?.refreshScope();
-        // Sidebar selection must stay responsive. Dashboard/evidence hydration is
-        // generation-guarded and must not block the workspace switch transaction.
-        void Promise.all([
-          WelcomePanel.refreshDashboardForWorkspaceSelection(),
-          syncWalkthroughEvidenceContext(selectedWorkspace?.path ?? null, {
-            context,
-            extensionVersion: context.extension.packageJSON.version,
-          }),
-        ]);
-      })
+      // Compatibility command for integrations. Internal selection propagation
+      // uses the synchronous provider event below and never the command bus.
+      vscode.commands.registerCommand('workspai.workspaceSelected', applyWorkspaceSelection),
+      workspaceExplorer.onDidChangeSelectedWorkspace(applyWorkspaceSelection)
     );
 
     // Set workspace explorer reference for WelcomePanel
@@ -1186,8 +1189,11 @@ export async function activate(context: vscode.ExtensionContext) {
         item.project?.path &&
         (item.contextValue === 'project' || item.contextValue === 'project-running')
       ) {
+        // Commit the canonical project before any webview pulls its scope.
+        projectExplorer.setSelectedProject(item.project);
         setSelectedProjectPath(item.project.path);
         moduleExplorer.setProjectPath(item.project.path, item.project.type);
+        actionsWebviewProvider.refreshScope();
         secondaryActionsWebviewProvider?.refreshScope();
         void WelcomePanel.syncProjectSelectionFromSidebar(item.project);
       }
@@ -1334,6 +1340,9 @@ export async function activate(context: vscode.ExtensionContext) {
     // This keeps activation responsive even if workspace registry discovery is slow.
     void runOptionalActivationLane(logger, 'initial-workspace-selection', async () => {
       await workspaceExplorer.whenReady();
+      // Replay the latest snapshot in case constructor loading completed before
+      // the event subscription was installed.
+      applyWorkspaceSelection(workspaceExplorer.getSelectedWorkspace());
       await workspaceExplorer.publishSelectedWorkspaceContext();
 
       const cwd =
@@ -1411,10 +1420,6 @@ export async function activate(context: vscode.ExtensionContext) {
       try {
         logger.info('Activation: initializing workspace selection');
         await workspaceExplorer.whenReady();
-
-        // Sync evidence panel with whatever workspace was auto-selected on load
-        const initialWs = workspaceExplorer.getSelectedWorkspace();
-        refreshStatusBarAmbientTruth(initialWs);
 
         // Show welcome page on first activation
         logger.info('Activation: checking welcome page settings');

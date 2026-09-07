@@ -1,5 +1,48 @@
 # Release Notes
 
+## v0.47.1 (September 7, 2026)
+
+### Deterministic startup and workspace synchronization
+
+Workspai for VS Code 0.47.1 is validated against Workspai CLI 0.75.0. This
+stability patch makes webview readiness, workspace selection, project loading,
+and Dashboard synchronization deterministic without restoring blocking startup
+work.
+
+Highlights:
+
+- Workspace selection commits synchronously to one internal event before VS
+  Code context keys, persistence, evidence, or Dashboard hydration run.
+- Projects, modules, Workspace Health, Contract Graph, both sidebars, and the
+  Dashboard now project from the same committed workspace and project scope.
+- Dashboard, Quick Actions, and the secondary sidebar install message receivers
+  before loading HTML and replay current state after an explicit ready handshake.
+- Workspace-truth, catalog, and environment-probe bootstrap lanes are
+  independent, so one stalled operation cannot prevent another section from
+  hydrating.
+- Late project scans and Dashboard evidence from superseded selections are
+  discarded through generation and path guards.
+- Project selection has one tree ingress and is committed before both sidebars
+  refresh their scope.
+- Active-workspace watcher scoping, atomic workspace registry writes, and
+  file-backed Studio session persistence reduce startup and Linux inotify
+  pressure.
+- Activation timing telemetry distinguishes Workspai work from a blocked shared
+  VS Code Extension Host.
+
+Compatibility:
+
+- VS Code 1.106.0+
+- Workspai CLI 0.75.0+
+- Git for remote repository analysis
+- RapidKit Core 0.6.0 only for Python-backed kits/modules
+
+[Full Release Notes](https://github.com/chistiq/rapidkit-vscode/blob/v0.47.1/releases/RELEASE_NOTES_v0.47.1.md)
+
+Release posture: `stability-patch`.
+
+Publication status: Prepared for release September 7, 2026.
+
 ## v0.47.0 (September 6, 2026)
 
 ### Local repository intelligence before the first agent change

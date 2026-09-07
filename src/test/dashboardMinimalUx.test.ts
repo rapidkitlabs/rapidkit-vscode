@@ -743,7 +743,9 @@ describe('dashboard minimal UX guard', () => {
     expect(read('webview-ui/src/App.tsx')).toContain("navigationSource: 'host_message'");
     expect(read('webview-ui/src/App.tsx')).toContain('scope={dashboardScope}');
     expect(read('src/extension.ts')).toContain('refreshStatusBarAmbientTruth(selectedWorkspace)');
-    expect(read('src/extension.ts')).toContain('refreshStatusBarAmbientTruth(initialWs)');
+    expect(read('src/extension.ts')).toContain(
+      'applyWorkspaceSelection(workspaceExplorer.getSelectedWorkspace())'
+    );
     expect(read('src/extension.ts')).toContain(
       'resolveActiveWorkspaiRuntimeVersion(workspace.path)'
     );

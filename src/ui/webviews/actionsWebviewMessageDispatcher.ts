@@ -22,6 +22,7 @@ export type ActionsWebviewMessageDispatchHost = {
   reviewWorkspaceChanges: (data: unknown) => Promise<void>;
   undoAgentPatch: (data: unknown) => Promise<void>;
   openSetup: () => Promise<void>;
+  sendInitialState: () => Promise<void>;
   sendInlineScope: () => Promise<void>;
   sendInlineModels: () => Promise<void>;
   setPreferredModel: (modelId: string) => Promise<void>;
@@ -41,6 +42,10 @@ function readPreferredModelId(data: unknown): string {
 }
 
 const ACTIONS_WEBVIEW_MESSAGE_LANES: readonly ActionsWebviewMessageLane[] = [
+  {
+    command: 'sidebarReady',
+    dispatch: (host) => host.sendInitialState(),
+  },
   {
     command: 'sidebarAiCreatePlan',
     dispatch: (host, data) => host.runInlineAICreatePlan(data),

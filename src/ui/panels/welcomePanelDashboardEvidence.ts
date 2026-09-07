@@ -221,6 +221,12 @@ export async function sendDashboardEvidence(
   );
   const opsChain = filterOpsChainForWorkspace(getDashboardOpsChain(host.context), workspacePath);
 
+  // Activity journal I/O is another async boundary. A workspace switch can
+  // supersede this snapshot after the earlier guard but before publication.
+  if (!host.isCurrentEvidenceSendGeneration(sendGeneration)) {
+    return;
+  }
+
   host.postWebviewMessage(
     'dashboardEvidence',
     isPatch

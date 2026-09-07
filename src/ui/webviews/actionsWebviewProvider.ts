@@ -940,6 +940,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'rapidkitActionsWebview';
   public static readonly secondaryViewType = 'workspaiSecondarySidebar';
   private _view?: vscode.WebviewView;
+  private _viewReady = false;
   private _pendingSecondaryTab?: WorkspaiSecondaryTab;
   private _pendingSecondaryTabPayload?: WorkspaiSecondaryTabPayload;
   private _activeBlockerHandoff?: StudioBlockerHandoff;
@@ -976,29 +977,32 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ) {
     this._view = webviewView;
+    this._viewReady = false;
 
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this._extensionUri],
     };
 
-    webviewView.webview.html = this._getHtmlContent(webviewView.webview);
-    this._sendInlineThemeSettings();
-    void this._sendInlineModels();
-    void this._sendInlineScope();
-    if (this._pendingSecondaryTab) {
-      this._postSecondaryTabActivation(this._pendingSecondaryTab, this._pendingSecondaryTabPayload);
-    }
-
+    // The local bundle can mount immediately. Register before assigning HTML so
+    // its ready handshake can never race past the host receiver.
     webviewView.webview.onDidReceiveMessage((rawMessage) => {
       void dispatchActionsWebviewMessage(this._actionsWebviewMessageDispatchHost(), rawMessage);
     });
     webviewView.onDidDispose(() => {
       if (this._view === webviewView) {
         this._view = undefined;
+        this._viewReady = false;
       }
       this._cancelPendingStudioToolApprovals();
     });
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible && this._viewReady) {
+        void this._sendSidebarInitialState();
+      }
+    });
+
+    webviewView.webview.html = this._getHtmlContent(webviewView.webview);
   }
 
   private _actionsWebviewMessageDispatchHost(): ActionsWebviewMessageDispatchHost {
@@ -1034,6 +1038,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
       openSetup: async () => {
         await vscode.commands.executeCommand('workspai.openSetup');
       },
+      sendInitialState: () => this._sendSidebarInitialState(),
       sendInlineScope: () => this._sendInlineScope(),
       sendInlineModels: () => this._sendInlineModels(),
       setPreferredModel: async (modelId) => {
@@ -1081,15 +1086,22 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
 
   public refresh() {
     if (this._view) {
+      this._viewReady = false;
       this._view.webview.html = this._getHtmlContent(this._view.webview);
-      this._sendInlineThemeSettings();
-      void this._sendInlineModels();
-      void this._sendInlineScope();
     }
   }
 
   public refreshScope(): void {
     void this._sendInlineScope();
+  }
+
+  private async _sendSidebarInitialState(): Promise<void> {
+    this._viewReady = true;
+    this._sendInlineThemeSettings();
+    if (this._pendingSecondaryTab) {
+      this._postSecondaryTabActivation(this._pendingSecondaryTab, this._pendingSecondaryTabPayload);
+    }
+    await Promise.allSettled([this._sendInlineModels(), this._sendInlineScope()]);
   }
 
   private async _openSidebarWorkspaceFile(data: unknown): Promise<void> {
@@ -1309,7 +1321,7 @@ export class ActionsWebviewProvider implements vscode.WebviewViewProvider {
     tab: WorkspaiSecondaryTab,
     payload?: WorkspaiSecondaryTabPayload
   ): void {
-    if (!this._view) {
+    if (!this._view || !this._viewReady) {
       return;
     }
     this._pendingSecondaryTab = undefined;

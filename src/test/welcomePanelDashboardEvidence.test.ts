@@ -29,6 +29,9 @@ describe('welcomePanelDashboardEvidence', () => {
     expect(source).toContain('onboarding:');
     expect(source).toContain('cohortSummary: retentionCohortSummary');
     expect(source).toContain('refreshMode:');
+    expect(
+      source.match(/isCurrentEvidenceSendGeneration\(sendGeneration\)/g)?.length
+    ).toBeGreaterThanOrEqual(3);
     const hostFactoriesSource = readFileSync(
       path.resolve(currentDir, '../ui/panels/welcomePanelDashboardHostFactories.ts'),
       'utf8'

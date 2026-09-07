@@ -198,8 +198,18 @@ describe('welcomePanelBootstrapPayload', () => {
     expect(source).toContain('export function sendWelcomePanelInitialData');
     expect(source).toContain('export async function sendWorkspaceToolStatus');
     expect(source).toContain('export async function sendWorkspaceStatus');
+    expect(source).toContain("scheduleLane('workspace-truth', 0");
+    expect(source).toContain("scheduleLane('catalogs', 25");
+    expect(source).toContain("scheduleLane('environment-probes', 75");
     expect(welcomePanelSource).toContain('sendWelcomePanelInitialData(');
     expect(welcomePanelSource).not.toContain('probeBinaryWithFallbacks');
+
+    const receiverIndex = welcomePanelSource.indexOf('this._panel.webview.onDidReceiveMessage(');
+    const htmlIndex = welcomePanelSource.indexOf(
+      'this._panel.webview.html = buildWelcomePanelHtmlContent'
+    );
+    expect(receiverIndex).toBeGreaterThan(-1);
+    expect(receiverIndex).toBeLessThan(htmlIndex);
   });
 });
 

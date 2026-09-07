@@ -25,8 +25,16 @@ const {
 
 vi.mock('vscode', () => {
   class EventEmitter<T = unknown> {
-    readonly event = vi.fn();
-    fire = vi.fn((_value?: T) => undefined);
+    private readonly listeners: Array<(value?: T) => void> = [];
+    readonly event = (listener: (value?: T) => void) => {
+      this.listeners.push(listener);
+      return { dispose: vi.fn() };
+    };
+    fire = vi.fn((value?: T) => {
+      for (const listener of this.listeners) {
+        listener(value);
+      }
+    });
     dispose = vi.fn(() => undefined);
   }
 
@@ -191,9 +199,16 @@ describe('watcher debounce behavior', () => {
     mockLoadWorkspaces.mockResolvedValue([workspace]);
     const provider = new WorkspaceExplorerProvider();
     await provider.whenReady();
+    const selections: unknown[] = [];
+    provider.onDidChangeSelectedWorkspace((selected) => selections.push(selected));
 
     await expect(provider.selectWorkspace(workspace as never)).resolves.toBeUndefined();
-    expect(mockExecuteCommand).toHaveBeenCalledWith('workspai.workspaceSelected', workspace);
+    expect(selections).toEqual([workspace]);
+    expect(mockExecuteCommand).toHaveBeenCalledWith(
+      'setContext',
+      'workspai.workspaceSelected',
+      true
+    );
     expect(mockTouchWorkspace).toHaveBeenCalledWith(workspace.path);
 
     settleTouch();
@@ -219,6 +234,8 @@ describe('watcher debounce behavior', () => {
 
     const provider = new WorkspaceExplorerProvider();
     await provider.whenReady();
+    const selections: unknown[] = [];
+    provider.onDidChangeSelectedWorkspace((selected) => selections.push(selected));
     const initialPublish = provider.publishSelectedWorkspaceContext();
     await Promise.resolve();
 
@@ -226,10 +243,7 @@ describe('watcher debounce behavior', () => {
     releaseInitialContext();
     await initialPublish;
 
-    const published = mockExecuteCommand.mock.calls
-      .filter(([command]) => command === 'workspai.workspaceSelected')
-      .map(([, workspace]) => workspace);
-    expect(published).toEqual([second]);
+    expect(selections).toEqual([second]);
     expect(provider.getSelectedWorkspace()?.path).toBe(second.path);
     provider.dispose();
   });

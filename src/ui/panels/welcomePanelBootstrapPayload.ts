@@ -56,39 +56,35 @@ export function sendWelcomePanelInitialData(host: BootstrapPayloadHost): void {
   sendExtensionVersion(host);
   host.sendUiPreferences();
 
-  // Render workspace truth first. Environment probes and example discovery can
-  // spawn processes or touch the network, so they must not compete with the
-  // first useful dashboard frame.
-  void (async () => {
-    const startedAt = Date.now();
-    const mark = (lane: string, laneStartedAt: number) => {
-      console.log(
-        `[WelcomePanel Bootstrap] ${lane} completed in ${Date.now() - laneStartedAt}ms (total ${Date.now() - startedAt}ms)`
-      );
-    };
+  const startedAt = Date.now();
+  const scheduleLane = (
+    lane: string,
+    delayMs: number,
+    operations: () => readonly unknown[]
+  ): void => {
+    setTimeout(() => {
+      const laneStartedAt = Date.now();
+      void Promise.allSettled(operations()).then(() => {
+        console.log(
+          `[WelcomePanel Bootstrap] ${lane} completed in ${Date.now() - laneStartedAt}ms (total ${Date.now() - startedAt}ms)`
+        );
+      });
+    }, delayMs);
+  };
 
-    let laneStartedAt = Date.now();
-    await Promise.allSettled([
-      sendRecentWorkspacesPayload(host),
-      sendWorkspaceStatus(host),
-      host.sendWorkspaiSettings(),
-      host.sendDashboardEvidence(),
-    ]);
-    mark('workspace-truth', laneStartedAt);
-
-    // Yield so the first dashboard frame can paint before secondary catalogs.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    laneStartedAt = Date.now();
-    await Promise.allSettled([host.sendAvailableKits(), host.sendModulesCatalog()]);
-    mark('catalogs', laneStartedAt);
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    laneStartedAt = Date.now();
-    await Promise.allSettled([sendExampleWorkspaces(host), sendWorkspaceToolStatus(host)]);
-    mark('environment-probes', laneStartedAt);
-  })();
+  // These lanes are intentionally independent. A stalled CLI/network probe in
+  // one section must never prevent another dashboard section from hydrating.
+  scheduleLane('workspace-truth', 0, () => [
+    sendRecentWorkspacesPayload(host),
+    sendWorkspaceStatus(host),
+    host.sendWorkspaiSettings(),
+    host.sendDashboardEvidence(),
+  ]);
+  scheduleLane('catalogs', 25, () => [host.sendAvailableKits(), host.sendModulesCatalog()]);
+  scheduleLane('environment-probes', 75, () => [
+    sendExampleWorkspaces(host),
+    sendWorkspaceToolStatus(host),
+  ]);
 }
 
 export function sendExtensionVersion(

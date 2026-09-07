@@ -60,6 +60,9 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
     new vscode.EventEmitter<WorkspaceTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData: vscode.Event<WorkspaceTreeItem | undefined | null | void> =
     this._onDidChangeTreeData.event;
+  private _onDidChangeSelectedWorkspace = new vscode.EventEmitter<WorkspaiWorkspace | null>();
+  readonly onDidChangeSelectedWorkspace: vscode.Event<WorkspaiWorkspace | null> =
+    this._onDidChangeSelectedWorkspace.event;
 
   private workspaceManager = WorkspaceManager.getInstance();
   private versionService = CoreVersionService.getInstance();
@@ -366,17 +369,16 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
     // Auto-select first workspace if none selected
     if (!this.selectedWorkspace && this.workspaces.length > 0) {
       this.selectedWorkspace = this.workspaces[0];
-      if (path.resolve(this.selectedWorkspace.path) !== previousSelectedPath) {
-        this._selectionGeneration += 1;
-      }
-      if (publishSelection) {
-        await this.publishSelectedWorkspaceContext();
-      }
-    } else if (this.workspaces.length === 0 && publishSelection) {
-      // No workspaces - clear context
-      if (previousSelectedPath !== null) {
-        this._selectionGeneration += 1;
-      }
+    }
+
+    const selectedPath = this.selectedWorkspace ? path.resolve(this.selectedWorkspace.path) : null;
+    if (selectedPath !== previousSelectedPath) {
+      this._selectionGeneration += 1;
+      // Internal consumers receive the committed selection synchronously. VS Code
+      // context keys and persistence are projections and cannot gate this event.
+      this._onDidChangeSelectedWorkspace.fire(this.selectedWorkspace);
+    }
+    if (publishSelection) {
       await this.publishSelectedWorkspaceContext();
     }
     this.syncScopedFileWatchers();
@@ -397,12 +399,7 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
 
   public async publishSelectedWorkspaceContext(options?: { force?: boolean }): Promise<void> {
     if (!this.selectedWorkspace) {
-      const shouldPublishClear = options?.force || this._publishedWorkspacePath !== null;
-      const selectionGeneration = this._selectionGeneration;
       await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', false);
-      if (shouldPublishClear && selectionGeneration === this._selectionGeneration) {
-        await vscode.commands.executeCommand('workspai.workspaceSelected', null);
-      }
       this._publishedWorkspacePath = null;
       return;
     }
@@ -413,14 +410,6 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
       return;
     }
     await vscode.commands.executeCommand('setContext', 'workspai.workspaceSelected', true);
-    if (
-      selectionGeneration !== this._selectionGeneration ||
-      !this.selectedWorkspace ||
-      path.resolve(this.selectedWorkspace.path) !== selectedPath
-    ) {
-      return;
-    }
-    await vscode.commands.executeCommand('workspai.workspaceSelected', selectedWorkspace);
     if (
       selectionGeneration !== this._selectionGeneration ||
       !this.selectedWorkspace ||
@@ -944,6 +933,7 @@ export class WorkspaceExplorerProvider implements vscode.TreeDataProvider<Worksp
     // Commit visible selection first. Persistence and metadata are secondary;
     // neither may gate Projects/Doctor/Contract switching.
     this._onDidChangeTreeData.fire();
+    this._onDidChangeSelectedWorkspace.fire(canonicalWorkspace);
     await this.publishSelectedWorkspaceContext({ force: true });
 
     // Persist last-accessed metadata after the state transaction has committed.

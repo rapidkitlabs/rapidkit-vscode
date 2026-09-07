@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-09-07
+
+### Changed
+
+- Replaced the internal workspace-selection command bus with a synchronous
+  provider event while preserving the public command as a compatibility bridge.
+  VS Code context keys, persistence, evidence, and Dashboard hydration are now
+  non-owning asynchronous projections of the committed selection.
+- Split Dashboard workspace truth, catalogs, and environment probes into
+  independent bootstrap lanes so a stalled operation cannot block unrelated
+  sections.
+- Restricted live filesystem observation to the active governed workspace and
+  managed evidence paths, and retained atomic serialized workspace-registry
+  writes.
+- Moved large Studio and Incident session payloads to extension storage files
+  with atomic writes and migration from legacy Memento state.
+
+### Fixed
+
+- Registered Dashboard and sidebar message receivers before loading webview HTML
+  and added explicit sidebar ready/replay behavior for theme, models, workspace,
+  project, and pending-tab state.
+- Fixed intermittent blank Quick Actions, secondary-sidebar, and Dashboard
+  sections caused by host messages racing React receiver installation.
+- Fixed workspace switching that could update the active tree row without
+  updating Projects, Workspace Health, Contract Graph, scoped watchers, or the
+  Dashboard.
+- Fixed stale project scans, module loads, Doctor evidence, Contract Graph reads,
+  and Dashboard evidence applying after a newer workspace or project selection.
+- Removed duplicate project selection ingress and committed the selected project
+  before refreshing either sidebar scope.
+- Added deterministic initial-selection replay when workspace registry loading
+  finishes before dependent providers subscribe.
+
 ## [0.47.0] - 2026-09-06
 
 ### Added
@@ -3127,7 +3161,13 @@ Thank you for using RapidKit! 🚀
 
 ---
 
-[Unreleased]: https://github.com/chistiq/rapidkit-vscode/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/chistiq/rapidkit-vscode/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/chistiq/rapidkit-vscode/compare/v0.47.0...v0.47.1
+[0.47.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.46.0...v0.47.0
+[0.46.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.45.0...v0.46.0
+[0.45.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.44.0...v0.45.0
+[0.44.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.43.0...v0.44.0
+[0.43.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/chistiq/rapidkit-vscode/compare/v0.39.0...v0.40.0

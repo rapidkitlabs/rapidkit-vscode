@@ -2,7 +2,7 @@
 
 <!-- WORKSPAI:CLI-RELEASE-POLICY:START -->
 
-> Extension 0.47.0 · verified with Workspai CLI 0.75.0 · minimum compatible CLI 0.75.0
+> Extension 0.47.1 · verified with Workspai CLI 0.75.0 · minimum compatible CLI 0.75.0
 
 <!-- WORKSPAI:CLI-RELEASE-POLICY:END -->
 

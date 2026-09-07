@@ -1015,19 +1015,6 @@ export class ProjectTreeItem extends vscode.TreeItem {
                             : 'charts.gray';
         this.iconPath = new vscode.ThemeIcon(iconId, new vscode.ThemeColor(colorId));
       }
-
-      // Add click command to select project
-      this.command = {
-        command: 'workspai.selectProject',
-        title: 'Select Project',
-        arguments: [
-          {
-            project: {
-              ...project,
-            },
-          },
-        ],
-      };
     }
     // === Project Item (running) ===
     else if (contextValue === 'project-running' && project) {
@@ -1059,19 +1046,6 @@ export class ProjectTreeItem extends vscode.TreeItem {
           new vscode.ThemeColor(isSelected ? 'charts.blue' : 'testing.runAction')
         );
       }
-
-      // Add click command to select project
-      this.command = {
-        command: 'workspai.selectProject',
-        title: 'Select Project',
-        arguments: [
-          {
-            project: {
-              ...project,
-            },
-          },
-        ],
-      };
     }
     // === Folder Item ===
     else if (contextValue === 'folder' && filePath) {

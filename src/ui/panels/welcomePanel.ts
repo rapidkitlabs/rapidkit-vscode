@@ -650,11 +650,20 @@ export class WelcomePanel {
     if (!projectPath) {
       return;
     }
+    const selectionVersion = WelcomePanel._projectSelectionSequence.begin();
 
     const resolvedWorkspacePath =
       project.workspacePath?.trim() ||
       WelcomePanel._projectExplorer?.getSelectedWorkspace()?.path ||
       WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path;
+    const currentWorkspacePath = WelcomePanel._workspaceExplorer?.getSelectedWorkspace()?.path;
+    if (
+      resolvedWorkspacePath &&
+      currentWorkspacePath &&
+      path.resolve(resolvedWorkspacePath) !== path.resolve(currentWorkspacePath)
+    ) {
+      return;
+    }
 
     const existingProject = WelcomePanel._projectExplorer?.getSelectedProject();
     const normalized: import('../../types').WorkspaiProject =
@@ -673,6 +682,15 @@ export class WelcomePanel {
       projectPath: normalized.path,
       projectType: normalized.type,
     });
+
+    if (
+      !WelcomePanel._projectSelectionSequence.isCurrent(selectionVersion) ||
+      (resolvedWorkspacePath &&
+        currentWorkspacePath &&
+        path.resolve(resolvedWorkspacePath) !== path.resolve(currentWorkspacePath))
+    ) {
+      return;
+    }
 
     const panel = WelcomePanel.currentPanel;
     if (!panel?._isReady) {
@@ -1552,10 +1570,8 @@ export class WelcomePanel {
       }
     );
 
-    // Set webview content
-    this._panel.webview.html = buildWelcomePanelHtmlContent(context, this._panel.webview);
-
-    // Handle messages from webview
+    // Register first: assigning local HTML can mount React and emit `ready`
+    // before a subsequently registered receiver exists.
     this._panel.webview.onDidReceiveMessage(
       async (rawMessage: unknown) => {
         await dispatchWelcomePanelWebviewMessage(this._webviewMessageDispatchHost(), rawMessage);
@@ -1566,6 +1582,9 @@ export class WelcomePanel {
 
     // Clean up when panel is closed
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+    // Set webview content only after both lifecycle receivers are live.
+    this._panel.webview.html = buildWelcomePanelHtmlContent(context, this._panel.webview);
   }
 
   private _trackAIQueryRequestStart(requestId: number): void {

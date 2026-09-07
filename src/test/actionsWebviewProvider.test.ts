@@ -78,6 +78,7 @@ describe('actionsWebviewProvider — sidebar protocol handlers', () => {
       'sidebarStudioToolApprovalDecision',
       'sidebarFocusView',
       'sidebarOpenDashboard',
+      'sidebarReady',
       'sidebarRefreshScope',
       'sidebarRefreshModels',
       'setPreferredModel',
@@ -139,6 +140,21 @@ describe('actionsWebviewProvider — sidebar protocol handlers', () => {
     expect(source).toContain('this._postSecondaryTabActivation(tab, payload)');
     expect(source).toContain("this._postInlineCreate('sidebarActivateTab'");
     expect(source).toContain('public refreshScope(): void');
+  });
+
+  it('registers the host receiver before HTML and replays state after sidebar readiness', () => {
+    const receiverIndex = source.indexOf('webviewView.webview.onDidReceiveMessage');
+    const htmlIndex = source.indexOf(
+      'webviewView.webview.html = this._getHtmlContent(webviewView.webview)'
+    );
+    expect(receiverIndex).toBeGreaterThan(-1);
+    expect(receiverIndex).toBeLessThan(htmlIndex);
+    expect(source).toContain('sendInitialState: () => this._sendSidebarInitialState()');
+    expect(source).toContain('if (!this._view || !this._viewReady)');
+    expect(source).toContain('webviewView.onDidChangeVisibility');
+    expect(read('webview-ui/src/sidebar/SidebarApp.tsx')).toContain(
+      "vscode.postMessage('sidebarReady')"
+    );
   });
 
   it('supports the studio action set the React command cards invoke', () => {
